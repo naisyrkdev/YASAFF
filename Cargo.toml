@@ -1,0 +1,38 @@
+[package]
+name = "yasaff"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+directories = "6.0.0"
+eframe = "0.36.2"
+egui = "0.36.2"
+egui_extras = { version = "0.36.2", features = ["all_loaders"] }
+gilrs = "0.11.2"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
+open = "5.4.4"
+rfd = "0.17.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
+uuid = { version = "1.26.1", features = ["v4"] }
+ureq = "3.4.2"
+sha2 = "0.11.0"
+skrifa = { version = "0.44.0", default-features = false, features = ["std"] }
+quick-xml = "0.41"
+gltf = "1"
+lyon_tessellation = "1"
+tobj = "4"
+ply-rs-bw = "4"
+zip = { version = "8", default-features = false, features = ["deflate"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_Debug"] }
+
+[build-dependencies]
+winresource = "0.1"
+
+[package.metadata.appimage]
+icon = "assets/icon-256.png"

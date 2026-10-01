@@ -1,0 +1,6 @@
+# Windows scripts keep Windows line endings.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.iss text eol=crlf
+*.bmp binary
+*.ico binary
