@@ -1,0 +1,17 @@
+YASAFF ships these programs unchanged in this "tools" folder. They run as separate
+programs and keep their own licenses.
+
+ffmpeg (Windows and Linux): plays preview and idle videos.
+  License: GNU LGPL 2.1 or later, see ffmpeg-LICENSE.txt
+  Binary:  LGPL build from https://github.com/BtbN/FFmpeg-Builds
+  Source:  https://ffmpeg.org/download.html and https://github.com/BtbN/FFmpeg-Builds
+
+xorriso (Linux only): burns games to CD and DVD.
+  License: GNU GPL 3 or later, see xorriso-COPYING
+  Source:  xorriso-source.tar.gz in this folder, or https://www.gnu.org/software/xorriso/
+
+YASAFF itself also contains these assets:
+
+Input Prompts 1.5A by Kenney (www.kenney.nl): the controller button pictures.
+  License: Creative Commons Zero (CC0), http://creativecommons.org/publicdomain/zero/1.0/
+  Source:  https://kenney.nl/assets/input-prompts
