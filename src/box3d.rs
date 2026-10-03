@@ -12,7 +12,7 @@ const DISTANCE: f32 = 4.0;
 const SUBDIVISIONS: usize = 8;
 
 pub enum Fill<'a> {
-    Image(&'a Path, Color32),
+    Image(&'a Path, Color32, CoverPlacement),
     Cover(&'a Path, Color32, CoverPlacement),
     Color(Color32),
 }
@@ -32,6 +32,7 @@ pub struct Art<'a> {
     pub spine: Fill<'a>,
     pub spine_label: Option<Label<'a>>,
     pub top: Fill<'a>,
+    pub side: Fill<'a>,
     pub plain: Color32,
 }
 
@@ -179,7 +180,7 @@ pub fn paint(ui: &Ui, rect: Rect, size: [f32; 3], yaw: f32, art: &Art, shadow: V
         (&art.front, art.front_label.as_ref()),
         (&art.back, None),
         (&art.spine, art.spine_label.as_ref()),
-        (&plain, None),
+        (&art.side, None),
         (&art.top, None),
         (&plain, None),
     ];
@@ -202,24 +203,20 @@ pub fn paint(ui: &Ui, rect: Rect, size: [f32; 3], yaw: f32, art: &Art, shadow: V
 fn paint_face(ui: &Ui, view: &View, face: &Face, fill: &Fill, brightness: f32) {
     let size = vec2(face.width(), face.height());
     let whole = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-    let (path, fallback) = match fill {
+    let (path, fallback, placement, can_turn) = match fill {
         Fill::Color(color) => return paint_face_part(ui, view, face, whole, TextureId::default(), [WHITE_UV; 4], *color, brightness),
-        Fill::Image(path, fallback) | Fill::Cover(path, fallback, _) => (*path, *fallback),
+        Fill::Image(path, fallback, placement) => (*path, *fallback, *placement, true),
+        Fill::Cover(path, fallback, placement) => (*path, *fallback, *placement, false),
     };
     let image = egui::Image::new(file_uri(path));
     let Ok(egui::load::TexturePoll::Ready { texture }) = image.load_for_size(ui.ctx(), size * view.scale) else {
         return paint_face_part(ui, view, face, whole, TextureId::default(), [WHITE_UV; 4], fallback, brightness);
     };
-    let (part, uv) = match fill {
-        Fill::Cover(_, _, placement) => {
-            let (part, uv) = place(texture.size, size, *placement);
-            if part != whole {
-                paint_face_part(ui, view, face, whole, TextureId::default(), [WHITE_UV; 4], fallback, brightness);
-            }
-            (part, [uv.left_top(), uv.right_top(), uv.right_bottom(), uv.left_bottom()])
-        }
-        _ => (whole, stretch_uv(texture.size, size)),
-    };
+    let turn = can_turn && turns_to_fit(texture.size, size);
+    let (part, uv) = place_turned(texture.size, size, placement, turn);
+    if part != whole {
+        paint_face_part(ui, view, face, whole, TextureId::default(), [WHITE_UV; 4], fallback, brightness);
+    }
     if part.is_positive() {
         paint_face_part(ui, view, face, part, texture.id, uv, Color32::WHITE, brightness);
     }
@@ -250,12 +247,15 @@ fn paint_face_part(ui: &Ui, view: &View, face: &Face, part: Rect, texture: Textu
     ui.painter().add(Shape::mesh(mesh));
 }
 
-fn stretch_uv(image: Vec2, face: Vec2) -> [Pos2; 4] {
-    if (face.y > face.x) != (image.y > image.x) {
-        [pos2(0.0, 1.0), pos2(0.0, 0.0), pos2(1.0, 0.0), pos2(1.0, 1.0)]
-    } else {
-        [pos2(0.0, 0.0), pos2(1.0, 0.0), pos2(1.0, 1.0), pos2(0.0, 1.0)]
-    }
+pub fn turns_to_fit(image: Vec2, target: Vec2) -> bool {
+    (target.y > target.x) != (image.y > image.x)
+}
+
+pub fn place_turned(image: Vec2, target: Vec2, placement: CoverPlacement, turn: bool) -> (Rect, [Pos2; 4]) {
+    let image = if turn { vec2(image.y, image.x) } else { image };
+    let (part, uv) = place(image, target, placement);
+    let corners = [uv.left_top(), uv.right_top(), uv.right_bottom(), uv.left_bottom()];
+    (part, if turn { corners.map(|p| pos2(p.y, 1.0 - p.x)) } else { corners })
 }
 
 pub fn place(image: Vec2, target: Vec2, placement: CoverPlacement) -> (Rect, Rect) {
@@ -345,6 +345,13 @@ mod tests {
         let (part, uv) = place(vec2(100.0, 100.0), vec2(1.0, 1.0), placement);
         assert_eq!(part, Rect::from_min_max(pos2(0.0, 0.5), pos2(0.5, 1.0)));
         assert_eq!(uv, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)));
+    }
+
+    #[test]
+    fn turned_placement_maps_the_left_top_to_the_image_left_bottom() {
+        let (part, uv) = place_turned(vec2(200.0, 100.0), vec2(1.0, 2.0), CoverPlacement::default(), true);
+        assert_eq!(part, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)));
+        assert_eq!(uv, [pos2(0.0, 1.0), pos2(0.0, 0.0), pos2(1.0, 0.0), pos2(1.0, 1.0)]);
     }
 
     #[test]

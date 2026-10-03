@@ -444,6 +444,102 @@ impl Default for Background {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum BarSlot {
+    Top,
+    Bottom,
+}
+
+impl BarSlot {
+    pub const ALL: [Self; 2] = [Self::Top, Self::Bottom];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Top => tr!("Top bar"),
+            Self::Bottom => tr!("Bottom bar"),
+        }
+    }
+
+    pub fn default_height(self) -> f32 {
+        match self {
+            Self::Top => 88.0,
+            Self::Bottom => 100.0,
+        }
+    }
+
+    fn file_prefix(self) -> &'static str {
+        match self {
+            Self::Top => "top-bar",
+            Self::Bottom => "bottom-bar",
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct BarStyle {
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<f32>,
+    pub kind: BackgroundKind,
+    #[serde(with = "hex")]
+    pub color: Color32,
+    #[serde(with = "hex")]
+    pub gradient_from: Color32,
+    #[serde(with = "hex")]
+    pub gradient_to: Color32,
+    pub gradient_direction: GradientDirection,
+    pub image: Option<String>,
+    pub image_zoom: f32,
+    pub image_x: f32,
+    pub image_y: f32,
+    pub image_rotation: f32,
+}
+
+impl Default for BarStyle {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            height: None,
+            kind: BackgroundKind::Color,
+            color: Color32::from_rgba_unmultiplied(0x00, 0x00, 0x00, 0x99),
+            gradient_from: Color32::from_rgb(0x0b, 0x2a, 0x66),
+            gradient_to: Color32::from_rgb(0x00, 0x02, 0x07),
+            gradient_direction: GradientDirection::Horizontal,
+            image: None,
+            image_zoom: 1.0,
+            image_x: 0.0,
+            image_y: 0.0,
+            image_rotation: 0.0,
+        }
+    }
+}
+
+impl BarStyle {
+    pub const HEIGHT_RANGE: (f32, f32) = (40.0, 300.0);
+    pub const ZOOM_RANGE: (f32, f32) = (0.1, 5.0);
+
+    pub fn height(&self, slot: BarSlot) -> f32 {
+        let (min, max) = Self::HEIGHT_RANGE;
+        match self.height {
+            Some(h) if h.is_finite() => h.clamp(min, max),
+            _ => slot.default_height(),
+        }
+    }
+    pub const OFFSET_RANGE: (f32, f32) = (-1.0, 1.0);
+
+    pub fn image_placed_by_default(&self) -> bool {
+        let d = Self::default();
+        (self.image_zoom, self.image_x, self.image_y, self.image_rotation) == (d.image_zoom, d.image_x, d.image_y, d.image_rotation)
+    }
+
+    pub fn reset_image_placement(&mut self) {
+        let d = Self::default();
+        (self.image_zoom, self.image_x, self.image_y, self.image_rotation) = (d.image_zoom, d.image_x, d.image_y, d.image_rotation);
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct StoreOrigin {
     pub id: String,
@@ -464,6 +560,24 @@ pub struct ThemeSettings {
     pub objects: ObjectSettings,
     pub discs: DiscSettings,
     pub background: Background,
+    pub top_bar: BarStyle,
+    pub bottom_bar: BarStyle,
+}
+
+impl ThemeSettings {
+    pub fn bar(&self, slot: BarSlot) -> &BarStyle {
+        match slot {
+            BarSlot::Top => &self.top_bar,
+            BarSlot::Bottom => &self.bottom_bar,
+        }
+    }
+
+    pub fn bar_mut(&mut self, slot: BarSlot) -> &mut BarStyle {
+        match slot {
+            BarSlot::Top => &mut self.top_bar,
+            BarSlot::Bottom => &mut self.bottom_bar,
+        }
+    }
 }
 
 impl Default for ThemeSettings {
@@ -479,6 +593,8 @@ impl Default for ThemeSettings {
             objects: ObjectSettings::default(),
             discs: DiscSettings::default(),
             background: Background::default(),
+            top_bar: BarStyle::default(),
+            bottom_bar: BarStyle::default(),
         }
     }
 }
@@ -560,6 +676,26 @@ impl Theme {
         }
         self.settings.background.image = Some(name);
         self.settings.background.kind = BackgroundKind::Image;
+        self.save()
+    }
+
+    pub fn bar_image(&self, slot: BarSlot) -> Option<PathBuf> {
+        let name = self.settings.bar(slot).image.as_deref()?;
+        is_plain_file_name(name).then(|| self.images_dir().join(name))
+    }
+
+    pub fn set_bar_image(&mut self, slot: BarSlot, src: &Path) -> Result<()> {
+        let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("png").to_lowercase();
+        let name = format!("{}-{}.{ext}", slot.file_prefix(), now_secs());
+        fs::create_dir_all(self.images_dir())?;
+        fs::copy(src, self.images_dir().join(&name)).with_context(|| format!("copying {}", src.display()))?;
+        if let Some(old) = self.bar_image(slot) {
+            let _ = fs::remove_file(old);
+        }
+        let bar = self.settings.bar_mut(slot);
+        bar.image = Some(name);
+        bar.kind = BackgroundKind::Image;
+        bar.reset_image_placement();
         self.save()
     }
 
@@ -763,6 +899,19 @@ mod tests {
         assert_eq!(s.view, ViewKind::Row);
         assert_eq!(s.tiles.rows, 1);
         assert_eq!(s.grid, GridSettings::default());
+    }
+
+    #[test]
+    fn bars_are_off_unless_saved() {
+        let s: ThemeSettings = serde_json::from_str(r##"{"bottom_bar":{"enabled":true,"kind":"image","image_rotation":15}}"##).unwrap();
+        assert!(!s.top_bar.enabled);
+        assert_eq!(s.top_bar.height(BarSlot::Top), 88.0);
+        assert_eq!(s.bottom_bar.height(BarSlot::Bottom), 100.0);
+        assert!(s.bottom_bar.enabled);
+        assert_eq!(s.bottom_bar.kind, BackgroundKind::Image);
+        assert_eq!(s.bottom_bar.image_rotation, 15.0);
+        assert_eq!(s.bottom_bar.image_zoom, 1.0);
+        assert!(!s.bottom_bar.image_placed_by_default());
     }
 
     #[test]

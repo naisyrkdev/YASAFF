@@ -273,6 +273,7 @@ const REPEAT_DELAY: Duration = Duration::from_millis(400);
 const REPEAT_RATE: Duration = Duration::from_millis(110);
 const MOUSE_DEADZONE: f32 = 0.15;
 const MOUSE_IDLE: Duration = Duration::from_secs(5);
+pub const GLOBAL_MOUSE_BUTTONS: [PadButton; 2] = [PadButton::RightTrigger, PadButton::LeftTrigger];
 
 struct VirtualMouse {
     pos: Option<Pos2>,
@@ -287,6 +288,7 @@ pub struct Input {
     held: Option<(Action, Instant)>,
     mouse: VirtualMouse,
     mouse_enabled: bool,
+    global_mouse: bool,
     bindings: Bindings,
 }
 
@@ -300,7 +302,7 @@ impl Input {
             }
         };
         let mouse = VirtualMouse { pos: None, screen: Rect::NOTHING, last_tick: Instant::now(), last_used: None, buttons: Vec::new() };
-        Self { gilrs, held: None, mouse, mouse_enabled: false, bindings: Bindings::default() }
+        Self { gilrs, held: None, mouse, mouse_enabled: false, global_mouse: false, bindings: Bindings::default() }
     }
 
     pub fn set_bindings(&mut self, bindings: Bindings) {
@@ -314,18 +316,32 @@ impl Input {
 
     pub fn set_virtual_mouse(&mut self, enabled: bool) {
         self.mouse_enabled = enabled;
-        if !enabled {
+        if !self.mouse_active() {
             self.mouse.last_used = None;
             self.mouse.buttons.clear();
         }
     }
 
+    pub fn set_global_mouse(&mut self, running: bool) {
+        if running == self.global_mouse {
+            return;
+        }
+        self.global_mouse = running;
+        self.held = None;
+        self.set_virtual_mouse(self.mouse_enabled);
+    }
+
+    fn mouse_active(&self) -> bool {
+        self.mouse_enabled && !self.global_mouse
+    }
+
     pub fn virtual_pointer(&self) -> Option<Pos2> {
         let recent = self.mouse.last_used.is_some_and(|t| t.elapsed() < MOUSE_IDLE);
-        self.mouse.pos.filter(|_| self.mouse_enabled && recent)
+        self.mouse.pos.filter(|_| self.mouse_active() && recent)
     }
 
     pub fn feed_virtual_mouse(&mut self, raw: &mut RawInput, speed: f32) {
+        let active = self.mouse_active();
         let m = &mut self.mouse;
         let now = Instant::now();
         let dt = (now - m.last_tick).as_secs_f32().min(0.05);
@@ -340,7 +356,7 @@ impl Input {
             }
         }
         let Some(gilrs) = &self.gilrs else { return };
-        if !self.mouse_enabled || !raw.focused || !m.screen.is_positive() {
+        if !active || !raw.focused || !m.screen.is_positive() {
             m.buttons.clear();
             return;
         }
@@ -369,11 +385,12 @@ impl Input {
 
     pub fn poll_hidden(&mut self) -> Vec<Action> {
         self.held = None;
+        let global_mouse = self.global_mouse;
         let Some(gilrs) = &mut self.gilrs else { return Vec::new() };
         let mut actions = Vec::new();
         while let Some(ev) = gilrs.next_event() {
             if let EventType::ButtonPressed(b, _) = ev.event
-                && PadButton::from_gilrs(b).is_some_and(|b| self.bindings.get(b) == Control::Guide)
+                && PadButton::from_gilrs(b).is_some_and(|b| !left_to_global_mouse(global_mouse, b) && self.bindings.get(b) == Control::Guide)
             {
                 actions.push(Action::BringToFront);
             }
@@ -383,6 +400,7 @@ impl Input {
 
     pub fn poll(&mut self, ctx: &Context, capture_text: bool) -> Vec<Action> {
         let focused = ctx.input(|i| i.focused);
+        let (global_mouse, mouse_active) = (self.global_mouse, self.mouse_active());
         let mut actions = Vec::new();
 
         if let Some(gilrs) = &mut self.gilrs {
@@ -392,9 +410,9 @@ impl Input {
                     EventType::ButtonReleased(b, _) => (b, false),
                     _ => continue,
                 };
-                let Some(button) = PadButton::from_gilrs(button) else { continue };
+                let Some(button) = PadButton::from_gilrs(button).filter(|b| !left_to_global_mouse(global_mouse, *b)) else { continue };
                 let control = self.bindings.get(button);
-                if self.mouse_enabled && focused {
+                if mouse_active && focused {
                     let pointer = match control {
                         Control::Click => Some(PointerButton::Primary),
                         Control::RightClick => Some(PointerButton::Secondary),
@@ -413,7 +431,7 @@ impl Input {
                     actions.push(action);
                 }
             }
-            let dir = if focused { held_direction(gilrs, &self.bindings) } else { None };
+            let dir = if focused { held_direction(gilrs, &self.bindings, self.global_mouse) } else { None };
             self.update_repeat(dir, &mut actions);
         }
 
@@ -470,11 +488,20 @@ impl Input {
     }
 }
 
-fn held_direction(gilrs: &Gilrs, bindings: &Bindings) -> Option<Action> {
+fn left_to_global_mouse(global_mouse: bool, button: PadButton) -> bool {
+    global_mouse && GLOBAL_MOUSE_BUTTONS.contains(&button)
+}
+
+fn held_direction(gilrs: &Gilrs, bindings: &Bindings, global_mouse: bool) -> Option<Action> {
     for (_, pad) in gilrs.gamepads() {
         let x = pad.value(Axis::LeftStickX);
         let y = pad.value(Axis::LeftStickY);
-        let held = |control: Control| PadButton::ALL.into_iter().any(|b| bindings.get(b) == control && pad.is_pressed(b.to_gilrs()));
+        let held = |control: Control| {
+            PadButton::ALL
+                .into_iter()
+                .filter(|b| !left_to_global_mouse(global_mouse, *b))
+                .any(|b| bindings.get(b) == control && pad.is_pressed(b.to_gilrs()))
+        };
         let dir = if held(Control::Left) || x < -STICK_THRESHOLD {
             Some(Action::Left)
         } else if held(Control::Right) || x > STICK_THRESHOLD {

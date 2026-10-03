@@ -187,8 +187,7 @@ fn paint_label_side(ui: &Ui, view: &View, art: &Art, brightness: f32) {
 
     let (path, fallback, placement) = match art.print {
         Fill::Color(color) => (None, color, CoverPlacement::default()),
-        Fill::Image(path, color) => (Some(path), color, CoverPlacement::default()),
-        Fill::Cover(path, color, placement) => (Some(path), color, placement),
+        Fill::Image(path, color, placement) | Fill::Cover(path, color, placement) => (Some(path), color, placement),
     };
     let fallback = shade(fallback, brightness);
     let diameter = 2.0 * R_OUTER;

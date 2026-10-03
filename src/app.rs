@@ -8,7 +8,8 @@ use crate::box3d;
 use crate::disc3d;
 use crate::fonts;
 use crate::i18n;
-use crate::input::{Action, Control, Input, PadButton};
+use crate::global_mouse::GlobalMouse;
+use crate::input::{Action, Control, GLOBAL_MOUSE_BUTTONS, Input, PadButton};
 use crate::launcher;
 use crate::library::{AssetKind, CoverPlacement, Game, Library};
 use crate::metadata::{self, Fetcher};
@@ -17,7 +18,7 @@ use crate::scan;
 use crate::settings::{DiscAction, Language, MouseSettings, Settings};
 use crate::stores::Store;
 use crate::theme::{
-    self, BackgroundKind, BarPosition, BoxCase, DiscKind, DiscSettings, DiscSpin, GradientDirection, GridAlign, GridSettings,
+    self, BackgroundKind, BarPosition, BarSlot, BarStyle, BoxCase, DiscKind, DiscSettings, DiscSpin, GradientDirection, GridAlign, GridSettings,
     ImageFit, SpineLabel, Theme, TileSettings, TileStyle, ViewKind,
 };
 use egui::{
@@ -69,10 +70,10 @@ enum MenuItem {
 
 const MENU: [(MenuItem, &str); 11] = [
     (MenuItem::Start, tr_key!("Start")),
+    (MenuItem::BoxAppearance, tr_key!("Tile and box appearance…")),
     (MenuItem::SetCover, tr_key!("Set cover image")),
     (MenuItem::SetBackground, tr_key!("Set background image")),
     (MenuItem::FetchArtwork, tr_key!("Fetch artwork")),
-    (MenuItem::BoxAppearance, tr_key!("Tile and box appearance…")),
     (MenuItem::Rename, tr_key!("Rename")),
     (MenuItem::EditCommand, tr_key!("Edit launch command")),
     (MenuItem::SaveFolder, tr_key!("Set save folder…")),
@@ -200,6 +201,7 @@ enum SettingRow {
     GradientDirection,
     BackgroundImage,
     ImageFit,
+    Bar(BarSlot, BarRow),
     StoreEnabled(Store),
     StoreBackground(Store),
     StoreCommand(Store),
@@ -207,14 +209,16 @@ enum SettingRow {
     DiscScanAtStart,
     DiscRemovable,
     GameCover,
-    GameCoverAdjust,
-    GameCoverReset,
+    GameAdjust(AssetKind),
+    GameAdjustReset(AssetKind),
     GameSpine,
     GameSpineClear,
     GameTop,
     GameTopClear,
     GameBack,
     GameBackClear,
+    GameSide,
+    GameSideClear,
     GameModel,
     GameModelUp,
     GameModelClear,
@@ -229,6 +233,23 @@ enum SettingRow {
     AboutServer,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum BarRow {
+    Enabled,
+    Height,
+    Kind,
+    Color,
+    GradientFrom,
+    GradientTo,
+    GradientDirection,
+    Image,
+    ImageZoom,
+    ImageX,
+    ImageY,
+    ImageRotation,
+    ImageReset,
+}
+
 const SOURCE_URL: &str = "https://github.com/naisyrkdev/YASAFF";
 const SERVER_URL: &str = "https://github.com/naisyrkdev/YasaffStuffServer";
 
@@ -237,14 +258,16 @@ impl SettingRow {
         use SettingRow as R;
         match self {
             R::GameCover
-            | R::GameCoverAdjust
-            | R::GameCoverReset
+            | R::GameAdjust(_)
+            | R::GameAdjustReset(_)
             | R::GameSpine
             | R::GameSpineClear
             | R::GameTop
             | R::GameTopClear
             | R::GameBack
             | R::GameBackClear
+            | R::GameSide
+            | R::GameSideClear
             | R::GameModel
             | R::GameModelUp
             | R::GameModelClear
@@ -345,6 +368,7 @@ enum BurnMsg {
 }
 
 struct CoverEditor {
+    kind: AssetKind,
     draft: CoverPlacement,
     cursor: usize,
     button: EditorButton,
@@ -530,6 +554,7 @@ pub struct App {
     theme: usize,
     selected: usize,
     input: Input,
+    global_mouse: GlobalMouse,
     mode: Mode,
     toast: Option<(String, Instant)>,
     fullscreen: bool,
@@ -595,6 +620,7 @@ impl App {
             theme: 0,
             selected: 0,
             input,
+            global_mouse: GlobalMouse::spawn(cc.egui_ctx.clone()),
             mode: Mode::Home,
             toast: None,
             fullscreen,
@@ -680,6 +706,10 @@ impl App {
     fn controls_changed(&mut self) {
         self.input.set_bindings(self.settings.controls.bindings());
         self.save_settings();
+    }
+
+    fn global_mouse_status(&self) -> Option<(String, Color32)> {
+        self.global_mouse.connected().then(|| (tr!("Yasaff Global Virtual Mouse integration mode: ON").to_owned(), PAD_A))
     }
 
     fn controller_warning(&self) -> (String, Color32) {
@@ -1284,21 +1314,24 @@ impl App {
         use SettingRow as R;
         if page == Page::GameBox {
             let game = self.selected_game();
-            let mut rows = vec![R::GameCoverAdjust];
+            let mut rows = vec![R::GameAdjust(AssetKind::Cover)];
             if game.is_some_and(|g| !g.cover_placement.is_default()) {
-                rows.push(R::GameCoverReset);
+                rows.push(R::GameAdjustReset(AssetKind::Cover));
             }
-            rows.extend([R::GameCover, R::GameSpine]);
-            if game.is_some_and(|g| g.spine.is_some()) {
-                rows.push(R::GameSpineClear);
-            }
-            rows.push(R::GameTop);
-            if game.is_some_and(|g| g.top.is_some()) {
-                rows.push(R::GameTopClear);
-            }
-            rows.push(R::GameBack);
-            if game.is_some_and(|g| g.back.is_some()) {
-                rows.push(R::GameBackClear);
+            rows.push(R::GameCover);
+            for (kind, pick, clear) in [
+                (AssetKind::Spine, R::GameSpine, R::GameSpineClear),
+                (AssetKind::Top, R::GameTop, R::GameTopClear),
+                (AssetKind::Back, R::GameBack, R::GameBackClear),
+                (AssetKind::Side, R::GameSide, R::GameSideClear),
+            ] {
+                rows.push(pick);
+                let Some(game) = game.filter(|g| g.asset(kind).is_some()) else { continue };
+                rows.push(R::GameAdjust(kind));
+                if !game.placement(kind).is_default() {
+                    rows.push(R::GameAdjustReset(kind));
+                }
+                rows.push(clear);
             }
             rows.push(R::GameModel);
             if game.is_some_and(|g| g.model.is_some()) {
@@ -1327,6 +1360,32 @@ impl App {
             BackgroundKind::Gradient => &[R::GradientFrom, R::GradientTo, R::GradientDirection],
             BackgroundKind::Image => &[R::BackgroundImage, R::ImageFit, R::BackgroundColor],
         });
+        for slot in BarSlot::ALL {
+            let bar = theme.bar(slot);
+            rows.push(R::Bar(slot, BarRow::Enabled));
+            if !bar.enabled {
+                continue;
+            }
+            rows.extend([R::Bar(slot, BarRow::Height), R::Bar(slot, BarRow::Kind)]);
+            let kind_rows: &[BarRow] = match bar.kind {
+                BackgroundKind::Color => &[BarRow::Color],
+                BackgroundKind::Gradient => &[BarRow::GradientFrom, BarRow::GradientTo, BarRow::GradientDirection],
+                BackgroundKind::Image if self.theme().bar_image(slot).is_none() => &[BarRow::Image, BarRow::Color],
+                BackgroundKind::Image if bar.image_placed_by_default() => {
+                    &[BarRow::Image, BarRow::ImageZoom, BarRow::ImageX, BarRow::ImageY, BarRow::ImageRotation, BarRow::Color]
+                }
+                BackgroundKind::Image => &[
+                    BarRow::Image,
+                    BarRow::ImageZoom,
+                    BarRow::ImageX,
+                    BarRow::ImageY,
+                    BarRow::ImageRotation,
+                    BarRow::ImageReset,
+                    BarRow::Color,
+                ],
+            };
+            rows.extend(kind_rows.iter().map(|&r| R::Bar(slot, r)));
+        }
         rows.extend([R::Theme, R::ThemeRename, R::ThemeNew, R::ThemeExport, R::ThemeImport]);
         if self.themes.len() > 1 {
             rows.push(R::ThemeDelete);
@@ -1355,7 +1414,7 @@ impl App {
             rows.push(R::AppStoreRemove);
         }
         rows.push(R::VirtualMouse);
-        if self.settings.mouse.virtual_mouse {
+        if self.settings.mouse.virtual_mouse && !self.global_mouse.connected() {
             rows.push(R::MouseSpeed);
         }
         rows.push(R::MouseCursor);
@@ -1398,6 +1457,15 @@ impl App {
 
     fn color_slot(&mut self, row: SettingRow) -> Option<&mut Color32> {
         let settings = &mut self.themes[self.theme].settings;
+        if let SettingRow::Bar(slot, field) = row {
+            let bar = settings.bar_mut(slot);
+            return match field {
+                BarRow::Color => Some(&mut bar.color),
+                BarRow::GradientFrom => Some(&mut bar.gradient_from),
+                BarRow::GradientTo => Some(&mut bar.gradient_to),
+                _ => None,
+            };
+        }
         let (bg, boxes, objects) = (&mut settings.background, &mut settings.boxes, &mut settings.objects);
         match row {
             SettingRow::BackgroundColor => Some(&mut bg.color),
@@ -1489,6 +1557,9 @@ impl App {
                 self.settings.controls.reset();
                 self.controls_changed();
                 self.mode = self.settings_at(SettingRow::ControllerSwap);
+            }
+            SettingRow::VirtualMouse if self.global_mouse.connected() => {
+                self.notify(tr!("Yasaff Global Virtual Mouse handles the mouse while it runs"));
             }
             SettingRow::VirtualMouse => {
                 self.settings.mouse.virtual_mouse ^= true;
@@ -1590,7 +1661,25 @@ impl App {
                     self.notify(tr!("Could not set image: {error}", error = format!("{e:#}")));
                 }
             }
-            SettingRow::BackgroundColor
+            SettingRow::Bar(slot, BarRow::Image) => {
+                let Some(path) = rfd::FileDialog::new()
+                    .set_title(tr!("Select bar image"))
+                    .add_filter(tr!("Images"), IMAGE_EXTS)
+                    .pick_file()
+                else {
+                    return;
+                };
+                if let Err(e) = self.themes[self.theme].set_bar_image(slot, &path) {
+                    self.notify(tr!("Could not set image: {error}", error = format!("{e:#}")));
+                }
+            }
+            SettingRow::Bar(slot, BarRow::ImageReset) => {
+                self.themes[self.theme].settings.bar_mut(slot).reset_image_placement();
+                self.save_theme();
+                self.mode = self.settings_at(SettingRow::Bar(slot, BarRow::ImageZoom));
+            }
+            SettingRow::Bar(_, BarRow::Color | BarRow::GradientFrom | BarRow::GradientTo)
+            | SettingRow::BackgroundColor
             | SettingRow::GradientFrom
             | SettingRow::GradientTo
             | SettingRow::BoxSpineColor
@@ -1610,23 +1699,29 @@ impl App {
                 self.mode = Mode::Prompt { kind: PromptKind::BoxSize(row), buffer };
             }
             SettingRow::GameCover => self.pick_asset(AssetKind::Cover),
-            SettingRow::GameCoverReset => {
-                self.library.games[self.selected].cover_placement = CoverPlacement::default();
+            SettingRow::GameAdjustReset(kind) => {
+                *self.library.games[self.selected].placement_mut(kind) = CoverPlacement::default();
                 self.save();
-                self.mode = self.settings_at(SettingRow::GameCoverAdjust);
+                self.mode = self.settings_at(SettingRow::GameAdjust(kind));
             }
-            SettingRow::GameCoverAdjust => {
-                let draft = self.library.games[self.selected].cover_placement;
-                self.mode = Mode::CoverEditor(CoverEditor { draft, cursor: 0, button: EditorButton::Accept });
+            SettingRow::GameAdjust(kind) => {
+                let draft = self.library.games[self.selected].placement(kind);
+                self.mode = Mode::CoverEditor(CoverEditor { kind, draft, cursor: 0, button: EditorButton::Accept });
             }
             SettingRow::GameSpine => self.pick_asset(AssetKind::Spine),
             SettingRow::GameTop => self.pick_asset(AssetKind::Top),
             SettingRow::GameBack => self.pick_asset(AssetKind::Back),
+            SettingRow::GameSide => self.pick_asset(AssetKind::Side),
             SettingRow::GameModel => self.pick_asset(AssetKind::Model),
-            SettingRow::GameSpineClear | SettingRow::GameTopClear | SettingRow::GameBackClear | SettingRow::GameModelClear => {
+            SettingRow::GameSpineClear
+            | SettingRow::GameTopClear
+            | SettingRow::GameBackClear
+            | SettingRow::GameSideClear
+            | SettingRow::GameModelClear => {
                 let (kind, next) = match row {
                     SettingRow::GameSpineClear => (AssetKind::Spine, SettingRow::GameSpine),
                     SettingRow::GameTopClear => (AssetKind::Top, SettingRow::GameTop),
+                    SettingRow::GameSideClear => (AssetKind::Side, SettingRow::GameSide),
                     SettingRow::GameModelClear => (AssetKind::Model, SettingRow::GameModel),
                     _ => (AssetKind::Back, SettingRow::GameBack),
                 };
@@ -1667,7 +1762,8 @@ impl App {
             | SettingRow::DiscSpinSpeed
             | SettingRow::BackgroundKind
             | SettingRow::GradientDirection
-            | SettingRow::ImageFit => self.adjust_setting(row, 1),
+            | SettingRow::ImageFit
+            | SettingRow::Bar(..) => self.adjust_setting(row, 1),
         }
     }
 
@@ -1804,7 +1900,21 @@ impl App {
                 bg.gradient_direction = cycle(&GradientDirection::ALL, bg.gradient_direction, delta)
             }
             SettingRow::ImageFit => bg.image_fit = cycle(&ImageFit::ALL, bg.image_fit, delta),
-            SettingRow::BackgroundColor
+            SettingRow::Bar(slot, field @ (BarRow::Enabled | BarRow::Height | BarRow::Kind | BarRow::GradientDirection | BarRow::ImageZoom | BarRow::ImageX | BarRow::ImageY | BarRow::ImageRotation)) => {
+                let bar = settings.bar_mut(slot);
+                match field {
+                    BarRow::Enabled => bar.enabled ^= true,
+                    BarRow::Height => bar.height = Some(step(bar.height(slot), 4.0 * d, BarStyle::HEIGHT_RANGE)),
+                    BarRow::Kind => bar.kind = cycle(&BackgroundKind::ALL, bar.kind, delta),
+                    BarRow::GradientDirection => bar.gradient_direction = cycle(&GradientDirection::ALL, bar.gradient_direction, delta),
+                    BarRow::ImageZoom => bar.image_zoom = snap(step(bar.image_zoom, 0.05 * d, BarStyle::ZOOM_RANGE)),
+                    BarRow::ImageX => bar.image_x = snap(step(bar.image_x, 0.02 * d, BarStyle::OFFSET_RANGE)),
+                    BarRow::ImageY => bar.image_y = snap(step(bar.image_y, 0.05 * d, BarStyle::OFFSET_RANGE)),
+                    _ => bar.image_rotation = (bar.image_rotation + 5.0 * d + 180.0).rem_euclid(360.0) - 180.0,
+                }
+            }
+            SettingRow::Bar(_, BarRow::Color | BarRow::GradientFrom | BarRow::GradientTo)
+            | SettingRow::BackgroundColor
             | SettingRow::GradientFrom
             | SettingRow::GradientTo
             | SettingRow::BoxSpineColor
@@ -1847,14 +1957,13 @@ impl App {
     }
 
     fn close_cover_editor(&mut self, accept: bool) {
-        if let Mode::CoverEditor(editor) = &self.mode
-            && accept
-            && let Some(game) = self.library.games.get_mut(self.selected)
-        {
-            game.cover_placement = editor.draft;
+        let Mode::CoverEditor(editor) = &self.mode else { return };
+        let kind = editor.kind;
+        if accept && let Some(game) = self.library.games.get_mut(self.selected) {
+            *game.placement_mut(kind) = editor.draft;
             self.save();
         }
-        self.mode = self.settings_at(SettingRow::GameCoverAdjust);
+        self.mode = self.settings_at(SettingRow::GameAdjust(kind));
     }
 
     fn delete_theme(&mut self) {
@@ -1968,7 +2077,8 @@ impl App {
             self.mode = Mode::Home;
             self.notify(tr!("Added {name}", name = entry.name));
         } else {
-            self.mode = Mode::Options { cursor: self.menu_index(MenuItem::SetCover) };
+            let item = if self.theme().settings.tile_style.is_box() { MenuItem::BoxAppearance } else { MenuItem::SetCover };
+            self.mode = Mode::Options { cursor: self.menu_index(item) };
         }
     }
 
@@ -2064,6 +2174,7 @@ impl App {
         let store_app = game.is_some_and(|g| g.app_id.is_some());
         let running = store_app && self.running_index() == Some(self.selected);
         let game_running = !store_app && self.game_index() == Some(self.selected);
+        let boxes = self.theme().settings.tile_style.is_box();
         let mut menu = Vec::new();
         for &(item, label) in &MENU {
             match item {
@@ -2076,6 +2187,7 @@ impl App {
                     menu.push((MenuItem::CloseApp, tr!("Close game").to_owned()));
                 }
                 MenuItem::SaveFolder if store_app => {}
+                MenuItem::SetCover if boxes => {}
                 MenuItem::EditCommand | MenuItem::FetchArtwork if store_app => {}
                 MenuItem::Remove if store_app => menu.push((item, tr!("Uninstall").to_owned())),
                 _ => menu.push((item, i18n::tr(label).to_owned())),
@@ -2244,6 +2356,7 @@ impl App {
             AssetKind::Spine => tr!("Select spine image (a tall or wide scan of the box spine)"),
             AssetKind::Top => tr!("Select box top image"),
             AssetKind::Back => tr!("Select back cover image"),
+            AssetKind::Side => tr!("Select right side image (the edge opposite the spine)"),
             AssetKind::Model => unreachable!(),
         };
         let Some(path) = rfd::FileDialog::new().set_title(title).add_filter(tr!("Images"), IMAGE_EXTS).pick_file() else {
@@ -2411,13 +2524,35 @@ impl App {
         }
     }
 
+    fn bar_rect(&self, slot: BarSlot, screen: Rect, s: f32) -> Rect {
+        let bar = self.theme().settings.bar(slot);
+        let h = if bar.enabled { bar.height(slot) } else { slot.default_height() } * s;
+        match slot {
+            BarSlot::Top => Rect::from_min_max(screen.min, pos2(screen.right(), screen.top() + h)),
+            BarSlot::Bottom => Rect::from_min_max(pos2(screen.left(), screen.bottom() - h), screen.max),
+        }
+    }
+
+    fn draw_bars(&self, ui: &Ui, screen: Rect, s: f32) {
+        for slot in BarSlot::ALL {
+            paint_bar(ui, self.theme(), slot, self.bar_rect(slot, screen, s));
+        }
+    }
+
     fn draw_top_bar(&self, painter: &Painter, screen: Rect, s: f32) {
-        let y = screen.top() + 44.0 * s;
+        let y = self.bar_rect(BarSlot::Top, screen, s).center().y;
         let count = self.library.games.len();
         let label = tr_n!(count, "Library · {n} game", "Library · {n} games");
         shadow_text(painter, pos2(screen.left() + 110.0 * s, y), Align2::LEFT_CENTER, &label, 24.0 * s, Color32::from_gray(210));
         let clock = chrono::Local::now().format("%H:%M").to_string();
         shadow_text(painter, pos2(screen.right() - 60.0 * s, y), Align2::RIGHT_CENTER, &clock, 30.0 * s, Color32::WHITE);
+        if self.global_mouse.connected() {
+            let right = pos2(screen.right() - 160.0 * s, y);
+            let text = tr!("Global Virtual Mouse");
+            let width = painter.layout_no_wrap(text.to_owned(), FontId::proportional(18.0 * s), PAD_A).size().x;
+            painter.circle_filled(right - vec2(width + 14.0 * s, 0.0), 6.0 * s, PAD_A);
+            shadow_text(painter, right, Align2::RIGHT_CENTER, text, 18.0 * s, PAD_A);
+        }
     }
 
     fn home_layout(&self) -> Layout {
@@ -2577,7 +2712,7 @@ impl App {
                 }
             }
             let counter = tr!("Page {page} / {pages}", page = page + 1, pages = pages);
-            let pos = pos2(screen.left() + 110.0 * s, screen.bottom() - 50.0 * s);
+            let pos = pos2(screen.left() + 110.0 * s, self.bar_rect(BarSlot::Bottom, screen, s).center().y);
             shadow_text(painter, pos, Align2::LEFT_CENTER, &counter, 22.0 * s, Color32::from_gray(210));
         }
 
@@ -2588,21 +2723,19 @@ impl App {
     }
 
     fn paint_tile(&self, ui: &Ui, i: usize, rect: Rect, radius: u8, s: f32, focus: f32) {
-        let placement = self.library.games.get(i).map(|g| g.cover_placement).unwrap_or_default();
         self.paint_running_glow(ui, i, rect, s);
-        self.paint_tile_placed(ui, i, rect, radius, s, focus, placement);
+        self.paint_tile_art(ui, i, rect, radius, s, focus);
         self.paint_artwork_badge(ui, i, rect, s);
         self.paint_app_badges(ui, i, rect, s);
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn paint_tile_placed(&self, ui: &Ui, i: usize, rect: Rect, radius: u8, s: f32, focus: f32, placement: CoverPlacement) {
+    fn paint_tile_art(&self, ui: &Ui, i: usize, rect: Rect, radius: u8, s: f32, focus: f32) {
         match self.theme().settings.tile_style {
-            TileStyle::Flat | TileStyle::Cover => self.paint_flat(ui, i, rect, radius, s, focus, placement),
-            TileStyle::FlatBox => self.paint_box(ui, i, rect, s, focus, placement),
-            TileStyle::Model => self.paint_model(ui, i, rect, s, focus, placement),
+            TileStyle::Flat | TileStyle::Cover => self.paint_flat(ui, i, rect, radius, s, focus),
+            TileStyle::FlatBox => self.paint_box(ui, i, rect, s, focus),
+            TileStyle::Model => self.paint_model(ui, i, rect, s, focus),
             TileStyle::Object => self.paint_object(ui, i, rect, s, focus),
-            TileStyle::Disc => self.paint_disc(ui, i, rect, s, focus, placement),
+            TileStyle::Disc => self.paint_disc(ui, i, rect, s, focus),
         }
     }
 
@@ -2628,12 +2761,11 @@ impl App {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn paint_flat(&self, ui: &Ui, i: usize, rect: Rect, radius: u8, s: f32, focus: f32, placement: CoverPlacement) {
+    fn paint_flat(&self, ui: &Ui, i: usize, rect: Rect, radius: u8, s: f32, focus: f32) {
         let painter = ui.painter();
         painter.rect_filled(rect.translate(vec2(0.0, 8.0 * s)), radius, Color32::from_black_alpha(90));
         match self.library.games.get(i) {
-            Some(game) => draw_game_tile(ui, game, rect, radius, placement),
+            Some(game) => draw_game_tile(ui, game, rect, radius),
             None => {
                 let glyph = self.special(i).map_or("", Special::glyph);
                 painter.rect_filled(rect, radius, Color32::from_white_alpha(28));
@@ -2646,7 +2778,7 @@ impl App {
         }
     }
 
-    fn paint_box(&self, ui: &Ui, i: usize, rect: Rect, s: f32, focus: f32, placement: CoverPlacement) {
+    fn paint_box(&self, ui: &Ui, i: usize, rect: Rect, s: f32, focus: f32) {
         let game = self.library.games.get(i);
         let defaults = &self.theme().settings.boxes;
         let look = game.map_or_else(|| defaults.clone(), |g| defaults.with(&g.box_style));
@@ -2659,23 +2791,21 @@ impl App {
 
         const TOP_SHADE: f32 = 0.9;
         const SPINE_SHADE: f32 = 0.75;
-        let top_image = game.and_then(|g| g.top.as_deref());
-        if !top_image.is_some_and(|path| paint_image_quad(ui, path, b.top(), box3d::shade(Color32::WHITE, TOP_SHADE))) {
-            painter.add(Shape::convex_polygon(b.top().to_vec(), box3d::shade(look.top_color, TOP_SHADE), Stroke::NONE));
-        }
-        let spine_image = game.and_then(|g| g.spine.as_deref());
-        if !spine_image.is_some_and(|path| paint_image_quad(ui, path, b.spine(), box3d::shade(Color32::WHITE, SPINE_SHADE))) {
-            painter.add(Shape::convex_polygon(b.spine().to_vec(), box3d::shade(look.spine_color, SPINE_SHADE), Stroke::NONE));
-            if look.spine_label == SpineLabel::Name {
-                let (name, font) = match game {
-                    Some(g) => (g.name.as_str(), self.game_font(g)),
-                    None => (self.special(i).map_or("", Special::name), egui::FontFamily::Proportional),
-                };
-                paint_spine_text(ui, name, font, look.spine_text_color, &b);
-            }
+        let face_image = |kind: AssetKind, quad: [Pos2; 4], color: Color32, shade: f32| {
+            painter.add(Shape::convex_polygon(quad.to_vec(), box3d::shade(color, shade), Stroke::NONE));
+            game.and_then(|g| Some((g.asset(kind)?, g.placement(kind))))
+                .is_some_and(|(path, placement)| paint_image_quad(ui, path, quad, box3d::shade(Color32::WHITE, shade), placement))
+        };
+        face_image(AssetKind::Top, b.top(), look.top_color, TOP_SHADE);
+        if !face_image(AssetKind::Spine, b.spine(), look.spine_color, SPINE_SHADE) && look.spine_label == SpineLabel::Name {
+            let (name, font) = match game {
+                Some(g) => (g.name.as_str(), self.game_font(g)),
+                None => (self.special(i).map_or("", Special::name), egui::FontFamily::Proportional),
+            };
+            paint_spine_text(ui, name, font, look.spine_text_color, &b);
         }
         match game {
-            Some(game) => draw_game_tile(ui, game, b.front, 0, placement),
+            Some(game) => draw_game_tile(ui, game, b.front, 0),
             None => {
                 let glyph = self.special(i).map_or("", Special::glyph);
                 painter.rect_filled(b.front, 0, Color32::from_rgb(0x2a, 0x2d, 0x34));
@@ -2754,11 +2884,18 @@ impl App {
         Some(fonts::dir().join(file))
     }
 
-    fn paint_model(&self, ui: &Ui, i: usize, rect: Rect, s: f32, focus: f32, placement: CoverPlacement) {
+    fn paint_model(&self, ui: &Ui, i: usize, rect: Rect, s: f32, focus: f32) {
         let game = self.library.games.get(i);
         let defaults = &self.theme().settings.boxes;
         let look = game.map_or_else(|| defaults.clone(), |g| defaults.with(&g.box_style));
-        let yaw = self.turn(i, box3d::REST_YAW);
+        let yaw = match &self.mode {
+            Mode::CoverEditor(editor) if i == self.selected => match editor.kind {
+                AssetKind::Back => box3d::REST_YAW + std::f32::consts::PI,
+                AssetKind::Side => -box3d::REST_YAW,
+                _ => box3d::REST_YAW,
+            },
+            _ => self.turn(i, box3d::REST_YAW),
+        };
 
         use box3d::{Fill, Label};
         let placeholder = game.map_or(Color32::from_rgb(0x2a, 0x2d, 0x34), |g| placeholder_color(&g.name));
@@ -2773,21 +2910,20 @@ impl App {
         let font = game.map_or(egui::FontFamily::Proportional, |g| self.game_font(g));
         let cover = game.and_then(|g| g.cover.as_deref());
         let spine = game.and_then(|g| g.spine.as_deref());
-        fn image(path: Option<&Path>, fallback: Color32, crop: Option<CoverPlacement>) -> Fill<'_> {
-            match (path, crop) {
-                (Some(p), Some(placement)) => Fill::Cover(p, fallback, placement),
-                (Some(p), None) => Fill::Image(p, fallback),
-                (None, _) => Fill::Color(fallback),
-            }
-        }
+        let image = |kind: AssetKind, fallback: Color32| match game.and_then(|g| Some((g.asset(kind)?, g.placement(kind)))) {
+            Some((path, placement)) if matches!(kind, AssetKind::Cover | AssetKind::Back) => Fill::Cover(path, fallback, placement),
+            Some((path, placement)) => Fill::Image(path, fallback, placement),
+            None => Fill::Color(fallback),
+        };
         let art = box3d::Art {
-            front: image(cover, placeholder, Some(placement)),
+            front: image(AssetKind::Cover, placeholder),
             front_label: cover.is_none().then(|| Label { text: &front_text, font: font.clone(), color: Color32::WHITE, size: 0.3, down: false }),
-            back: image(game.and_then(|g| g.back.as_deref()), look.spine_color, Some(CoverPlacement::default())),
-            spine: image(spine, look.spine_color, None),
+            back: image(AssetKind::Back, look.spine_color),
+            spine: image(AssetKind::Spine, look.spine_color),
             spine_label: (spine.is_none() && look.spine_label == SpineLabel::Name)
                 .then(|| Label { text: name, font: font.clone(), color: look.spine_text_color, size: 0.5, down: true }),
-            top: image(game.and_then(|g| g.top.as_deref()), look.top_color, None),
+            top: image(AssetKind::Top, look.top_color),
+            side: image(AssetKind::Side, look.top_color),
             plain: look.top_color,
         };
         let stroke = (i == self.selected).then(|| Stroke::new(3.0 * s, Color32::WHITE.gamma_multiply(focus.max(0.4))));
@@ -2800,7 +2936,7 @@ impl App {
         disc3d::Pose { tilt: discs.shown_angle().to_radians(), spin: discs.spin_direction, turn }
     }
 
-    fn paint_disc(&self, ui: &Ui, i: usize, rect: Rect, s: f32, focus: f32, placement: CoverPlacement) {
+    fn paint_disc(&self, ui: &Ui, i: usize, rect: Rect, s: f32, focus: f32) {
         let game = self.library.games.get(i);
         let text = match game {
             Some(g) => initials(&g.name),
@@ -2812,7 +2948,7 @@ impl App {
         let art = disc3d::Art {
             kind: self.theme().settings.discs.kind,
             print: match cover {
-                Some(path) => box3d::Fill::Cover(path, placeholder, placement),
+                Some(path) => box3d::Fill::Cover(path, placeholder, game.map(|g| g.cover_placement).unwrap_or_default()),
                 None => box3d::Fill::Color(placeholder),
             },
             label: cover.is_none().then(|| disc3d::Label { text: &text, font, color: Color32::WHITE, size: 0.2 }),
@@ -2971,7 +3107,7 @@ impl App {
         let font = FontId::proportional(20.0 * s);
         let h = 30.0 * s;
         let mut x = screen.right() - 60.0 * s;
-        let y = screen.bottom() - 50.0 * s;
+        let y = self.bar_rect(BarSlot::Bottom, screen, s).center().y;
         let painter = ui.painter();
         let mut clicked = None;
         for (i, Hint(action, label)) in hints.iter().enumerate().rev() {
@@ -3348,13 +3484,19 @@ impl App {
     fn draw_cover_editor(&mut self, ui: &Ui, screen: Rect, s: f32) {
         let Mode::CoverEditor(editor) = &self.mode else { return };
         let Some(game) = self.selected_game() else { return };
-        let (mut draft, mut cursor, mut button) = (editor.draft, editor.cursor, editor.button);
-        let before = game.cover_placement;
+        let (kind, mut draft, mut cursor, mut button) = (editor.kind, editor.draft, editor.cursor, editor.button);
+        let before = game.placement(kind);
         let painter = ui.painter();
         painter.rect_filled(screen, 0, Color32::from_black_alpha(190));
         let dialog = Rect::from_center_size(screen.center() - vec2(0.0, 20.0 * s), vec2((1100.0 * s).min(screen.width() - 40.0 * s), 820.0 * s));
         painter.rect_filled(dialog, (8.0 * s) as u8, Color32::from_rgb(18, 24, 40));
-        let title = tr!("Cover size and position · {name}", name = game.name);
+        let title = match kind {
+            AssetKind::Spine => tr!("Spine image size and position · {name}", name = game.name),
+            AssetKind::Top => tr!("Top image size and position · {name}", name = game.name),
+            AssetKind::Back => tr!("Back cover size and position · {name}", name = game.name),
+            AssetKind::Side => tr!("Side image size and position · {name}", name = game.name),
+            _ => tr!("Cover size and position · {name}", name = game.name),
+        };
         painter.text(dialog.left_top() + vec2(40.0 * s, 32.0 * s), Align2::LEFT_TOP, title, FontId::proportional(30.0 * s), Color32::WHITE);
 
         let settings = &self.theme().settings;
@@ -3366,8 +3508,10 @@ impl App {
             let color = if n == 1 && changed { ACCENT } else { Color32::from_gray(170) };
             painter.text(pos2(center_x, dialog.top() + 110.0 * s), Align2::CENTER_TOP, label, FontId::proportional(22.0 * s), color);
             let rect = Rect::from_center_size(pos2(center_x, dialog.top() + 150.0 * s + tile_h / 2.0), tile);
-            self.paint_tile_placed(ui, self.selected, rect, (6.0 * s) as u8, s, 0.0, placement);
+            *self.library.games[self.selected].placement_mut(kind) = placement;
+            self.paint_tile_art(ui, self.selected, rect, (6.0 * s) as u8, s, 0.0);
         }
+        *self.library.games[self.selected].placement_mut(kind) = before;
 
         let mut accept = None;
         let top = dialog.top() + 520.0 * s;
@@ -3430,7 +3574,7 @@ impl App {
             }
         }
 
-        self.mode = Mode::CoverEditor(CoverEditor { draft, cursor, button });
+        self.mode = Mode::CoverEditor(CoverEditor { kind, draft, cursor, button });
         if let Some(accept) = accept {
             self.close_cover_editor(accept);
         }
@@ -3472,8 +3616,9 @@ impl App {
             ),
             PromptKind::Color(row) => (
                 match row {
-                    SettingRow::GradientFrom => tr!("Gradient start color"),
-                    SettingRow::GradientTo => tr!("Gradient end color"),
+                    SettingRow::GradientFrom | SettingRow::Bar(_, BarRow::GradientFrom) => tr!("Gradient start color"),
+                    SettingRow::GradientTo | SettingRow::Bar(_, BarRow::GradientTo) => tr!("Gradient end color"),
+                    SettingRow::Bar(..) => tr!("Bar color"),
                     SettingRow::BoxSpineColor | SettingRow::GameSpineColor => tr!("Spine color"),
                     SettingRow::BoxSpineText | SettingRow::GameSpineText => tr!("Spine text color"),
                     SettingRow::BoxTopColor | SettingRow::GameTopColor => tr!("Top color"),
@@ -3482,6 +3627,8 @@ impl App {
                 },
                 Some(if row.page() == Page::GameBox {
                     tr!("Hex color: #rrggbb, e.g. #0b2a66. Leave empty to use the theme's color.")
+                } else if matches!(row, SettingRow::Bar(..)) {
+                    tr!("Hex color: #rrggbb, or #rrggbbaa to see through it, e.g. #00000099. Left/Right in Settings steps through presets.")
                 } else {
                     tr!("Hex color: #rrggbb, e.g. #0b2a66. Left/Right in Settings steps through presets.")
                 }),
@@ -3534,7 +3681,7 @@ impl App {
             SettingRow::Fullscreen => Some((tr!("General"), None)),
             SettingRow::AppStoreActive => Some((tr!("YASAFF Store"), Some(self.store_status()))),
             SettingRow::AboutApp => Some((tr!("About"), None)),
-            SettingRow::VirtualMouse => Some((tr!("Mouse"), None)),
+            SettingRow::VirtualMouse => Some((tr!("Mouse"), self.global_mouse_status())),
             SettingRow::ControllerSwap => Some((tr!("Controller"), Some(self.controller_warning()))),
             SettingRow::ControllerButton(PadButton::South) if self.settings.controls.is_custom() => {
                 Some((tr!("Controller"), Some(self.controller_warning())))
@@ -3545,7 +3692,7 @@ impl App {
             SettingRow::BoxCase => {
                 Some((tr!("Boxes"), Some((tr!("Defaults; each game can change them in its Options").to_owned(), Color32::from_gray(140)))))
             }
-            SettingRow::GameCoverAdjust => {
+            SettingRow::GameAdjust(AssetKind::Cover) => {
                 Some((tr!("Cover in its tile"), Some((tr!("Squares, game covers and box fronts").to_owned(), Color32::from_gray(140)))))
             }
             SettingRow::GameCover => Some((tr!("Images"), None)),
@@ -3553,6 +3700,7 @@ impl App {
                 Some((tr!("Spine and top"), Some((tr!("Used where there is no spine / top image").to_owned(), Color32::from_gray(140)))))
             }
             SettingRow::GameArt => Some((tr!("Background"), None)),
+            SettingRow::Bar(slot, BarRow::Enabled) => Some((slot.label(), None)),
             SettingRow::DiscKind => Some((tr!("Discs"), Some((tr!("Covers are printed on the label side").to_owned(), Color32::from_gray(140))))),
             SettingRow::ObjectColor => Some((
                 tr!("3D objects"),
@@ -3634,6 +3782,11 @@ impl App {
                 tr!("YasaffStuffServer: the website apps and themes come from"),
                 Action(tr!("Open")),
             ),
+            SettingRow::VirtualMouse if self.global_mouse.connected() => (
+                tr!("Enable virtual mouse on right analog stick").into(),
+                tr!("Yasaff Global Virtual Mouse is running and moves the mouse: right stick, RT left-click, LT right-click. Quit it to use this one."),
+                RowValue::Summary(tr!("Handled by Global Virtual Mouse").into()),
+            ),
             SettingRow::VirtualMouse => (
                 tr!("Enable virtual mouse on right analog stick").into(),
                 tr!("Right stick moves the cursor; RT or R3 clicks, LT right-clicks"),
@@ -3646,7 +3799,13 @@ impl App {
             ),
             SettingRow::ControllerButton(button) => {
                 let control = self.input.bindings().get(button);
-                let sub = if control == button.default_control() { "" } else { tr!("Changed; left/right picks what it does") };
+                let sub = if self.global_mouse.connected() && GLOBAL_MOUSE_BUTTONS.contains(&button) {
+                    tr!("Used by Yasaff Global Virtual Mouse while it runs")
+                } else if control == button.default_control() {
+                    ""
+                } else {
+                    tr!("Changed; left/right picks what it does")
+                };
                 (button_token(button), sub, Choice(control.label().into()))
             }
             SettingRow::ControllerReset => (
@@ -3726,8 +3885,8 @@ impl App {
                 };
                 (tr!("Spine image").into(), sub, Action(tr!("Choose…")))
             }
-            SettingRow::GameCoverAdjust => {
-                let p = game.map(|g| g.cover_placement).unwrap_or_default();
+            SettingRow::GameAdjust(kind) => {
+                let p = game.map(|g| g.placement(kind)).unwrap_or_default();
                 let value = format!(
                     "{:.0} % · {} · {}",
                     p.zoom * 100.0,
@@ -3736,7 +3895,7 @@ impl App {
                 );
                 (tr!("Size and position…").into(), tr!("Opens a before / after preview; nothing changes until you accept"), RowValue::Summary(value))
             }
-            SettingRow::GameCoverReset => (tr!("Reset size and position").into(), "", Action(tr!("Reset"))),
+            SettingRow::GameAdjustReset(_) => (tr!("Reset size and position").into(), "", Action(tr!("Reset"))),
             SettingRow::GameSpineClear => (tr!("Remove spine image").into(), "", Action(tr!("Remove"))),
             SettingRow::GameTop => {
                 let sub = if has(|g| g.top.is_some()) { tr!("Lies across the top of the box") } else { tr!("None; uses the top color") };
@@ -3748,6 +3907,15 @@ impl App {
                 (tr!("Back cover image").into(), sub, Action(tr!("Choose…")))
             }
             SettingRow::GameBackClear => (tr!("Remove back cover image").into(), "", Action(tr!("Remove"))),
+            SettingRow::GameSide => {
+                let sub = if has(|g| g.side.is_some()) {
+                    tr!("The edge opposite the spine; seen while a 3D model box turns")
+                } else {
+                    tr!("None; uses the top color")
+                };
+                (tr!("Right side image").into(), sub, Action(tr!("Choose…")))
+            }
+            SettingRow::GameSideClear => (tr!("Remove right side image").into(), "", Action(tr!("Remove"))),
             SettingRow::GameModel => {
                 let sub = if has(|g| g.model.is_some()) {
                     tr!("STL, OBJ, PLY, glTF / GLB or 3MF; big models are simplified")
@@ -3849,6 +4017,41 @@ impl App {
                 (tr!("Image").into(), sub, Action(tr!("Choose…")))
             }
             SettingRow::ImageFit => (tr!("Image layout").into(), "", Choice(bg.image_fit.label().into())),
+            SettingRow::Bar(slot, field) => {
+                let bar = theme.bar(slot);
+                let percent = |v: f32| Choice(format!("{:+.0} %", v * 100.0));
+                match field {
+                    BarRow::Enabled => {
+                        let sub = match slot {
+                            BarSlot::Top => tr!("Behind the library count and the clock"),
+                            BarSlot::Bottom => tr!("Behind the button hints"),
+                        };
+                        (tr!("Show the bar").into(), sub, Toggle(bar.enabled))
+                    }
+                    BarRow::Height => (tr!("Height").into(), tr!("At 1080p; the text inside stays centered"), px(bar.height(slot))),
+                    BarRow::Kind => (tr!("Fill").into(), "", Choice(bar.kind.label().into())),
+                    BarRow::Color => {
+                        let sub = if bar.kind == BackgroundKind::Image {
+                            tr!("Around and behind the image")
+                        } else {
+                            tr!("Enter to type a hex value; #rrggbbaa makes it see-through")
+                        };
+                        (tr!("Color").into(), sub, RowValue::Color(bar.color))
+                    }
+                    BarRow::GradientFrom => (tr!("Start color").into(), tr!("Enter to type a hex value"), RowValue::Color(bar.gradient_from)),
+                    BarRow::GradientTo => (tr!("End color").into(), tr!("Enter to type a hex value"), RowValue::Color(bar.gradient_to)),
+                    BarRow::GradientDirection => (tr!("Direction").into(), "", Choice(bar.gradient_direction.label().into())),
+                    BarRow::Image => {
+                        let sub = if self.theme().bar_image(slot).is_some() { tr!("Copied into the theme's images folder") } else { tr!("No image selected") };
+                        (tr!("Image").into(), sub, Action(tr!("Choose…")))
+                    }
+                    BarRow::ImageZoom => (tr!("Image size").into(), tr!("At 100 % the image just covers the bar"), Choice(format!("{:.0} %", bar.image_zoom * 100.0))),
+                    BarRow::ImageX => (tr!("Horizontal position").into(), tr!("Moves the image sideways"), percent(bar.image_x)),
+                    BarRow::ImageY => (tr!("Vertical position").into(), tr!("Moves the image up and down"), percent(bar.image_y)),
+                    BarRow::ImageRotation => (tr!("Rotation").into(), tr!("Turns the image in 5° steps"), Choice(format!("{:.0}°", bar.image_rotation))),
+                    BarRow::ImageReset => (tr!("Reset image placement").into(), tr!("Back to 100 %, centered, not rotated"), Action(tr!("Reset"))),
+                }
+            }
             SettingRow::AppStoreUrl => {
                 let url = self.settings.app_store().url.trim();
                 let value = if url.is_empty() { tr!("Not set").to_owned() } else { url.to_owned() };
@@ -4178,7 +4381,7 @@ impl App {
         for (slot, &index) in candidates.iter().enumerate() {
             let Some(game) = self.library.games.get(index) else { continue };
             let rect = Rect::from_min_size(pos2(x - row_w / 2.0 + slot as f32 * (tile + gap), top), vec2(tile, tile));
-            draw_game_tile(ui, game, rect, (6.0 * s) as u8, game.cover_placement);
+            draw_game_tile(ui, game, rect, (6.0 * s) as u8);
             if slot == cursor {
                 painter.rect_stroke(rect.expand(4.0 * s), (8.0 * s) as u8, Stroke::new(3.0 * s, Color32::WHITE), StrokeKind::Outside);
             }
@@ -4366,6 +4569,7 @@ impl eframe::App for App {
     }
 
     fn raw_input_hook(&mut self, _ctx: &Context, raw_input: &mut egui::RawInput) {
+        self.input.set_global_mouse(self.global_mouse.connected());
         self.input.feed_virtual_mouse(raw_input, self.settings.mouse.speed);
     }
 
@@ -4403,6 +4607,7 @@ impl eframe::App for App {
         let s = (screen.height() / 1080.0).max(0.45);
 
         self.draw_background(ui, screen);
+        self.draw_bars(ui, screen, s);
         let painter = ui.painter().clone();
         self.draw_top_bar(&painter, screen, s);
         match self.theme().settings.view {
@@ -4591,8 +4796,9 @@ fn side_panel(ui: &Ui, screen: Rect, s: f32, title: &str, rows: &[(&str, Option<
     clicked
 }
 
-fn draw_game_tile(ui: &Ui, game: &Game, rect: Rect, radius: u8, placement: CoverPlacement) {
+fn draw_game_tile(ui: &Ui, game: &Game, rect: Rect, radius: u8) {
     if let Some(cover) = &game.cover {
+        let placement = game.cover_placement;
         if placement.zoom < 1.0 {
             ui.painter().rect_filled(rect, radius, placeholder_color(&game.name).gamma_multiply(0.5));
         }
@@ -4652,20 +4858,21 @@ impl BoxShape {
     }
 }
 
-fn paint_image_quad(ui: &Ui, path: &Path, quad: [Pos2; 4], tint: Color32) -> bool {
+fn paint_image_quad(ui: &Ui, path: &Path, quad: [Pos2; 4], tint: Color32, placement: CoverPlacement) -> bool {
     let size = vec2(quad[0].distance(quad[1]), quad[0].distance(quad[3]));
     let texture = match egui::Image::new(file_uri(path)).load_for_size(ui.ctx(), size) {
         Ok(egui::load::TexturePoll::Ready { texture }) => texture,
         _ => return false,
     };
-    let turn = (size.y > size.x) != (texture.size.y > texture.size.x);
-    let uv = if turn {
-        [pos2(0.0, 1.0), pos2(0.0, 0.0), pos2(1.0, 0.0), pos2(1.0, 1.0)]
-    } else {
-        [pos2(0.0, 0.0), pos2(1.0, 0.0), pos2(1.0, 1.0), pos2(0.0, 1.0)]
-    };
+    let turn = box3d::turns_to_fit(texture.size, size);
+    let (part, uv) = box3d::place_turned(texture.size, size, placement, turn);
+    if !part.is_positive() {
+        return true;
+    }
+    let at = |p: Pos2| quad[0].lerp(quad[1], p.x).lerp(quad[3].lerp(quad[2], p.x), p.y);
+    let corners = [part.left_top(), part.right_top(), part.right_bottom(), part.left_bottom()].map(at);
     let mut mesh = Mesh::with_texture(texture.id);
-    for (pos, uv) in quad.into_iter().zip(uv) {
+    for (pos, uv) in corners.into_iter().zip(uv) {
         mesh.vertices.push(egui::epaint::Vertex { pos, uv, color: tint });
     }
     mesh.add_triangle(0, 1, 2);
@@ -4805,6 +5012,46 @@ fn paint_theme_background(ui: &Ui, theme: &Theme, rect: Rect) {
             }
         }
     }
+}
+
+fn paint_bar(ui: &Ui, theme: &Theme, slot: BarSlot, rect: Rect) {
+    let bar = theme.settings.bar(slot);
+    if !bar.enabled {
+        return;
+    }
+    let painter = ui.painter().with_clip_rect(rect);
+    match bar.kind {
+        BackgroundKind::Color => {
+            painter.rect_filled(rect, 0, bar.color);
+        }
+        BackgroundKind::Gradient => gradient(&painter, rect, bar.gradient_from, bar.gradient_to, bar.gradient_direction),
+        BackgroundKind::Image => {
+            painter.rect_filled(rect, 0, bar.color);
+            if let Some(path) = theme.bar_image(slot) {
+                paint_bar_image(ui, &painter, &path, rect, bar);
+            }
+        }
+    }
+}
+
+fn paint_bar_image(ui: &Ui, painter: &Painter, path: &Path, rect: Rect, bar: &BarStyle) {
+    let Ok(egui::load::TexturePoll::Ready { texture }) = egui::Image::new(file_uri(path)).load_for_size(ui.ctx(), rect.size()) else {
+        return;
+    };
+    if texture.size.x <= 0.0 || texture.size.y <= 0.0 {
+        return;
+    }
+    let cover = (rect.width() / texture.size.x).max(rect.height() / texture.size.y);
+    let half = texture.size * cover * bar.image_zoom / 2.0;
+    let center = rect.center() + vec2(bar.image_x * rect.width(), bar.image_y * rect.height());
+    let turn = egui::emath::Rot2::from_angle(bar.image_rotation.to_radians());
+    let mut mesh = Mesh::with_texture(texture.id);
+    for (corner, uv) in [(vec2(-1.0, -1.0), pos2(0.0, 0.0)), (vec2(1.0, -1.0), pos2(1.0, 0.0)), (vec2(1.0, 1.0), pos2(1.0, 1.0)), (vec2(-1.0, 1.0), pos2(0.0, 1.0))] {
+        mesh.vertices.push(egui::epaint::Vertex { pos: center + turn * (corner * half), uv, color: Color32::WHITE });
+    }
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    painter.add(Shape::mesh(mesh));
 }
 
 fn paint_image_fit(ui: &Ui, path: &Path, rect: Rect, fit: ImageFit) {

@@ -7,6 +7,7 @@ mod appstore;
 mod box3d;
 mod disc3d;
 mod fonts;
+mod global_mouse;
 mod apps;
 mod input;
 mod launcher;

@@ -26,6 +26,8 @@ pub struct Game {
     pub top: Option<PathBuf>,
     #[serde(default)]
     pub back: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side: Option<PathBuf>,
     #[serde(default)]
     pub model: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "ModelUp::is_default")]
@@ -34,6 +36,14 @@ pub struct Game {
     pub box_style: BoxOverrides,
     #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
     pub cover_placement: CoverPlacement,
+    #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
+    pub spine_placement: CoverPlacement,
+    #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
+    pub top_placement: CoverPlacement,
+    #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
+    pub back_placement: CoverPlacement,
+    #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
+    pub side_placement: CoverPlacement,
     #[serde(default)]
     pub background: Option<PathBuf>,
     #[serde(default)]
@@ -64,7 +74,40 @@ impl Game {
             AssetKind::Spine => &mut self.spine,
             AssetKind::Top => &mut self.top,
             AssetKind::Back => &mut self.back,
+            AssetKind::Side => &mut self.side,
             AssetKind::Model => &mut self.model,
+        }
+    }
+
+    pub fn asset(&self, kind: AssetKind) -> Option<&Path> {
+        match kind {
+            AssetKind::Cover => self.cover.as_deref(),
+            AssetKind::Background => self.background.as_deref(),
+            AssetKind::Spine => self.spine.as_deref(),
+            AssetKind::Top => self.top.as_deref(),
+            AssetKind::Back => self.back.as_deref(),
+            AssetKind::Side => self.side.as_deref(),
+            AssetKind::Model => self.model.as_deref(),
+        }
+    }
+
+    pub fn placement(&self, kind: AssetKind) -> CoverPlacement {
+        match kind {
+            AssetKind::Spine => self.spine_placement,
+            AssetKind::Top => self.top_placement,
+            AssetKind::Back => self.back_placement,
+            AssetKind::Side => self.side_placement,
+            _ => self.cover_placement,
+        }
+    }
+
+    pub fn placement_mut(&mut self, kind: AssetKind) -> &mut CoverPlacement {
+        match kind {
+            AssetKind::Spine => &mut self.spine_placement,
+            AssetKind::Top => &mut self.top_placement,
+            AssetKind::Back => &mut self.back_placement,
+            AssetKind::Side => &mut self.side_placement,
+            _ => &mut self.cover_placement,
         }
     }
 }
@@ -91,13 +134,14 @@ impl CoverPlacement {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum AssetKind {
     Cover,
     Background,
     Spine,
     Top,
     Back,
+    Side,
     Model,
 }
 
@@ -109,6 +153,7 @@ impl AssetKind {
             AssetKind::Spine => "spine",
             AssetKind::Top => "top",
             AssetKind::Back => "back",
+            AssetKind::Side => "side",
             AssetKind::Model => "model",
         }
     }
@@ -189,10 +234,15 @@ impl Library {
             spine: None,
             top: None,
             back: None,
+            side: None,
             model: None,
             model_up: ModelUp::default(),
             box_style: BoxOverrides::default(),
             cover_placement: CoverPlacement::default(),
+            spine_placement: CoverPlacement::default(),
+            top_placement: CoverPlacement::default(),
+            back_placement: CoverPlacement::default(),
+            side_placement: CoverPlacement::default(),
             last_played: None,
             title_font: None,
             app_id: None,
@@ -254,7 +304,7 @@ impl Library {
     pub fn remove(&mut self, index: usize) {
         let assets = self.assets_dir();
         let game = self.games.remove(index);
-        for path in [game.cover, game.background, game.spine, game.top, game.back, game.model].into_iter().flatten() {
+        for path in [game.cover, game.background, game.spine, game.top, game.back, game.side, game.model].into_iter().flatten() {
             remove_if_owned(&assets, &path);
         }
     }
