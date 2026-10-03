@@ -681,5 +681,10 @@
   "Fill the screen with bubbles": "Wypełnij ekran bąbelkami",
   "Not available in this pre-defined theme": "Niedostępne w tym gotowym motywie",
   "Standard": "Standardowy",
-  "This is your only own theme. Create another one before deleting it.": "To twój jedyny własny motyw. Utwórz inny, zanim go usuniesz."
+  "This is your only own theme. Create another one before deleting it.": "To twój jedyny własny motyw. Utwórz inny, zanim go usuniesz.",
+  "Swap with other bubble": "Zamień z innym bąbelkiem",
+  "Swap here": "Zamień tutaj",
+  "Pick a bubble to swap places with {name}": "Wybierz bąbelek, z którym zamieni się miejscami {name}",
+  "Only games can swap places": "Miejscami mogą się zamieniać tylko gry",
+  "Move here": "Przenieś tutaj"
 }

@@ -62,6 +62,7 @@ enum MenuItem {
     FetchArtwork,
     BoxAppearance,
     Rename,
+    SwapBubble,
     EditCommand,
     SaveFolder,
     OpenSaveFolder,
@@ -71,13 +72,14 @@ enum MenuItem {
     Remove,
 }
 
-const MENU: [(MenuItem, &str); 11] = [
+const MENU: [(MenuItem, &str); 12] = [
     (MenuItem::Start, tr_key!("Start")),
     (MenuItem::BoxAppearance, tr_key!("Tile and box appearance…")),
     (MenuItem::SetCover, tr_key!("Set cover image")),
     (MenuItem::SetBackground, tr_key!("Set background image")),
     (MenuItem::FetchArtwork, tr_key!("Fetch artwork")),
     (MenuItem::Rename, tr_key!("Rename")),
+    (MenuItem::SwapBubble, tr_key!("Swap with other bubble")),
     (MenuItem::EditCommand, tr_key!("Edit launch command")),
     (MenuItem::SaveFolder, tr_key!("Set save folder…")),
     (MenuItem::CreateDisc, tr_key!("Create disc file…")),
@@ -344,6 +346,7 @@ impl Drop for Launching {
 enum Mode {
     Home,
     Options { cursor: usize },
+    SwapBubble { from: usize, target: usize },
     AddMenu { cursor: usize },
     Picker(Box<Picker>),
     Scan(Box<ScanState>),
@@ -1106,6 +1109,18 @@ impl App {
                     }
                 }
                 Action::Back | Action::Options => self.mode = Mode::Home,
+                _ => {}
+            },
+            Mode::SwapBubble { from, target } => match action {
+                Action::Left | Action::Right | Action::Up | Action::Down => {
+                    let layout = self.bubble_layout.borrow();
+                    *target = navigate_free(layout.as_ref().map_or(&[], |l| &l.centers), *target, action);
+                }
+                Action::Confirm => {
+                    let (from, target) = (*from, *target);
+                    self.move_bubble(from, target);
+                }
+                Action::Back => self.mode = Mode::Options { cursor: self.menu_index(MenuItem::SwapBubble) },
                 _ => {}
             },
             Mode::AddMenu { cursor } => match action {
@@ -2270,6 +2285,7 @@ impl App {
                     menu.push((MenuItem::CloseApp, tr!("Close game").to_owned()));
                 }
                 MenuItem::SaveFolder if store_app => {}
+                MenuItem::SwapBubble if !self.is_bubbles() => {}
                 MenuItem::SetCover if boxes => {}
                 MenuItem::EditCommand | MenuItem::FetchArtwork if store_app => {}
                 MenuItem::Remove if store_app => menu.push((item, tr!("Uninstall").to_owned())),
@@ -2315,6 +2331,10 @@ impl App {
             MenuItem::BoxAppearance => self.mode = Mode::Settings { cursor: 0, page: Page::GameBox, in_rows: false },
             MenuItem::Rename => {
                 self.mode = Mode::Prompt { kind: PromptKind::Rename, buffer: game.name.clone() };
+            }
+            MenuItem::SwapBubble => {
+                let target = self.bubble_places().get(self.selected).copied().unwrap_or(self.selected);
+                self.mode = Mode::SwapBubble { from: self.selected, target };
             }
             MenuItem::EditCommand => {
                 let buffer = apps::join_command(&game.target, &game.args);
@@ -2576,6 +2596,71 @@ impl App {
             Mode::Prompt { kind: PromptKind::Color(row) | PromptKind::BoxSize(row), .. } => self.settings_at(*row),
             _ => Mode::Home,
         };
+    }
+
+    fn bubble_places(&self) -> Vec<usize> {
+        let games = &self.library.games;
+        let (n, count) = (games.len(), self.tile_count());
+        let total = self.bubble_layout.borrow().as_ref().map_or(count, |l| l.centers.len()).max(count);
+        let index: std::collections::HashMap<&str, usize> = games.iter().enumerate().map(|(i, g)| (g.id.as_str(), i)).collect();
+        let slot_of = |key: &str| match key.strip_prefix("empty-") {
+            Some(k) => k.parse::<usize>().ok().map(|k| count + k).filter(|&j| j < total),
+            None => index.get(key).copied(),
+        };
+        let mut place = vec![usize::MAX; n];
+        let mut taken = vec![false; total];
+        for (i, game) in games.iter().enumerate() {
+            if let Some(slot) = game.bubble_place.as_deref().and_then(slot_of)
+                && !taken[slot]
+            {
+                place[i] = slot;
+                taken[slot] = true;
+            }
+        }
+        for i in 0..n {
+            if place[i] == usize::MAX && !taken[i] {
+                place[i] = i;
+                taken[i] = true;
+            }
+        }
+        let mut free = (0..n).chain(count..total).filter(|&j| !taken[j]);
+        for p in place.iter_mut().filter(|p| **p == usize::MAX) {
+            *p = free.next().unwrap_or(0);
+        }
+        place
+    }
+
+    fn slot_key(&self, slot: usize) -> Option<String> {
+        let (n, count) = (self.library.games.len(), self.tile_count());
+        match slot {
+            _ if slot < n => Some(self.library.games[slot].id.clone()),
+            _ if slot >= count => Some(format!("empty-{}", slot - count)),
+            _ => None,
+        }
+    }
+
+    fn move_bubble(&mut self, from: usize, target: usize) {
+        let Some(target_key) = self.slot_key(target) else {
+            self.notify(tr!("Only games can swap places"));
+            return;
+        };
+        self.mode = Mode::Home;
+        let places = self.bubble_places();
+        let Some(&own) = places.get(from) else { return };
+        if own == target {
+            return;
+        }
+        let mut moves = vec![(from, target_key)];
+        if let Some(other) = places.iter().position(|&p| p == target)
+            && let Some(own_key) = self.slot_key(own)
+        {
+            moves.push((other, own_key));
+        }
+        for (i, key) in moves {
+            let game = &mut self.library.games[i];
+            game.bubble_place = (key != game.id).then_some(key);
+        }
+        self.save();
     }
 
     fn remove_selected(&mut self) {
@@ -2878,9 +2963,16 @@ impl App {
             let layout = cache.as_ref().unwrap();
             (layout.centers.clone(), layout.radii.clone())
         };
-        *self.bubble_centers.borrow_mut() = centers.iter().take(count).copied().collect();
         if centers.len() < count {
+            self.bubble_centers.borrow_mut().clear();
             return;
+        }
+        let places = self.bubble_places();
+        let slot = |i: usize| places.get(i).copied().unwrap_or(i);
+        *self.bubble_centers.borrow_mut() = (0..count).map(|i| centers[slot(i)]).collect();
+        let mut occupant: Vec<Option<usize>> = vec![None; centers.len()];
+        for i in 0..count {
+            occupant[slot(i)] = Some(i);
         }
 
         let ctx = ui.ctx().clone();
@@ -2889,16 +2981,27 @@ impl App {
             _ => None,
         };
         let t = ctx.input(|i| i.time) as f32;
-        let interactive = matches!(self.mode, Mode::Home);
+        let interactive = matches!(self.mode, Mode::Home | Mode::SwapBubble { .. });
+        let (swapping, target) = match self.mode {
+            Mode::SwapBubble { from, target } => (Some(from), Some(target)),
+            _ => (None, None),
+        };
         let selected = self.selected.min(count - 1);
+        let focused = target.unwrap_or(slot(selected));
+        let moving = swapping.map(slot);
         let mut clicked = None;
-        let order = (count..centers.len()).chain((0..count).filter(|&i| i != selected)).chain([selected]);
-        for i in order {
-            let focus = ctx.animate_bool_with_time(Id::new(("bubble-focus", i)), i == selected, 0.18);
-            let phase = i as f32 * 1.7;
-            let center = centers[i] + vec2((t * 0.5 + phase).cos() * 3.0 * s, (t * 0.7 + phase).sin() * 4.0 * s);
-            let r = radii[i] * (1.0 + 0.18 * focus);
-            let game = self.library.games.get(i);
+        let order = (0..centers.len())
+            .filter(|&j| occupant[j].is_none() && j != focused && Some(j) != moving)
+            .chain((0..centers.len()).filter(|&j| occupant[j].is_some() && j != focused && Some(j) != moving))
+            .chain(moving.filter(|&j| j != focused))
+            .chain([focused]);
+        for j in order {
+            let tile = occupant[j];
+            let focus = ctx.animate_bool_with_time(Id::new(("bubble-focus", j)), j == focused, 0.18);
+            let phase = tile.unwrap_or(j) as f32 * 1.7;
+            let center = centers[j] + vec2((t * 0.5 + phase).cos() * 3.0 * s, (t * 0.7 + phase).sin() * 4.0 * s);
+            let r = radii[j] * (1.0 + 0.18 * focus);
+            let game = tile.and_then(|i| self.library.games.get(i));
             let cover = game.and_then(|g| g.cover.as_deref()).and_then(|path| {
                 match egui::Image::new(file_uri(path)).load_for_size(&ctx, Vec2::splat(r * 2.0)) {
                     Ok(egui::load::TexturePoll::Ready { texture }) => Some((texture.id, texture.size)),
@@ -2906,26 +3009,39 @@ impl App {
                 }
             });
             let look = BubbleLook {
-                empty: i >= count,
-                texture: video.filter(|_| i == selected && game.is_some_and(|g| g.video.is_some())).or(cover),
+                empty: tile.is_none(),
+                texture: video.filter(|_| tile == Some(selected) && game.is_some_and(|g| g.video.is_some())).or(cover),
                 fill: game.map_or(Color32::from_white_alpha(40), |g| placeholder_color(&g.name)),
-                label: match game {
-                    Some(g) => initials(&g.name),
-                    None => self.special(i).map_or("", Special::glyph).to_owned(),
+                label: match (game, tile) {
+                    (Some(g), _) => initials(&g.name),
+                    (None, Some(i)) => self.special(i).map_or("", Special::glyph).to_owned(),
+                    (None, None) => String::new(),
                 },
+                swapping: Some(j) == moving,
             };
             paint_bubble(ui.painter(), center, r, &look, t, focus, s);
-            if interactive && !look.empty {
-                let resp = ui.interact(Rect::from_center_size(center, Vec2::splat(r * 2.0)), Id::new(("tile", i)), Sense::click());
+            if interactive && (!look.empty || swapping.is_some()) {
+                let resp = ui.interact(Rect::from_center_size(center, Vec2::splat(r * 2.0)), Id::new(("bubble", j)), Sense::click());
                 if resp.clicked() && resp.interact_pointer_pos().is_some_and(|p| p.distance(center) <= r) {
-                    clicked = Some(i);
+                    clicked = Some(j);
                 }
             }
         }
 
-        self.draw_details(ui, pos2(screen.left() + 110.0 * s, screen.bottom() - 200.0 * s), s, false);
-        if let Some(i) = clicked {
-            self.click_tile(i);
+        let details = pos2(screen.left() + 110.0 * s, screen.bottom() - 200.0 * s);
+        if let Some(name) = swapping.and_then(|i| self.library.games.get(i)).map(|g| g.name.clone()) {
+            let text = tr!("Pick a bubble to swap places with {name}", name = name);
+            shadow_text(ui.painter(), details - vec2(0.0, 44.0 * s), Align2::LEFT_TOP, &text, 24.0 * s, SWAP_GLOW);
+        }
+        self.draw_details(ui, details, s, false);
+        match (clicked, swapping) {
+            (Some(j), Some(from)) => self.move_bubble(from, j),
+            (Some(j), None) => {
+                if let Some(i) = occupant[j] {
+                    self.click_tile(i);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -3264,6 +3380,10 @@ impl App {
                 Hint(Action::Back, tr!("Back")),
             ],
             Mode::Launching(_) => &[Hint(Action::Back, tr!("Hide"))],
+            Mode::SwapBubble { target, .. } if !self.bubble_places().contains(&target) && target >= self.tile_count() => {
+                &[Hint(Action::Confirm, tr!("Move here")), Hint(Action::Back, tr!("Cancel"))]
+            }
+            Mode::SwapBubble { .. } => &[Hint(Action::Confirm, tr!("Swap here")), Hint(Action::Back, tr!("Cancel"))],
             Mode::Options { .. } | Mode::AddMenu { .. } | Mode::ConfirmRemove { .. } => {
                 &[Hint(Action::Confirm, tr!("Select")), Hint(Action::Back, tr!("Back"))]
             }
@@ -5072,11 +5192,14 @@ fn pack_bubbles(diameters: &[f32], area: Rect) -> (Vec<Pos2>, Vec<f32>) {
     best
 }
 
+const SWAP_GLOW: Color32 = Color32::from_rgb(255, 210, 60);
+
 struct BubbleLook {
     empty: bool,
     texture: Option<(TextureId, Vec2)>,
     fill: Color32,
     label: String,
+    swapping: bool,
 }
 
 fn disc_mesh(texture: TextureId, rings: usize, segments: usize, vertex: impl Fn(f32, f32) -> (Pos2, Pos2, Color32)) -> Mesh {
@@ -5157,6 +5280,14 @@ fn paint_bubble(painter: &Painter, center: Pos2, r: f32, look: &BubbleLook, t: f
 
     painter.circle_stroke(center, r, Stroke::new(1.4 * s, Color32::from_white_alpha(90)));
     painter.circle_stroke(center, r * 0.96, Stroke::new(1.0 * s, Color32::from_white_alpha(22)));
+    if look.swapping {
+        let pulse = 0.75 + 0.25 * (t * 4.0).sin();
+        for k in 0..8 {
+            let alpha = pulse * 0.5 * (1.0 - k as f32 / 8.0).powi(2);
+            painter.circle_stroke(center, r + (2.0 + k as f32 * 3.0) * s, Stroke::new(4.0 * s, SWAP_GLOW.gamma_multiply(alpha)));
+        }
+        painter.circle_stroke(center, r, Stroke::new(3.0 * s, SWAP_GLOW.gamma_multiply(pulse)));
+    }
     if focus > 0.0 {
         painter.circle_stroke(center, r + 5.0 * s, Stroke::new(3.0 * s, Color32::WHITE.gamma_multiply(focus)));
         painter.circle_stroke(center, r + 10.0 * s, Stroke::new(4.0 * s, Color32::from_white_alpha((40.0 * focus) as u8)));

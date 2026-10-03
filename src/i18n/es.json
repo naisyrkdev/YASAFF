@@ -672,5 +672,10 @@
   "Fill the screen with bubbles": "Llenar la pantalla de burbujas",
   "Not available in this pre-defined theme": "No disponible en este tema predefinido",
   "Standard": "Estándar",
-  "This is your only own theme. Create another one before deleting it.": "Es tu único tema propio. Crea otro antes de eliminarlo."
+  "This is your only own theme. Create another one before deleting it.": "Es tu único tema propio. Crea otro antes de eliminarlo.",
+  "Swap with other bubble": "Intercambiar con otra burbuja",
+  "Swap here": "Intercambiar aquí",
+  "Pick a bubble to swap places with {name}": "Elige una burbuja para intercambiar el sitio con {name}",
+  "Only games can swap places": "Solo los juegos pueden intercambiar su sitio",
+  "Move here": "Mover aquí"
 }

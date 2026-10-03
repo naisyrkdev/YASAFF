@@ -672,5 +672,10 @@
   "Fill the screen with bubbles": "Remplir l'écran de bulles",
   "Not available in this pre-defined theme": "Non disponible dans ce thème prédéfini",
   "Standard": "Standard",
-  "This is your only own theme. Create another one before deleting it.": "C'est votre seul thème personnel. Créez-en un autre avant de le supprimer."
+  "This is your only own theme. Create another one before deleting it.": "C'est votre seul thème personnel. Créez-en un autre avant de le supprimer.",
+  "Swap with other bubble": "Échanger avec une autre bulle",
+  "Swap here": "Échanger ici",
+  "Pick a bubble to swap places with {name}": "Choisissez une bulle avec laquelle {name} échangera sa place",
+  "Only games can swap places": "Seuls les jeux peuvent échanger leur place",
+  "Move here": "Déplacer ici"
 }

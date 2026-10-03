@@ -56,6 +56,8 @@ pub struct Game {
     pub app_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub save_dir: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bubble_place: Option<String>,
 }
 
 impl Game {
@@ -254,6 +256,7 @@ impl Library {
             title_font: None,
             app_id: None,
             save_dir: None,
+            bubble_place: None,
         });
         self.sort();
         self.games.iter().position(|g| g.id == id).unwrap()
