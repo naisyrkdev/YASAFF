@@ -228,6 +228,11 @@ enum SettingRow {
     BubbleShuffle,
     BubbleVideo,
     BubbleSound,
+    BubbleCustomSound,
+    BubbleSoundFile,
+    SwapSound,
+    SwapCustomSound,
+    SwapSoundFile,
     BoxCase,
     BoxWidth,
     BoxHeight,
@@ -1262,7 +1267,11 @@ impl App {
                     if self.is_bubbles() {
                         self.navigate_bubbles(action);
                     } else {
+                        let before = self.selected;
                         self.selected = navigate(self.home_layout(), self.selected, self.tile_count(), action);
+                        if self.selected != before {
+                            self.swap_sound();
+                        }
                     }
                 }
                 Action::Confirm | Action::Options if self.empty_bubble().is_some() => {}
@@ -1625,6 +1634,12 @@ impl App {
         let bubbles = theme.kind == ThemeKind::Bubbles;
         if bubbles {
             rows.extend([R::BubbleSize, R::BubbleVariance, R::BubbleFill, R::BubbleShuffle, R::BubbleVideo, R::BubbleSound]);
+            if theme.bubbles.sound {
+                rows.push(R::BubbleCustomSound);
+                if theme.bubbles.custom_sound {
+                    rows.push(R::BubbleSoundFile);
+                }
+            }
         } else {
             match theme.view {
             ViewKind::Row => {
@@ -1635,6 +1650,13 @@ impl App {
                 rows.push(R::TileBar);
             }
             ViewKind::Grid => rows.extend([R::GridColumns, R::GridRows, R::GridSpacing, R::GridEnlarge, R::GridAlign]),
+            }
+            rows.push(R::SwapSound);
+            if theme.swap.sound {
+                rows.push(R::SwapCustomSound);
+                if theme.swap.custom_sound {
+                    rows.push(R::SwapSoundFile);
+                }
             }
         }
         rows.extend([R::GameArt, R::BackgroundKind]);
@@ -1985,6 +2007,21 @@ impl App {
                     self.mode = Mode::ConfirmRemove { what: Removal::Theme, yes: false };
                 }
             }
+            SettingRow::BubbleSoundFile | SettingRow::SwapSoundFile => {
+                let Some(path) = rfd::FileDialog::new()
+                    .set_title(tr!("Select swap sound"))
+                    .add_filter(tr!("Sounds"), crate::sound::EXTS)
+                    .pick_file()
+                else {
+                    return;
+                };
+                let bubbles = row == SettingRow::BubbleSoundFile;
+                if let Err(e) = self.themes[self.theme].set_sound_file(bubbles, &path) {
+                    self.notify(tr!("Could not set sound: {error}", error = format!("{e:#}")));
+                } else {
+                    self.play_swap_sound(bubbles);
+                }
+            }
             SettingRow::BackgroundImage => {
                 let Some(path) = rfd::FileDialog::new()
                     .set_title(tr!("Select background image"))
@@ -2141,6 +2178,9 @@ impl App {
             | SettingRow::BubbleFill
             | SettingRow::BubbleVideo
             | SettingRow::BubbleSound
+            | SettingRow::BubbleCustomSound
+            | SettingRow::SwapSound
+            | SettingRow::SwapCustomSound
             | SettingRow::Bar(..) => self.adjust_setting(row, 1),
         }
     }
@@ -2257,6 +2297,9 @@ impl App {
             }
             SettingRow::BubbleVideo => settings.bubbles.play_video ^= true,
             SettingRow::BubbleSound => settings.bubbles.sound ^= true,
+            SettingRow::BubbleCustomSound => settings.bubbles.custom_sound ^= true,
+            SettingRow::SwapSound => settings.swap.sound ^= true,
+            SettingRow::SwapCustomSound => settings.swap.custom_sound ^= true,
             SettingRow::BubbleFill => settings.bubbles.fill_screen ^= true,
             SettingRow::TileStyle => settings.tile_style = cycle(&TileStyle::ALL, settings.tile_style, delta),
             SettingRow::BoxCase => settings.boxes.case = cycle(&BoxCase::ALL, settings.boxes.case, delta),
@@ -3442,6 +3485,7 @@ impl App {
                 if interactive && ui.interact(hit, Id::new(("grid-page-arrow", dir)), Sense::click()).clicked() {
                     let target = (page as isize + dir) as usize * per_page + self.selected % per_page;
                     self.selected = target.min(count - 1);
+                    self.swap_sound();
                 }
             }
             let counter = tr!("Page {page} / {pages}", page = page + 1, pages = pages);
@@ -3493,7 +3537,7 @@ impl App {
 
     /// Bigger bubbles sound lower.
     fn bubble_sound(&mut self, slot: usize) {
-        if !self.theme().settings.bubbles.sound {
+        if !self.theme().settings.bubbles.sound || self.custom_swap_sound(true) {
             return;
         }
         let pitch = {
@@ -3504,6 +3548,27 @@ impl App {
             (620.0 * (mean / r.max(1.0)).powf(0.7)).clamp(300.0, 1400.0)
         };
         self.sounds.bubble(pitch);
+    }
+
+    fn custom_swap_sound(&mut self, bubbles: bool) -> bool {
+        let theme = self.theme();
+        let custom = if bubbles { theme.settings.bubbles.custom_sound } else { theme.settings.swap.custom_sound };
+        match theme.sound_file(bubbles).filter(|_| custom) {
+            Some(path) => self.sounds.custom(&path),
+            None => false,
+        }
+    }
+
+    fn swap_sound(&mut self) {
+        if self.theme().settings.swap.sound && !self.custom_swap_sound(false) {
+            self.sounds.swap();
+        }
+    }
+
+    fn play_swap_sound(&mut self, bubbles: bool) {
+        if !self.custom_swap_sound(bubbles) && !bubbles {
+            self.sounds.swap();
+        }
     }
 
     fn bubble_key(&self, i: usize) -> String {
@@ -3984,6 +4049,9 @@ impl App {
             self.activate_selected();
         } else {
             self.selected = i;
+            if !self.is_bubbles() {
+                self.swap_sound();
+            }
         }
     }
 
@@ -5037,10 +5105,33 @@ impl App {
                 Toggle(theme.bubbles.play_video),
             ),
             SettingRow::BubbleSound => (
-                tr!("Bubble sounds").into(),
+                tr!("Sound when swapping bubbles").into(),
                 tr!("A soft bloop when moving between bubbles"),
                 Toggle(theme.bubbles.sound),
             ),
+            SettingRow::BubbleCustomSound => (
+                tr!("Use custom sound when swapping bubbles").into(),
+                tr!("Plays your own sound file instead of the bloop"),
+                Toggle(theme.bubbles.custom_sound),
+            ),
+            SettingRow::SwapSound => (
+                tr!("Sound when swapping game").into(),
+                tr!("A soft tick when moving between games"),
+                Toggle(theme.swap.sound),
+            ),
+            SettingRow::SwapCustomSound => (
+                tr!("Use custom sound when swapping game").into(),
+                tr!("Plays your own sound file instead of the tick"),
+                Toggle(theme.swap.custom_sound),
+            ),
+            SettingRow::BubbleSoundFile | SettingRow::SwapSoundFile => {
+                let sub = if self.theme().sound_file(row == SettingRow::BubbleSoundFile).is_some() {
+                    tr!("Copied into the theme's folder; WAV, MP3, OGG or FLAC")
+                } else {
+                    tr!("No sound selected; WAV, MP3, OGG or FLAC")
+                };
+                (tr!("Custom sound").into(), sub, Action(tr!("Choose…")))
+            }
             SettingRow::BoxCase => {
                 let label = if theme.tile_style == TileStyle::Cover { tr!("Cover shape") } else { tr!("Box shape") };
                 (label.into(), tr!("Select box size"), Choice(boxes.case.label().into()))

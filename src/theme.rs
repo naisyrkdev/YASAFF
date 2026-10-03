@@ -442,11 +442,36 @@ pub struct BubbleSettings {
     pub fill_screen: bool,
     pub play_video: bool,
     pub sound: bool,
+    pub custom_sound: bool,
+    pub sound_file: Option<String>,
 }
 
 impl Default for BubbleSettings {
     fn default() -> Self {
-        Self { size: 150.0, size_variance: 20.0, seed: 0, fill_screen: true, play_video: true, sound: true }
+        Self {
+            size: 150.0,
+            size_variance: 20.0,
+            seed: 0,
+            fill_screen: true,
+            play_video: true,
+            sound: true,
+            custom_sound: false,
+            sound_file: None,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(default)]
+pub struct SwapSound {
+    pub sound: bool,
+    pub custom_sound: bool,
+    pub sound_file: Option<String>,
+}
+
+impl Default for SwapSound {
+    fn default() -> Self {
+        Self { sound: true, custom_sound: false, sound_file: None }
     }
 }
 
@@ -696,6 +721,7 @@ pub struct ThemeSettings {
     pub objects: ObjectSettings,
     pub discs: DiscSettings,
     pub bubbles: BubbleSettings,
+    pub swap: SwapSound,
     pub background: Background,
     pub top_bar: BarStyle,
     pub bottom_bar: BarStyle,
@@ -719,7 +745,7 @@ impl ThemeSettings {
 
     pub fn disabled_options(&self) -> &'static [&'static str] {
         match self.kind {
-            ThemeKind::Bubbles => &["view", "tiles", "grid", "tile_style", "boxes", "objects", "discs"],
+            ThemeKind::Bubbles => &["view", "tiles", "grid", "tile_style", "boxes", "objects", "discs", "swap"],
             ThemeKind::Standard => &["bubbles"],
         }
     }
@@ -761,6 +787,7 @@ impl Default for ThemeSettings {
             objects: ObjectSettings::default(),
             discs: DiscSettings::default(),
             bubbles: BubbleSettings::default(),
+            swap: SwapSound::default(),
             background: Background::default(),
             top_bar: BarStyle::default(),
             bottom_bar: BarStyle::default(),
@@ -857,6 +884,31 @@ impl Theme {
         }
         self.settings.background.image = Some(name);
         self.settings.background.kind = BackgroundKind::Image;
+        self.save()
+    }
+
+    pub fn sound_file(&self, bubbles: bool) -> Option<PathBuf> {
+        let name = if bubbles { &self.settings.bubbles.sound_file } else { &self.settings.swap.sound_file };
+        let name = name.as_deref()?;
+        is_plain_file_name(name).then(|| self.images_dir().join(name))
+    }
+
+    pub fn set_sound_file(&mut self, bubbles: bool, src: &Path) -> Result<()> {
+        let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("wav").to_lowercase();
+        let prefix = if bubbles { "bubble-sound" } else { "swap-sound" };
+        let name = format!("{prefix}-{}.{ext}", now_secs());
+        fs::create_dir_all(self.images_dir())?;
+        fs::copy(src, self.images_dir().join(&name)).with_context(|| format!("copying {}", src.display()))?;
+        if let Some(old) = self.sound_file(bubbles) {
+            let _ = fs::remove_file(old);
+        }
+        let (custom, file) = if bubbles {
+            (&mut self.settings.bubbles.custom_sound, &mut self.settings.bubbles.sound_file)
+        } else {
+            (&mut self.settings.swap.custom_sound, &mut self.settings.swap.sound_file)
+        };
+        *file = Some(name);
+        *custom = true;
         self.save()
     }
 
