@@ -2,6 +2,7 @@
 
 #[macro_use]
 mod i18n;
+mod addons;
 mod app;
 mod appstore;
 mod autostart;

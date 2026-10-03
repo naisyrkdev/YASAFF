@@ -182,6 +182,19 @@ impl AppStoreSettings {
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(default)]
+pub struct AddonSettings {
+    pub bar: Option<crate::theme::BarSlot>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct ShortcutSettings {
+    pub store: Option<crate::theme::BarSlot>,
+    pub add_game: Option<crate::theme::BarSlot>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
 pub struct Settings {
     pub start_fullscreen: bool,
     pub language: Language,
@@ -191,11 +204,14 @@ pub struct Settings {
     pub discs: DiscSettings,
     pub mouse: MouseSettings,
     pub controls: ControlSettings,
+    pub shortcuts: ShortcutSettings,
     pub fonts: FontSettings,
     pub app_stores: Vec<AppStoreSettings>,
     pub active_app_store: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backup_dir: Option<PathBuf>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub addons: BTreeMap<String, AddonSettings>,
     #[serde(skip_serializing)]
     app_store: Option<AppStoreSettings>,
 }

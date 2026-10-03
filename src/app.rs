@@ -3,6 +3,7 @@ mod active_game;
 mod keyboard;
 mod store_screen;
 
+use crate::addons::{self, AddonHost};
 use crate::apps::{self, AppEntry};
 use crate::autostart;
 use crate::box3d;
@@ -96,6 +97,15 @@ enum Special {
 
 impl Special {
     const ALL: [Special; 3] = [Special::Store, Special::Add, Special::Settings];
+    const PLACEABLE: [Special; 2] = [Special::Store, Special::Add];
+
+    fn action(self) -> Option<Action> {
+        match self {
+            Special::Store => Some(Action::OpenStore),
+            Special::Add => Some(Action::AddGame),
+            Special::Settings => None,
+        }
+    }
 
     fn glyph(self) -> &'static str {
         match self {
@@ -128,7 +138,7 @@ const ADD_MENU: [(AddSource, &str, &str); 5] = [
     (AddSource::Installed, tr_key!("Installed applications"), tr_key!("Games, desktop shortcuts (Heroic, Steam, Lutris…) and apps")),
     (AddSource::Browse, tr_key!("Browse for file…"), tr_key!("Executable, script, AppImage, .desktop or shortcut")),
     (AddSource::Command, tr_key!("Command or URL…"), tr_key!("e.g. steam://rungameid/570 or a full command line")),
-    (AddSource::ImportApp, tr_key!("Import application from file…"), tr_key!("A YASAFF app package: a .zip with yasaffConfig.json")),
+    (AddSource::ImportApp, tr_key!("Import application from file…"), tr_key!("A YASAFF app or addon package: a .zip with yasaffConfig.json")),
 ];
 
 #[derive(Clone, Copy, PartialEq)]
@@ -163,6 +173,7 @@ enum SettingRow {
     ControllerSwap,
     ControllerButton(PadButton),
     ControllerReset,
+    SpecialPlace(Special),
     FontTitle,
     FontImport,
     FontManage,
@@ -242,6 +253,9 @@ enum SettingRow {
     GameSpineText,
     GameTopColor,
     GameTitleFont,
+    AddonBar(usize),
+    AddonRemove(usize),
+    AddonImport,
     AboutApp,
     AboutSource,
     AboutServer,
@@ -332,6 +346,7 @@ enum Removal {
     Game,
     Theme,
     AppStore,
+    Addon(usize),
 }
 
 struct Launching {
@@ -560,6 +575,7 @@ impl ScanState {
     }
 }
 
+#[derive(Clone, Copy)]
 struct Hint(Action, &'static str);
 
 const PAD_A: Color32 = Color32::from_rgb(0x5c, 0xb8, 0x3c);
@@ -606,7 +622,8 @@ pub struct App {
     burning: Option<Burning>,
     discs_quiet_until: Option<Instant>,
     store: StoreState,
-    running: Option<RunningApp>,
+    addons: AddonHost,
+    running: Vec<RunningApp>,
     game: Option<RunningGame>,
     save_dirs_found: Option<mpsc::Receiver<Vec<(String, PathBuf)>>>,
     backup: Option<(String, mpsc::Receiver<Result<PathBuf, String>>)>,
@@ -679,7 +696,8 @@ impl App {
             discs_quiet_until: None,
             keyboard: keyboard::Keyboard::default(),
             store,
-            running: None,
+            addons: AddonHost::new(cc.egui_ctx.clone()),
+            running: Vec::new(),
             game: None,
             save_dirs_found: None,
             backup: None,
@@ -716,11 +734,48 @@ impl App {
     }
 
     fn tile_count(&self) -> usize {
-        self.library.games.len() + Special::ALL.len()
+        self.library.games.len() + self.special_tiles().count()
     }
 
     fn special(&self, i: usize) -> Option<Special> {
-        Special::ALL.get(i.checked_sub(self.library.games.len())?).copied()
+        self.special_tiles().nth(i.checked_sub(self.library.games.len())?)
+    }
+
+    fn special_tiles(&self) -> impl Iterator<Item = Special> + '_ {
+        Special::ALL.into_iter().filter(|s| self.special_bar(*s).is_none())
+    }
+
+    fn special_button(&self, special: Special) -> Option<PadButton> {
+        self.input.bindings().button_for(special.action()?.control())
+    }
+
+    fn special_place(settings: &mut Settings, special: Special) -> Option<&mut Option<BarSlot>> {
+        match special {
+            Special::Store => Some(&mut settings.shortcuts.store),
+            Special::Add => Some(&mut settings.shortcuts.add_game),
+            Special::Settings => None,
+        }
+    }
+
+    fn special_bar(&self, special: Special) -> Option<BarSlot> {
+        self.special_button(special)?;
+        match special {
+            Special::Store => self.settings.shortcuts.store,
+            Special::Add => self.settings.shortcuts.add_game,
+            Special::Settings => None,
+        }
+    }
+
+    fn bar_shortcuts(&self, slot: BarSlot) -> Vec<Hint> {
+        Special::PLACEABLE
+            .into_iter()
+            .filter(|s| self.special_bar(*s) == Some(slot))
+            .filter_map(|s| Some(Hint(s.action()?, s.name())))
+            .collect()
+    }
+
+    fn clamp_selection(&mut self) {
+        self.selected = self.selected.min(self.tile_count() - 1);
     }
 
     fn notify(&mut self, msg: impl Into<String>) {
@@ -743,6 +798,7 @@ impl App {
 
     fn controls_changed(&mut self) {
         self.input.set_bindings(self.settings.controls.bindings());
+        self.clamp_selection();
         self.save_settings();
     }
 
@@ -1116,7 +1172,8 @@ impl App {
                 Action::Options if self.selected_game().is_some() => {
                     self.mode = Mode::Options { cursor: 0 }
                 }
-                Action::Add => self.mode = Mode::AddMenu { cursor: 0 },
+                Action::Add | Action::AddGame => self.mode = Mode::AddMenu { cursor: 0 },
+                Action::OpenStore => self.open_store(),
                 _ => {}
             },
             Mode::Options { cursor } => match action {
@@ -1231,13 +1288,21 @@ impl App {
                             }
                             self.mode = self.settings_at(SettingRow::AppStoreActive);
                         }
+                        Removal::Addon(i) => {
+                            self.mode = self.settings_at(SettingRow::AddonImport);
+                            if yes {
+                                self.uninstall_addon(i);
+                            }
+                        }
                     }
                 }
                 Action::Back => {
+                    let what = *what;
                     self.mode = match what {
                         Removal::Game => Mode::Options { cursor: self.menu_index(MenuItem::Remove) },
                         Removal::Theme => self.settings_at(SettingRow::ThemeDelete),
                         Removal::AppStore => self.settings_at(SettingRow::AppStoreRemove),
+                        Removal::Addon(i) => self.settings_at(SettingRow::AddonRemove(i)),
                     }
                 }
                 _ => {}
@@ -1520,11 +1585,16 @@ impl App {
         if custom {
             rows.push(R::ControllerReset);
         }
+        rows.extend(Special::PLACEABLE.map(R::SpecialPlace));
         rows.extend([R::FontTitle, R::FontImport, R::FontManage]);
         for store in Store::ALL {
             rows.extend([R::StoreEnabled(store), R::StoreBackground(store), R::StoreCommand(store)]);
         }
         rows.extend([R::DiscOnInsert, R::DiscScanAtStart, R::DiscRemovable]);
+        for i in 0..self.addons.installed.len() {
+            rows.extend([R::AddonBar(i), R::AddonRemove(i)]);
+        }
+        rows.push(R::AddonImport);
         rows.extend([R::AboutApp, R::AboutSource, R::AboutServer]);
         rows
     }
@@ -1534,6 +1604,7 @@ impl App {
             SettingRow::TileBar => self.theme().settings.tiles.rows <= 1,
             SettingRow::ViewKind | SettingRow::TileStyle => !self.is_bubbles(),
             SettingRow::DiscAngle => !self.theme().settings.discs.lying_flat(),
+            SettingRow::SpecialPlace(special) => self.special_button(special).is_some(),
             _ => true,
         }
     }
@@ -1639,6 +1710,9 @@ impl App {
                 }
             }
             SettingRow::AboutApp => {}
+            SettingRow::AddonBar(_) => self.adjust_setting(row, 1),
+            SettingRow::AddonRemove(i) => self.mode = Mode::ConfirmRemove { what: Removal::Addon(i), yes: false },
+            SettingRow::AddonImport => self.import_app_file(),
             SettingRow::AppStoreKey => self.mode = Mode::Prompt { kind: PromptKind::AppStoreKey, buffer: String::new() },
             SettingRow::AppStoreTest => self.test_store_connection(),
             SettingRow::StoreEnabled(store) => {
@@ -1657,7 +1731,7 @@ impl App {
                 self.settings.controls.swap_ab ^= true;
                 self.controls_changed();
             }
-            SettingRow::ControllerButton(_) => self.adjust_setting(row, 1),
+            SettingRow::ControllerButton(_) | SettingRow::SpecialPlace(_) => self.adjust_setting(row, 1),
             SettingRow::ControllerReset => {
                 self.settings.controls.reset();
                 self.controls_changed();
@@ -1928,9 +2002,16 @@ impl App {
                 }
                 return;
             }
+            SettingRow::SpecialPlace(special) => {
+                let Some(place) = Self::special_place(&mut self.settings, special) else { return };
+                *place = cycle(&[None, Some(BarSlot::Top), Some(BarSlot::Bottom)], *place, delta);
+                self.clamp_selection();
+                return self.save_settings();
+            }
             _ => {}
         }
         let d = delta as f32;
+        let bar_minimum = BarSlot::ALL.map(|slot| self.bar_minimum(slot).map_or(0.0, |(h, _)| h));
         let settings = &mut self.themes[self.theme].settings;
         let (tiles, grid, bg, discs) = (&mut settings.tiles, &mut settings.grid, &mut settings.background, &mut settings.discs);
         match row {
@@ -1961,6 +2042,14 @@ impl App {
             }
             SettingRow::DiscOnInsert => {
                 self.settings.discs.on_insert = cycle(&DiscAction::ALL, self.settings.discs.on_insert, delta);
+                return self.save_settings();
+            }
+            SettingRow::AddonBar(i) => {
+                let Some(id) = self.addons.installed.get(i).map(|m| m.id.clone()) else { return };
+                let places = [None, Some(BarSlot::Top), Some(BarSlot::Bottom)];
+                let entry = self.settings.addons.entry(id).or_default();
+                entry.bar = cycle(&places, entry.bar, delta);
+                self.addons.sync(&self.settings);
                 return self.save_settings();
             }
             SettingRow::Language => {
@@ -2043,7 +2132,10 @@ impl App {
                 let bar = settings.bar_mut(slot);
                 match field {
                     BarRow::Enabled => bar.enabled ^= true,
-                    BarRow::Height => bar.height = Some(step(bar.height(slot), 4.0 * d, BarStyle::HEIGHT_RANGE)),
+                    BarRow::Height => {
+                        let min = bar_minimum[slot as usize];
+                        bar.height = Some(step(bar.height(slot).max(min), 4.0 * d, BarStyle::HEIGHT_RANGE).max(min));
+                    }
                     BarRow::Kind => bar.kind = cycle(&BackgroundKind::ALL, bar.kind, delta),
                     BarRow::GradientDirection => bar.gradient_direction = cycle(&GradientDirection::ALL, bar.gradient_direction, delta),
                     BarRow::ImageZoom => bar.image_zoom = snap(step(bar.image_zoom, 0.05 * d, BarStyle::ZOOM_RANGE)),
@@ -2333,7 +2425,7 @@ impl App {
     fn menu(&self) -> Vec<(MenuItem, String)> {
         let game = self.selected_game();
         let store_app = game.is_some_and(|g| g.app_id.is_some());
-        let running = store_app && self.running_index() == Some(self.selected);
+        let running = store_app && self.app_running_at(self.selected);
         let game_running = !store_app && self.game_index() == Some(self.selected);
         let boxes = self.theme().settings.tile_style.is_box();
         let mut menu = Vec::new();
@@ -2778,16 +2870,62 @@ impl App {
 
     fn bar_rect(&self, slot: BarSlot, screen: Rect, s: f32) -> Rect {
         let bar = self.theme().settings.bar(slot);
-        let h = if bar.enabled { bar.height(slot) } else { slot.default_height() } * s;
+        let h = if bar.enabled { bar.height(slot) } else { slot.default_height() };
+        let h = self.bar_minimum(slot).map_or(h, |(min, _)| h.max(min)) * s;
         match slot {
             BarSlot::Top => Rect::from_min_max(screen.min, pos2(screen.right(), screen.top() + h)),
             BarSlot::Bottom => Rect::from_min_max(pos2(screen.left(), screen.bottom() - h), screen.max),
         }
     }
 
+    fn bar_minimum(&self, slot: BarSlot) -> Option<(f32, String)> {
+        self.addons.min_height(&self.settings, slot).map(|(h, name)| (h, name.to_owned()))
+    }
+
     fn draw_bars(&self, ui: &Ui, screen: Rect, s: f32) {
         for slot in BarSlot::ALL {
             paint_bar(ui, self.theme(), slot, self.bar_rect(slot, screen, s));
+        }
+    }
+
+    fn draw_widgets(&self, painter: &Painter, screen: Rect, s: f32) {
+        const COLUMN: f32 = 130.0;
+        const GAP: f32 = 36.0;
+        for slot in BarSlot::ALL {
+            let widgets = self.addons.widgets(&self.settings, slot);
+            if widgets.is_empty() {
+                continue;
+            }
+            let bar = self.bar_rect(slot, screen, s);
+            let columns: Vec<f32> = widgets
+                .iter()
+                .map(|(_, status)| match status {
+                    addons::Status::Showing(frame) => frame.items.len().max(1) as f32 * COLUMN,
+                    _ => 2.0 * COLUMN,
+                })
+                .collect();
+            let total = columns.iter().sum::<f32>() + GAP * (widgets.len() - 1) as f32;
+            let mut x = bar.center().x - total * s / 2.0;
+            for ((addon, status), width) in widgets.iter().zip(columns) {
+                let area = Rect::from_min_size(pos2(x, bar.top()), vec2(width * s, bar.height()));
+                match status {
+                    addons::Status::Showing(frame) => {
+                        for (i, item) in frame.items.iter().enumerate() {
+                            let cell = Rect::from_min_size(pos2(area.left() + i as f32 * COLUMN * s, area.top()), vec2(COLUMN * s, area.height()));
+                            paint_widget_item(painter, item, cell, s);
+                        }
+                    }
+                    addons::Status::Starting => {
+                        shadow_text(painter, area.center(), Align2::CENTER_CENTER, &addon.name, 18.0 * s, Color32::from_gray(150));
+                    }
+                    addons::Status::Failed(error) => {
+                        let text = tr!("{name}: {error}", name = addon.name, error = error);
+                        let painter = painter.with_clip_rect(area.expand2(vec2(COLUMN * s, 0.0)));
+                        shadow_text(&painter, area.center(), Align2::CENTER_CENTER, &text, 16.0 * s, PAD_B);
+                    }
+                }
+                x += (width + GAP) * s;
+            }
         }
     }
 
@@ -2981,7 +3119,10 @@ impl App {
     fn bubble_key(&self, i: usize) -> String {
         match self.library.games.get(i) {
             Some(game) => game.id.clone(),
-            None => format!("special-{}", i - self.library.games.len()),
+            None => {
+                let special = self.special(i);
+                format!("special-{}", Special::ALL.iter().position(|s| Some(*s) == special).unwrap_or(0))
+            }
         }
     }
 
@@ -3093,6 +3234,7 @@ impl App {
                     (None, None) => String::new(),
                 },
                 swapping: Some(j) == moving,
+                running: tile.is_some_and(|i| self.is_active(i)),
             };
             paint_bubble(ui.painter(), center, r, &look, t, focus, s);
             if interactive && (!look.empty || swapping.is_some()) {
@@ -3412,7 +3554,7 @@ impl App {
 
     fn draw_hints(&self, ui: &Ui, screen: Rect, s: f32) -> Option<Action> {
         let hints: &[Hint] = match self.mode {
-            Mode::Home if self.running_index() == Some(self.selected) => &[
+            Mode::Home if self.app_running_at(self.selected) => &[
                 Hint(Action::Confirm, tr!("Switch to app")),
                 Hint(Action::Options, tr!("Options")),
             ],
@@ -3505,16 +3647,42 @@ impl App {
                 Hint(Action::Back, tr!("Back")),
             ],
         };
+        let mut hints = hints.to_vec();
+        if matches!(self.mode, Mode::Home) {
+            if self.special_bar(Special::Add).is_some() {
+                hints.retain(|h| h.0 != Action::Add);
+            }
+            hints.extend(self.bar_shortcuts(BarSlot::Bottom));
+        }
+        let y = self.bar_rect(BarSlot::Bottom, screen, s).center().y;
+        self.draw_hint_row(ui, &hints, screen.right() - 60.0 * s, y, s, "hint")
+    }
+
+    fn draw_top_shortcuts(&self, ui: &Ui, screen: Rect, s: f32) -> Option<Action> {
+        if !matches!(self.mode, Mode::Home) {
+            return None;
+        }
+        let hints = self.bar_shortcuts(BarSlot::Top);
+        let mut right = screen.right() - 160.0 * s;
+        if self.global_mouse.connected() {
+            let text = tr!("Global Virtual Mouse");
+            right -= ui.painter().layout_no_wrap(text.to_owned(), FontId::proportional(18.0 * s), PAD_A).size().x + 48.0 * s;
+        }
+        let y = self.bar_rect(BarSlot::Top, screen, s).center().y;
+        self.draw_hint_row(ui, &hints, right, y, s, "top-shortcut")
+    }
+
+    fn draw_hint_row(&self, ui: &Ui, hints: &[Hint], right: f32, y: f32, s: f32, id: &str) -> Option<Action> {
         let gamepad = self.input.has_gamepad();
         let font = FontId::proportional(20.0 * s);
         let h = 30.0 * s;
-        let mut x = screen.right() - 60.0 * s;
-        let y = self.bar_rect(BarSlot::Bottom, screen, s).center().y;
+        let mut x = right;
         let painter = ui.painter();
         let mut clicked = None;
         for (i, Hint(action, label)) in hints.iter().enumerate().rev() {
             let control = action.control();
-            let (glyph, skin, click) = match self.input.bindings().button_for(control).filter(|_| gamepad) {
+            let no_key = keyboard_key(*action).is_empty();
+            let (glyph, skin, click) = match self.input.bindings().button_for(control).filter(|_| gamepad || no_key) {
                 _ if matches!(control, Control::Up | Control::Down | Control::Left | Control::Right) => {
                     if gamepad { ("D-pad", ButtonSkin::plain(PAD_MENU), None) } else { (tr!("Arrows"), ButtonSkin::plain(KEY_FILL), None) }
                 }
@@ -3525,7 +3693,7 @@ impl App {
             let left = x - label.size().x - 10.0 * s - button_width(painter, glyph, &skin, &font, h, s);
             let area = Rect::from_min_max(pos2(left, y - h / 2.0), pos2(x, y + h / 2.0)).expand(6.0 * s);
             if let Some(action) = click {
-                let resp = ui.interact(area, Id::new(("hint", i)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+                let resp = ui.interact(area, Id::new((id, i)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
                 if resp.hovered() {
                     painter.rect_filled(area, (h / 2.0 + 6.0 * s) as u8, Color32::from_white_alpha(18));
                 }
@@ -3852,6 +4020,10 @@ impl App {
                 tr!("Remove store \"{name}\"?", name = self.settings.app_store().title()),
                 tr!("Its address and API key are forgotten. Apps and themes installed from it stay."),
             ),
+            Removal::Addon(i) => {
+                let Some(addon) = self.addons.installed.get(i) else { return };
+                (tr!("Uninstall \"{name}\"?", name = addon.name), tr!("Its files are deleted. Its saved data is kept for a reinstall."))
+            }
         };
         let painter = ui.painter();
         painter.rect_filled(screen, 0, Color32::from_black_alpha(160));
@@ -3864,6 +4036,7 @@ impl App {
         let action = match what {
             Removal::Theme => tr!("Delete"),
             Removal::AppStore => tr!("Remove"),
+            Removal::Addon(_) => tr!("Uninstall"),
             Removal::Game if self.selected_game().is_some_and(|g| g.app_id.is_some()) => tr!("Uninstall"),
             Removal::Game => tr!("Remove"),
         };
@@ -4087,11 +4260,17 @@ impl App {
             SettingRow::Fullscreen => Some((tr!("General"), None)),
             SettingRow::AppStoreActive => Some((tr!("YASAFF Store"), Some(self.store_status()))),
             SettingRow::AboutApp => Some((tr!("About"), None)),
+            SettingRow::AddonBar(0) => Some(self.addons_heading()),
+            SettingRow::AddonImport if self.addons.installed.is_empty() => Some(self.addons_heading()),
             SettingRow::VirtualMouse => Some((tr!("Mouse"), self.global_mouse_status())),
             SettingRow::ControllerSwap => Some((tr!("Controller"), Some(self.controller_warning()))),
             SettingRow::ControllerButton(PadButton::South) if self.settings.controls.is_custom() => {
                 Some((tr!("Controller"), Some(self.controller_warning())))
             }
+            SettingRow::SpecialPlace(Special::Store) => Some((
+                tr!("Store and Add game"),
+                Some((tr!("Assign each a controller button above, then place it in the top or bottom bar").to_owned(), Color32::from_gray(140))),
+            )),
             SettingRow::FontTitle => Some((tr!("Fonts"), Some((tr!("{count} imported", count = self.fonts.len()), Color32::from_gray(140))))),
             SettingRow::Theme if self.is_bubbles() => {
                 Some((tr!("Theme"), Some((tr!("Custom theme · Not all options are available in this pre-defined theme").to_owned(), PAD_Y))))
@@ -4135,6 +4314,10 @@ impl App {
             }
             _ => None,
         }
+    }
+
+    fn addons_heading(&self) -> (&'static str, Option<(String, Color32)>) {
+        (tr!("Addons"), Some((tr!("{count} installed", count = self.addons.installed.len()), Color32::from_gray(140))))
     }
 
     fn buttons_heading(&self) -> (&'static str, Option<(String, Color32)>) {
@@ -4196,6 +4379,27 @@ impl App {
                 tr!("A console-style game launcher for PC, made to be used with a controller. Windows and Linux."),
                 RowValue::Summary(tr!("Version {version}", version = env!("CARGO_PKG_VERSION"))),
             ),
+            SettingRow::AddonBar(i) => {
+                let Some(addon) = self.addons.installed.get(i) else { return (String::new(), "", Action("")) };
+                let label = match addon.min_height() {
+                    Some(min) => tr!("{name} · needs a bar at least {px} px high", name = addon.name, px = format!("{min:.0}")),
+                    None => addon.name.clone(),
+                };
+                let place = match AddonHost::placement(&self.settings, &addon.id) {
+                    Some(slot) => slot.label(),
+                    None => tr!("Off"),
+                };
+                (label, tr!("Bar widget · Left/Right picks the bar it shows in"), Choice(place.into()))
+            }
+            SettingRow::AddonRemove(i) => {
+                let name = self.addons.installed.get(i).map_or("", |m| m.name.as_str());
+                (tr!("Uninstall {name}", name = name), tr!("Its files are deleted; its saved data is kept"), Action(tr!("Uninstall…")))
+            }
+            SettingRow::AddonImport => (
+                tr!("Import addon from file…").into(),
+                tr!("A .zip with yasaffConfig.json; the Store's Addons tab has more"),
+                Action(tr!("Choose…")),
+            ),
             SettingRow::AboutSource => (tr!("Source code").into(), "github.com/naisyrkdev/YASAFF", Action(tr!("Open"))),
             SettingRow::AboutServer => (
                 tr!("YASAFF Store server").into(),
@@ -4227,6 +4431,20 @@ impl App {
                     tr!("Changed; left/right picks what it does")
                 };
                 (button_token(button), sub, Choice(control.label().into()))
+            }
+            SettingRow::SpecialPlace(special) => {
+                let place = match self.special_bar(special) {
+                    Some(slot) => slot.label(),
+                    None => tr!("Library tile"),
+                };
+                match self.special_button(special) {
+                    Some(button) => (
+                        format!("{} · {}", special.name(), button_token(button)),
+                        tr!("Left/Right picks where it shows: a library tile, or the top or bottom bar"),
+                        Choice(place.into()),
+                    ),
+                    None => (special.name().into(), tr!("Assign it a controller button above to place it in a bar"), Choice(place.into())),
+                }
             }
             SettingRow::ControllerReset => (
                 tr!("Reset to default bindings").into(),
@@ -4483,7 +4701,14 @@ impl App {
                         };
                         (tr!("Show the bar").into(), sub, Toggle(bar.enabled))
                     }
-                    BarRow::Height => (tr!("Height").into(), tr!("At 1080p; the text inside stays centered"), px(bar.height(slot))),
+                    BarRow::Height => match self.bar_minimum(slot) {
+                        Some((min, addon)) => (
+                            tr!("Height · {addon} needs at least {px} px", addon = addon, px = format!("{min:.0}")),
+                            tr!("At 1080p; raised to what the addons in this bar need"),
+                            px(bar.height(slot).max(min)),
+                        ),
+                        None => (tr!("Height").into(), tr!("At 1080p; the text inside stays centered"), px(bar.height(slot))),
+                    },
                     BarRow::Kind => (tr!("Fill").into(), "", Choice(bar.kind.label().into())),
                     BarRow::Color => {
                         let sub = if bar.kind == BackgroundKind::Image {
@@ -5087,10 +5312,12 @@ impl eframe::App for App {
         let screen = ui.max_rect();
         let s = (screen.height() / 1080.0).max(0.45);
 
+        self.addons.sync(&self.settings);
         self.draw_background(ui, screen);
         self.draw_bars(ui, screen, s);
         let painter = ui.painter().clone();
         self.draw_top_bar(&painter, screen, s);
+        self.draw_widgets(&painter, screen, s);
         match self.theme().settings.view {
             _ if self.is_bubbles() => self.draw_bubbles(ui, screen, s),
             ViewKind::Row => self.draw_row(ui, screen, s),
@@ -5104,7 +5331,7 @@ impl eframe::App for App {
         self.draw_store_theme(ui, screen, s);
         self.draw_confirm_remove(ui, screen, s);
         self.draw_cover_editor(ui, screen, s);
-        if let Some(action) = self.draw_hints(ui, screen, s) {
+        if let Some(action) = self.draw_hints(ui, screen, s).or(self.draw_top_shortcuts(ui, screen, s)) {
             self.handle(&ctx, action);
         }
         self.draw_settings(ui, screen, s);
@@ -5305,6 +5532,7 @@ fn pack_bubbles(diameters: &[f32], area: Rect) -> (Vec<Pos2>, Vec<f32>) {
 }
 
 const SWAP_GLOW: Color32 = Color32::from_rgb(255, 210, 60);
+const RUNNING_GLOW: Color32 = Color32::from_rgb(70, 230, 90);
 
 struct BubbleLook {
     empty: bool,
@@ -5312,6 +5540,7 @@ struct BubbleLook {
     fill: Color32,
     label: String,
     swapping: bool,
+    running: bool,
 }
 
 fn disc_mesh(texture: TextureId, rings: usize, segments: usize, vertex: impl Fn(f32, f32) -> (Pos2, Pos2, Color32)) -> Mesh {
@@ -5348,6 +5577,17 @@ fn paint_bubble(painter: &Painter, center: Pos2, r: f32, look: &BubbleLook, t: f
     let white_uv = egui::epaint::WHITE_UV;
     if !look.empty {
         painter.circle_filled(center + vec2(0.0, r * 0.06 + 6.0 * s), r * 0.97, Color32::from_black_alpha(60));
+    }
+    let running_pulse = 0.5 + 0.5 * (t * 3.0).sin();
+    if look.running {
+        let reach = (r * 0.35).clamp(14.0 * s, 40.0 * s) * (0.8 + 0.4 * running_pulse);
+        const RINGS: usize = 12;
+        let step = reach / RINGS as f32;
+        for k in 0..RINGS {
+            let fade = (1.0 - k as f32 / RINGS as f32).powi(2);
+            let glow = RUNNING_GLOW.gamma_multiply((0.3 + 0.5 * running_pulse) * fade);
+            painter.circle_stroke(center, r + step * (k as f32 + 0.5), Stroke::new(step * 1.2, glow));
+        }
     }
 
     let light = egui::emath::Vec2::new(-0.45, -0.55);
@@ -5399,6 +5639,9 @@ fn paint_bubble(painter: &Painter, center: Pos2, r: f32, look: &BubbleLook, t: f
             painter.circle_stroke(center, r + (2.0 + k as f32 * 3.0) * s, Stroke::new(4.0 * s, SWAP_GLOW.gamma_multiply(alpha)));
         }
         painter.circle_stroke(center, r, Stroke::new(3.0 * s, SWAP_GLOW.gamma_multiply(pulse)));
+    }
+    if look.running {
+        painter.circle_stroke(center, r, Stroke::new((3.0 + 2.0 * running_pulse) * s, RUNNING_GLOW.gamma_multiply(0.6 + 0.4 * running_pulse)));
     }
     if focus > 0.0 {
         painter.circle_stroke(center, r + 5.0 * s, Stroke::new(3.0 * s, Color32::WHITE.gamma_multiply(focus)));
@@ -5684,6 +5927,25 @@ fn paint_theme_background(ui: &Ui, theme: &Theme, rect: Rect) {
                 paint_image_fit(ui, &path, rect, bg.image_fit);
             }
         }
+    }
+}
+
+fn paint_widget_item(painter: &Painter, item: &addons::Item, cell: Rect, s: f32) {
+    let x = cell.center().x;
+    let mid = cell.center().y;
+    let meter = item.level.map(|l| l.clamp(0.0, 1.0));
+    let shift = if meter.is_some() { -4.0 * s } else { 0.0 };
+    shadow_text(painter, pos2(x, mid - 18.0 * s + shift), Align2::CENTER_CENTER, &item.label, 15.0 * s, Color32::from_gray(170));
+    shadow_text(painter, pos2(x, mid + 6.0 * s + shift), Align2::CENTER_CENTER, &item.value, 24.0 * s, Color32::WHITE);
+    if let Some(level) = meter {
+        let track = Rect::from_center_size(pos2(x, mid + 28.0 * s), vec2(cell.width() - 30.0 * s, 6.0 * s));
+        let color = item.color().unwrap_or(match level {
+            ..0.6 => PAD_A,
+            ..0.85 => PAD_Y,
+            _ => PAD_B,
+        });
+        painter.rect_filled(track, (3.0 * s) as u8, Color32::from_white_alpha(30));
+        painter.rect_filled(Rect::from_min_size(track.min, vec2(track.width() * level, track.height())), (3.0 * s) as u8, color);
     }
 }
 

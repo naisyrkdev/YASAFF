@@ -21,7 +21,7 @@ impl App {
     }
 
     pub(super) fn is_active(&self, i: usize) -> bool {
-        self.running_index() == Some(i) || self.game_index() == Some(i)
+        self.app_running_at(i) || self.game_index() == Some(i)
     }
 
     pub(super) fn switch_to_game(&mut self) {
@@ -66,7 +66,7 @@ impl App {
     pub(super) fn come_home(&mut self, ctx: &Context) {
         ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd(ViewportCommand::Focus);
-        let active = self.running_index().or(self.game_index());
+        let active = self.front_app_index().or(self.game_index());
         if let Some(i) = active {
             self.focus_guard_until = Some(Instant::now() + GUIDE_GUARD);
             if matches!(self.mode, Mode::Home) {

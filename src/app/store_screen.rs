@@ -21,12 +21,27 @@ pub(super) struct StoreState {
     previews: HashMap<(String, usize), PathBuf>,
     galleries: std::collections::HashSet<String>,
     theme_installs: HashMap<String, Install>,
+    addons: Vec<RemoteApp>,
+    addon_listing: Listing,
 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum StoreTab {
     Apps,
     Themes,
+    Addons,
+}
+
+impl StoreTab {
+    const ALL: [Self; 3] = [Self::Apps, Self::Themes, Self::Addons];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Apps => tr!("Apps"),
+            Self::Themes => tr!("Themes"),
+            Self::Addons => tr!("Addons"),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -86,6 +101,8 @@ impl StoreState {
             previews: HashMap::new(),
             galleries: Default::default(),
             theme_installs: HashMap::new(),
+            addons: Vec::new(),
+            addon_listing: Listing::NotLoaded,
         }
     }
 
@@ -93,6 +110,7 @@ impl StoreState {
         match self.tab {
             StoreTab::Apps => self.apps.len(),
             StoreTab::Themes => self.themes.len(),
+            StoreTab::Addons => self.addons.len(),
         }
     }
 
@@ -100,7 +118,19 @@ impl StoreState {
         match self.tab {
             StoreTab::Apps => &self.listing,
             StoreTab::Themes => &self.theme_listing,
+            StoreTab::Addons => &self.addon_listing,
         }
+    }
+
+    fn packages(&self) -> &[RemoteApp] {
+        match self.tab {
+            StoreTab::Addons => &self.addons,
+            _ => &self.apps,
+        }
+    }
+
+    fn package_name(&self, id: &str) -> String {
+        self.apps.iter().chain(&self.addons).find(|a| a.id == id).map_or(id.to_owned(), |a| a.name.clone())
     }
 
     fn update_for(&self, app_id: &str) -> Option<&RemoteApp> {
@@ -123,7 +153,16 @@ impl App {
         match self.store.tab {
             StoreTab::Apps if matches!(self.store.listing, Listing::NotLoaded | Listing::Failed(_)) => self.refresh_store(),
             StoreTab::Themes if matches!(self.store.theme_listing, Listing::NotLoaded | Listing::Failed(_)) => self.refresh_store_themes(),
+            StoreTab::Addons if matches!(self.store.addon_listing, Listing::NotLoaded | Listing::Failed(_)) => self.refresh_store_addons(),
             _ => {}
+        }
+    }
+
+    fn refresh_store_addons(&mut self) {
+        let Some(endpoint) = self.store_endpoint() else { return };
+        if self.store.addon_listing != Listing::Loading {
+            self.store.addon_listing = Listing::Loading;
+            self.store.client.list_addons(endpoint);
         }
     }
 
@@ -160,6 +199,8 @@ impl App {
         self.store.apps.clear();
         self.store.theme_listing = Listing::NotLoaded;
         self.store.themes.clear();
+        self.store.addon_listing = Listing::NotLoaded;
+        self.store.addons.clear();
         self.store.previews.clear();
         self.store.galleries.clear();
         if self.store_endpoint().is_some() {
@@ -195,7 +236,16 @@ impl App {
                 }
                 Event::Installed(id, Ok(manifest)) => {
                     self.store.installs.remove(&id);
-                    self.add_installed(*manifest);
+                    if manifest.is_addon() {
+                        self.add_installed_addon(*manifest);
+                    } else {
+                        self.add_installed(*manifest);
+                    }
+                }
+                Event::Imported(_, Ok(manifest)) if manifest.is_addon() => {
+                    if let Some(i) = self.add_installed_addon(*manifest) {
+                        self.mode = self.settings_at(SettingRow::AddonBar(i));
+                    }
                 }
                 Event::Imported(_, Ok(manifest)) => {
                     let i = self.add_installed(*manifest);
@@ -209,7 +259,8 @@ impl App {
                     self.notify(tr!("Could not import {name}: {error}", name = name, error = e));
                 }
                 Event::Installed(id, Err(e)) => {
-                    let name = self.store.apps.iter().find(|a| a.id == id).map_or(id.clone(), |a| a.name.clone());
+                    self.addons.resume(&id);
+                    let name = self.store.package_name(&id);
                     self.notify(tr!("Could not install {name}: {error}", name = name, error = e));
                     self.store.installs.insert(id, Install::Failed(e));
                 }
@@ -218,6 +269,14 @@ impl App {
                     self.store.theme_listing = Listing::Loaded;
                 }
                 Event::ThemesListed(Err(e)) => self.store.theme_listing = Listing::Failed(e),
+                Event::AddonsListed(Ok(addons)) => {
+                    self.store.addons = addons;
+                    self.store.addon_listing = Listing::Loaded;
+                }
+                Event::AddonsListed(Err(e)) => self.store.addon_listing = Listing::Failed(e),
+                Event::AddonIcon(id, path) => {
+                    self.store.icons.insert(id, path);
+                }
                 Event::ThemePreview(id, i, path) => {
                     self.store.previews.insert((id, i), path);
                 }
@@ -253,9 +312,39 @@ impl App {
         else {
             return;
         };
-        let busy = self.running_index().and_then(|i| self.library.games[i].app_id.clone());
+        let busy = self.running.iter().filter_map(|r| self.library.games.iter().find(|g| g.id == r.game_id)?.app_id.clone()).collect();
         self.notify(tr!("Importing {file}…", file = zip.file_name().unwrap_or_default().to_string_lossy()));
         self.store.client.import_file(zip, busy);
+    }
+
+    fn add_installed_addon(&mut self, manifest: Manifest) -> Option<usize> {
+        let placed = AddonHost::placement(&self.settings, &manifest.id).is_some();
+        self.addons.reload(Some(&manifest.id));
+        let (name, version) = (&manifest.name, &manifest.version);
+        self.notify(if placed {
+            tr!("Updated {name} {version}", name = name, version = version)
+        } else {
+            tr!("Installed {name} {version}. Settings → Addons places it in a bar.", name = name, version = version)
+        });
+        self.addons.installed.iter().position(|m| m.id == manifest.id)
+    }
+
+    pub(super) fn uninstall_addon(&mut self, i: usize) {
+        let Some(addon) = self.addons.installed.get(i).cloned() else { return };
+        self.addons.stop(&addon.id);
+        match appstore::uninstall_addon(&addon.id) {
+            Ok(()) => {
+                self.settings.addons.remove(&addon.id);
+                self.save_settings();
+                self.addons.reload(None);
+                self.notify(tr!("Uninstalled {name}. Its saved data is kept.", name = addon.name));
+            }
+            Err(e) => self.notify(tr!("Could not uninstall {name}: {error}", name = addon.name, error = format!("{e:#}"))),
+        }
+    }
+
+    fn installed_package(&self, app: &RemoteApp) -> Option<&Manifest> {
+        if app.is_addon() { self.addons.get(&app.id) } else { self.store.installed.get(&app.id) }
     }
 
     fn add_installed(&mut self, manifest: Manifest) -> usize {
@@ -304,8 +393,19 @@ impl App {
     }
 
     fn store_activate(&mut self, index: usize) {
-        let Some(app) = self.store.apps.get(index).cloned() else { return };
+        let Some(app) = self.store.packages().get(index).cloned() else { return };
         if matches!(self.store.installs.get(&app.id), Some(Install::Downloading(..))) {
+            return;
+        }
+        if app.is_addon() {
+            if let Some(i) = self.addons.installed.iter().position(|m| m.id == app.id && !app.latest.is_update_for(m)) {
+                self.mode = self.settings_at(SettingRow::AddonBar(i));
+                return;
+            }
+            let Some(endpoint) = self.store_endpoint() else { return };
+            self.addons.pause(&app.id);
+            self.store.installs.insert(app.id.clone(), Install::Downloading(0, app.latest.size));
+            self.store.client.install(endpoint, app);
             return;
         }
         let installed = self.store.installed.get(&app.id);
@@ -317,9 +417,7 @@ impl App {
             }
             return;
         }
-        if let Some(running) = &self.running
-            && self.library.games.iter().any(|g| g.id == running.game_id && g.app_id.as_deref() == Some(&app.id))
-        {
+        if self.library.games.iter().any(|g| g.app_id.as_deref() == Some(&app.id) && self.running_app(&g.id).is_some()) {
             self.notify(tr!("Close {name} before updating it", name = app.name));
             return;
         }
@@ -411,26 +509,29 @@ impl App {
         }
     }
 
-    pub(super) fn running_index(&self) -> Option<usize> {
-        self.library.position(&self.running.as_ref()?.game_id)
+    pub(super) fn running_app(&self, game_id: &str) -> Option<&RunningApp> {
+        self.running.iter().find(|r| r.game_id == game_id)
+    }
+
+    pub(super) fn app_running_at(&self, i: usize) -> bool {
+        self.library.games.get(i).is_some_and(|g| self.running_app(&g.id).is_some())
+    }
+
+    pub(super) fn front_app_index(&self) -> Option<usize> {
+        self.library.position(&self.running.last()?.game_id)
     }
 
     pub(super) fn launch_app(&mut self) {
         let Some(game) = self.selected_game() else { return };
         let Some(app_id) = game.app_id.clone() else { return };
-        if let Some(running) = &self.running {
-            if running.game_id == game.id {
-                self.switch_to_running();
-            } else {
-                let msg = tr!("{name} is running. Close it first (Options → Close application).", name = running.name);
-                self.notify(msg);
-            }
+        if self.running_app(&game.id).is_some() {
+            self.switch_to_running();
             return;
         }
         let (name, cover, font, game_id) = (game.name.clone(), game.cover.clone(), self.game_font(game), game.id.clone());
         match appstore::launch(&self.ctx, &app_id, Placement::of(&self.ctx, self.fullscreen)) {
             Ok(process) => {
-                self.running = Some(RunningApp { game_id, name: name.clone(), process, started: Instant::now() });
+                self.running.push(RunningApp { game_id, name: name.clone(), process, started: Instant::now() });
                 self.selected = self.library.mark_played(self.selected);
                 self.save();
                 let watch = GameWatch::start(self.ctx.clone());
@@ -444,50 +545,58 @@ impl App {
     pub(super) fn switch_to_running(&mut self) {
         self.mode = Mode::Home;
         self.focus_guard_until = None;
-        if let Some(running) = &self.running {
-            running.process.show(Placement::of(&self.ctx, self.fullscreen));
-        }
+        let Some(id) = self.selected_game().map(|g| g.id.clone()) else { return };
+        let Some(at) = self.running.iter().position(|r| r.game_id == id) else { return };
+        let running = self.running.remove(at);
+        running.process.show(Placement::of(&self.ctx, self.fullscreen));
+        self.running.push(running);
     }
 
     pub(super) fn close_running(&mut self) {
-        if let Some(running) = &mut self.running {
+        let id = self.selected_game().map(|g| g.id.clone());
+        if let Some(running) = self.running.iter_mut().find(|r| Some(&r.game_id) == id.as_ref()) {
             let _ = running.process.child.kill();
         }
         self.mode = Mode::Home;
     }
 
     pub(super) fn poll_running(&mut self, ctx: &Context) {
-        let Some(running) = &mut self.running else { return };
-        if running.process.wants_home() {
+        let mut ended = Vec::new();
+        let mut i = 0;
+        while i < self.running.len() {
+            let running = &mut self.running[i];
+            if running.process.wants_home() {
+                ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(ViewportCommand::Focus);
+            }
+            match running.process.child.try_wait() {
+                Ok(Some(status)) => ended.push((self.running.remove(i), status)),
+                Ok(None) => i += 1,
+                Err(e) => {
+                    eprintln!("{}: {e}", running.name);
+                    i += 1;
+                }
+            }
+        }
+        for (running, status) in ended {
+            if matches!(self.mode, Mode::Launching(_)) {
+                self.mode = Mode::Home;
+            }
+            if let Some(i) = self.library.position(&running.game_id) {
+                self.selected = i;
+            }
             ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(ViewportCommand::Focus);
-        }
-        let status = match running.process.child.try_wait() {
-            Ok(Some(status)) => status,
-            Ok(None) => return,
-            Err(e) => {
-                eprintln!("{}: {e}", running.name);
-                return;
+            if !status.success() && running.started.elapsed() < QUICK_EXIT {
+                self.notify(tr!("{name} closed right after starting ({status})", name = running.name, status = status));
             }
-        };
-        let running = self.running.take().unwrap();
-        if matches!(self.mode, Mode::Launching(_)) {
-            self.mode = Mode::Home;
-        }
-        if let Some(i) = self.library.position(&running.game_id) {
-            self.selected = i;
-        }
-        ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
-        ctx.send_viewport_cmd(ViewportCommand::Focus);
-        if !status.success() && running.started.elapsed() < QUICK_EXIT {
-            self.notify(tr!("{name} closed right after starting ({status})", name = running.name, status = status));
         }
     }
 
     pub(super) fn uninstall_selected(&mut self) {
         let Some(game) = self.selected_game() else { return };
         let Some(id) = game.app_id.clone() else { return };
-        if self.running_index() == Some(self.selected) {
+        if self.app_running_at(self.selected) {
             self.notify(tr!("Close {name} before uninstalling it", name = game.name));
             return;
         }
@@ -533,7 +642,7 @@ impl App {
             Action::Confirm => {
                 let i = *cursor;
                 match self.store.tab {
-                    StoreTab::Apps => self.store_activate(i),
+                    StoreTab::Apps | StoreTab::Addons => self.store_activate(i),
                     StoreTab::Themes => self.open_store_theme(i),
                 }
             }
@@ -542,6 +651,10 @@ impl App {
                 StoreTab::Apps => {
                     self.store.listing = Listing::NotLoaded;
                     self.refresh_store();
+                }
+                StoreTab::Addons => {
+                    self.store.addon_listing = Listing::NotLoaded;
+                    self.refresh_store_addons();
                 }
                 StoreTab::Themes => {
                     self.store.theme_listing = Listing::NotLoaded;
@@ -559,10 +672,12 @@ impl App {
     }
 
     fn switch_store_tab(&mut self) {
-        self.store.tab = match self.store.tab {
-            StoreTab::Apps => StoreTab::Themes,
-            StoreTab::Themes => StoreTab::Apps,
-        };
+        self.store.tab = cycle(&StoreTab::ALL, self.store.tab, 1);
+        self.open_store_tab(self.store.tab);
+    }
+
+    fn open_store_tab(&mut self, tab: StoreTab) {
+        self.store.tab = tab;
         self.mode = Mode::Store { cursor: 0, scroll: 0 };
         self.load_store_tab();
     }
@@ -596,10 +711,11 @@ impl App {
             _ if *self.store.listing() != Listing::Loaded => String::new(),
             StoreTab::Apps => tr_n!(count, "{n} app for {platform}", "{n} apps for {platform}", platform = appstore::platform()),
             StoreTab::Themes => tr_n!(count, "{n} theme", "{n} themes"),
+            StoreTab::Addons => tr_n!(count, "{n} addon for {platform}", "{n} addons for {platform}", platform = appstore::platform()),
         };
         painter.text(panel.right_top() + vec2(-40.0 * s, 48.0 * s), Align2::RIGHT_CENTER, counts, FontId::proportional(18.0 * s), Color32::from_gray(150));
-        if switch_tab {
-            self.switch_store_tab();
+        if let Some(tab) = switch_tab {
+            self.open_store_tab(tab);
             return;
         }
 
@@ -634,6 +750,7 @@ impl App {
                 let sub = match self.store.tab {
                     StoreTab::Apps => tr!("This store has no apps for {platform} yet.", platform = appstore::platform()),
                     StoreTab::Themes => tr!("This store has no themes yet.").to_owned(),
+                    StoreTab::Addons => tr!("This store has no addons for {platform} yet.", platform = appstore::platform()),
                 };
                 center_text(tr!("Nothing here yet"), &sub, Color32::WHITE);
                 return;
@@ -664,7 +781,7 @@ impl App {
                 painter.rect_filled(Rect::from_min_size(r.min, vec2(5.0 * s, r.height())), 0, ACCENT);
             }
             match self.store.tab {
-                StoreTab::Apps => self.paint_store_app_row(ui, &self.store.apps[i], r, s),
+                StoreTab::Apps | StoreTab::Addons => self.paint_store_app_row(ui, &self.store.packages()[i], r, s),
                 StoreTab::Themes => self.paint_store_theme_row(ui, &self.store.themes[i], r, s),
             }
             let resp = ui.interact(r, Id::new(("store-row", i)), Sense::click());
@@ -681,13 +798,13 @@ impl App {
 
         let detail = Rect::from_min_max(pos2(list.right() + 40.0 * s, body.top()), body.max - vec2(40.0 * s, 0.0));
         let button = match self.store.tab {
-            StoreTab::Apps => self.draw_store_detail(ui, cursor, detail, s),
+            StoreTab::Apps | StoreTab::Addons => self.draw_store_detail(ui, cursor, detail, s),
             StoreTab::Themes => self.draw_store_theme_summary(ui, cursor, detail, s),
         };
 
         self.mode = Mode::Store { cursor, scroll };
         let activate = |app: &mut Self, i: usize| match app.store.tab {
-            StoreTab::Apps => app.store_activate(i),
+            StoreTab::Apps | StoreTab::Addons => app.store_activate(i),
             StoreTab::Themes => app.open_store_theme(i),
         };
         if let Some(i) = clicked {
@@ -701,17 +818,19 @@ impl App {
         }
     }
 
-    fn draw_store_tabs(&self, ui: &Ui, left_center: Pos2, s: f32) -> bool {
+    fn draw_store_tabs(&self, ui: &Ui, left_center: Pos2, s: f32) -> Option<StoreTab> {
         let painter = ui.painter();
         let mut x = left_center.x;
-        let mut clicked = false;
-        for (tab, label) in [(StoreTab::Apps, tr!("Apps")), (StoreTab::Themes, tr!("Themes"))] {
+        let mut clicked = None;
+        for (i, tab) in StoreTab::ALL.into_iter().enumerate() {
             let on = self.store.tab == tab;
-            let galley = painter.layout_no_wrap(label.to_owned(), FontId::proportional(20.0 * s), Color32::WHITE);
+            let galley = painter.layout_no_wrap(tab.label().to_owned(), FontId::proportional(20.0 * s), Color32::WHITE);
             let pill = Rect::from_min_size(pos2(x, left_center.y - 18.0 * s), vec2(galley.size().x + 32.0 * s, 36.0 * s));
             painter.rect_filled(pill, (18.0 * s) as u8, if on { ACCENT } else { Color32::from_white_alpha(14) });
             painter.galley(pill.center() - galley.size() / 2.0, galley, if on { Color32::WHITE } else { Color32::from_gray(170) });
-            clicked |= !on && ui.interact(pill, Id::new(("store-tab", tab == StoreTab::Apps)), Sense::click()).clicked();
+            if !on && ui.interact(pill, Id::new(("store-tab", i)), Sense::click()).clicked() {
+                clicked = Some(tab);
+            }
             x = pill.right() + 10.0 * s;
         }
         painter.text(pos2(x + 8.0 * s, left_center.y), Align2::LEFT_CENTER, tr!("Menu / Tab"), FontId::proportional(14.0 * s), Color32::from_gray(110));
@@ -903,7 +1022,7 @@ impl App {
     }
 
     fn draw_store_detail(&self, ui: &Ui, index: usize, rect: Rect, s: f32) -> bool {
-        let Some(app) = self.store.apps.get(index) else { return false };
+        let Some(app) = self.store.packages().get(index) else { return false };
         let painter = ui.painter().with_clip_rect(rect);
         let icon = Rect::from_min_size(rect.min, vec2(200.0 * s, 200.0 * s));
         self.paint_store_icon(ui, app, icon, s);
@@ -913,16 +1032,22 @@ impl App {
         y += 54.0 * s;
         let size = app.latest.size as f64 / (1024.0 * 1024.0);
         let author = if app.author.is_empty() { tr!("unknown author") } else { &app.author };
+        let kind = if app.is_addon() { tr!("bar widget") } else { &app.kind };
         let facts = tr!(
             "{author} · {kind} · version {version} · {size} MB",
             author = author,
-            kind = app.kind,
+            kind = kind,
             version = app.latest.version,
             size = format!("{size:.1}"),
         );
         painter.text(pos2(x, y), Align2::LEFT_TOP, facts, FontId::proportional(17.0 * s), Color32::from_gray(160));
         y += 30.0 * s;
-        let installed = self.store.installed.get(&app.id);
+        if let Some(min) = app.min_height {
+            let text = tr!("Needs a bar at least {px} px high; a lower bar is raised", px = format!("{min:.0}"));
+            painter.text(pos2(x, y), Align2::LEFT_TOP, text, FontId::proportional(17.0 * s), PAD_Y);
+            y += 30.0 * s;
+        }
+        let installed = self.installed_package(app);
         let status = match (self.store.installs.get(&app.id), installed) {
             (Some(Install::Failed(e)), _) => (tr!("Install failed: {error}", error = e), PAD_B),
             (_, Some(m)) if app.latest.is_update_for(m) => {
@@ -938,6 +1063,7 @@ impl App {
                 tr!("Installing… {percent} %", percent = percent(*done, *total))
             }
             (_, Some(m)) if app.latest.is_update_for(m) => tr!("Update to {version}", version = app.latest.version),
+            (_, Some(_)) if app.is_addon() => tr!("Place in a bar").to_owned(),
             (_, Some(_)) => tr!("Start").to_owned(),
             _ => tr!("Get").to_owned(),
         };
@@ -977,7 +1103,7 @@ impl App {
     }
 
     fn store_badge(&self, app: &RemoteApp) -> (String, Color32) {
-        match (self.store.installs.get(&app.id), self.store.installed.get(&app.id)) {
+        match (self.store.installs.get(&app.id), self.installed_package(app)) {
             (Some(Install::Downloading(done, total)), _) => {
                 (format!("{} %", percent(*done, *total)), Color32::from_gray(200))
             }

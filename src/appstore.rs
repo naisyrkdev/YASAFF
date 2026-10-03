@@ -35,7 +35,17 @@ pub struct Manifest {
     pub run: BTreeMap<String, RunEntry>,
     pub install: InstallSteps,
     pub git: Option<GitInfo>,
+    pub widget: Option<WidgetSpec>,
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WidgetSpec {
+    pub min_height: Option<f32>,
+}
+
+pub const ADDON: &str = "addon";
+pub const BAR_WIDGET: &str = "bar-widget";
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -71,10 +81,22 @@ impl Manifest {
         self.run.get(platform())
     }
 
+    pub fn is_addon(&self) -> bool {
+        self.yasaff == ADDON
+    }
+
+    pub fn min_height(&self) -> Option<f32> {
+        let h = self.widget.as_ref()?.min_height?;
+        h.is_finite().then(|| h.clamp(crate::theme::BarStyle::HEIGHT_RANGE.0, crate::theme::BarStyle::HEIGHT_RANGE.1))
+    }
+
     fn validate(&self, root: &Path) -> Result<()> {
-        ensure!(self.yasaff == "app", "{MANIFEST}: \"yasaff\" must be \"app\"");
+        ensure!(matches!(self.yasaff.as_str(), "app" | ADDON), "{MANIFEST}: \"yasaff\" must be \"app\" or \"addon\"");
         ensure!(self.format_version == 1, "{MANIFEST}: format version {} is not supported; update YASAFF", self.format_version);
         ensure!(valid_id(&self.id), "{MANIFEST}: \"{}\" is not a valid id", self.id);
+        if self.is_addon() {
+            ensure!(self.kind == BAR_WIDGET, "{MANIFEST}: addon kind \"{}\" is not supported; update YASAFF", self.kind);
+        }
         let run = self.run_entry().with_context(|| format!("{} can't run on {}", self.name, platform()))?;
         let paths = [Some(&run.command), run.working_dir.as_ref(), self.icon.as_ref(), self.background.as_ref()];
         for path in paths.into_iter().flatten().chain(&self.install.executables) {
@@ -116,6 +138,36 @@ pub fn apps_dir() -> PathBuf {
 
 pub fn install_dir(id: &str) -> PathBuf {
     apps_dir().join(id)
+}
+
+pub fn addons_dir() -> PathBuf {
+    Library::data_dir().join("addons")
+}
+
+pub fn addon_dir(id: &str) -> PathBuf {
+    addons_dir().join(id)
+}
+
+pub fn installed_addons() -> Vec<Manifest> {
+    let mut addons: Vec<Manifest> = fs::read_dir(addons_dir())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+        .filter_map(|e| Manifest::read(&e.path()).ok())
+        .filter(Manifest::is_addon)
+        .collect();
+    addons.sort_by_key(|m| m.name.to_lowercase());
+    addons
+}
+
+pub fn uninstall_addon(id: &str) -> Result<()> {
+    ensure!(valid_id(id), "invalid addon id {id}");
+    let dir = addon_dir(id);
+    if dir.exists() {
+        fs::remove_dir_all(&dir).with_context(|| format!("deleting {}", dir.display()))?;
+    }
+    Ok(())
 }
 
 pub fn app_data_dir(id: &str) -> PathBuf {
@@ -271,6 +323,12 @@ struct ListResponse {
 
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
+struct AddonListResponse {
+    addons: Vec<RemoteApp>,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct RemoteApp {
     pub id: String,
     pub name: String,
@@ -285,6 +343,7 @@ pub struct RemoteApp {
     pub icon_url: Option<String>,
     #[serde(default)]
     pub downloads: u64,
+    pub min_height: Option<f32>,
     pub latest: Release,
 }
 
@@ -301,6 +360,12 @@ pub struct Release {
     pub git: Option<GitInfo>,
     pub notes: Option<String>,
     pub package_url: String,
+}
+
+impl RemoteApp {
+    pub fn is_addon(&self) -> bool {
+        self.kind == BAR_WIDGET
+    }
 }
 
 impl Release {
@@ -375,6 +440,8 @@ pub enum Event {
     ThemePreview(String, usize, PathBuf),
     ThemeProgress(String, u64, u64),
     ThemeDownloaded(String, Result<PathBuf, String>),
+    AddonsListed(Result<Vec<RemoteApp>, String>),
+    AddonIcon(String, PathBuf),
 }
 
 pub struct Client {
@@ -429,9 +496,25 @@ impl Client {
         });
     }
 
-    pub fn import_file(&self, zip: PathBuf, busy: Option<String>) {
+    pub fn list_addons(&self, endpoint: Endpoint) {
+        self.spawn(move |agent, send| {
+            let url = format!("{}/addons?platform={}", endpoint.base, platform());
+            let listed = get_json::<AddonListResponse>(agent, &endpoint, &url).map(|r| r.addons);
+            let addons = listed.as_ref().cloned().unwrap_or_default();
+            send(Event::AddonsListed(listed.map_err(|e| format!("{e:#}"))));
+            for addon in addons {
+                if let Some(url) = &addon.icon_url
+                    && let Ok(path) = cached_icon(agent, &endpoint, url, &addon)
+                {
+                    send(Event::AddonIcon(addon.id.clone(), path));
+                }
+            }
+        });
+    }
+
+    pub fn import_file(&self, zip: PathBuf, busy: Vec<String>) {
         self.spawn(move |_, send| {
-            let result = install_package(&zip, busy.as_deref()).map(Box::new).map_err(|e| format!("{e:#}"));
+            let result = install_package(&zip, &busy).map(Box::new).map_err(|e| format!("{e:#}"));
             send(Event::Imported(zip, result));
         });
     }
@@ -549,34 +632,37 @@ fn cached_image(agent: &ureq::Agent, endpoint: &Endpoint, url: &str, dir: &Path,
 fn install(agent: &ureq::Agent, endpoint: &Endpoint, app: &RemoteApp, progress: &dyn Fn(u64, u64)) -> Result<Manifest> {
     ensure!(valid_id(&app.id), "the store sent an invalid app id");
     ensure!(app.latest.runs_here(), "{} {} doesn't run on {}", app.name, app.latest.version, platform());
-    let apps = apps_dir();
-    fs::create_dir_all(&apps)?;
-    let zip_path = apps.join(format!(".download-{}.zip", app.id));
+    let root = Library::data_dir();
+    fs::create_dir_all(&root)?;
+    let zip_path = root.join(format!(".download-{}.zip", app.id));
     let (url, size, sha) = (&app.latest.package_url, app.latest.size, &app.latest.sha256);
     let result = download(agent, endpoint, url, size, sha, &zip_path, progress).and_then(|()| {
-        let manifest = install_package(&zip_path, None)?;
+        let manifest = install_package(&zip_path, &[])?;
         ensure!(manifest.id == app.id, "the package is for \"{}\", not \"{}\"", manifest.id, app.id);
+        ensure!(manifest.is_addon() == (app.kind == BAR_WIDGET), "the store and the package disagree on whether {} is an addon", app.name);
         Ok(manifest)
     });
     let _ = fs::remove_file(&zip_path);
     result
 }
 
-fn install_package(zip_path: &Path, busy: Option<&str>) -> Result<Manifest> {
-    install_package_in(&apps_dir(), zip_path, busy)
+fn install_package(zip_path: &Path, busy: &[String]) -> Result<Manifest> {
+    install_package_in(&Library::data_dir(), zip_path, busy)
 }
 
-fn install_package_in(apps: &Path, zip_path: &Path, busy: Option<&str>) -> Result<Manifest> {
-    fs::create_dir_all(apps)?;
-    let staging = apps.join(format!(".staging-{}", uuid::Uuid::new_v4()));
+fn install_package_in(root: &Path, zip_path: &Path, busy: &[String]) -> Result<Manifest> {
+    fs::create_dir_all(root)?;
+    let staging = root.join(format!(".staging-{}", uuid::Uuid::new_v4()));
     let result = (|| {
         unpack(zip_path, &staging, MANIFEST)?;
         let manifest = Manifest::read(&staging)?;
         manifest.validate(&staging)?;
-        ensure!(busy != Some(manifest.id.as_str()), "{} is running; close it first", manifest.name);
+        ensure!(!busy.contains(&manifest.id), "{} is running; close it first", manifest.name);
         #[cfg(unix)]
         make_executable(&staging, &manifest)?;
-        swap_in(&staging, &apps.join(&manifest.id))?;
+        let folder = root.join(if manifest.is_addon() { "addons" } else { "apps" });
+        fs::create_dir_all(&folder)?;
+        swap_in(&staging, &folder.join(&manifest.id))?;
         Ok(manifest)
     })();
     let _ = fs::remove_dir_all(&staging);
@@ -758,7 +844,8 @@ mod tests {
     #[test]
     fn installs_a_package_from_disk() {
         let dir = std::env::temp_dir().join(format!("yasaff-test-{}", uuid::Uuid::new_v4()));
-        let apps = dir.join("apps");
+        let root = dir.join("data");
+        let apps = root.join("apps");
         fs::create_dir_all(&dir).unwrap();
         let manifest = |version: &str, command: &str| {
             format!(
@@ -770,7 +857,7 @@ mod tests {
         let script = [("bin/run.sh", "#!/bin/sh\necho hi\n")];
 
         let v1 = package(&dir, "v1.zip", &manifest("1.0.0", "bin/run.sh"), &script);
-        let installed = install_package_in(&apps, &v1, None).unwrap();
+        let installed = install_package_in(&root, &v1, &[]).unwrap();
         assert_eq!((installed.id.as_str(), installed.version.as_str()), ("demo-app", "1.0.0"));
         assert!(apps.join("demo-app/bin/run.sh").is_file());
         #[cfg(unix)]
@@ -781,14 +868,38 @@ mod tests {
         }
 
         let broken = package(&dir, "broken.zip", &manifest("2.0.0", "bin/missing"), &script);
-        assert!(install_package_in(&apps, &broken, None).is_err());
+        assert!(install_package_in(&root, &broken, &[]).is_err());
         let v2 = package(&dir, "v2.zip", &manifest("2.0.0", "bin/run.sh"), &script);
-        assert!(install_package_in(&apps, &v2, Some("demo-app")).is_err());
+        assert!(install_package_in(&root, &v2, &["demo-app".into()]).is_err());
         assert_eq!(Manifest::read(&apps.join("demo-app")).unwrap().version, "1.0.0");
 
-        assert_eq!(install_package_in(&apps, &v2, None).unwrap().version, "2.0.0");
+        assert_eq!(install_package_in(&root, &v2, &[]).unwrap().version, "2.0.0");
         let left: Vec<_> = fs::read_dir(&apps).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert_eq!(left, ["demo-app"]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn installs_an_addon_next_to_the_apps() {
+        let dir = std::env::temp_dir().join(format!("yasaff-test-{}", uuid::Uuid::new_v4()));
+        let root = dir.join("data");
+        fs::create_dir_all(&dir).unwrap();
+        let manifest = |kind: &str| {
+            format!(
+                r#"{{"yasaff":"addon","formatVersion":1,"id":"demo-widget","name":"Demo","version":"1.0.0","kind":"{kind}",
+                    "widget":{{"minHeight":120}},"run":{{"{}":{{"command":"bin/run.sh"}}}}}}"#,
+                platform()
+            )
+        };
+        let script = [("bin/run.sh", "#!/bin/sh\necho hi\n")];
+        let unknown = package(&dir, "unknown.zip", &manifest("sidebar"), &script);
+        assert!(install_package_in(&root, &unknown, &[]).is_err());
+        let widget = package(&dir, "widget.zip", &manifest(BAR_WIDGET), &script);
+        let installed = install_package_in(&root, &widget, &[]).unwrap();
+        assert!(installed.is_addon());
+        assert_eq!(installed.min_height(), Some(120.0));
+        assert!(root.join("addons/demo-widget/bin/run.sh").is_file());
+        assert!(!root.join("apps").exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 
