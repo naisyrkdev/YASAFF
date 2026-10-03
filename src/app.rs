@@ -20,6 +20,7 @@ use crate::metadata::{self, Fetcher};
 use crate::object3d::{self, Objects};
 use crate::profiles;
 use crate::scan;
+use crate::sound::Sounds;
 use crate::settings::{DiscAction, Language, MouseSettings, Settings};
 use crate::stores::Store;
 use crate::video::{self, VideoPlayer};
@@ -226,6 +227,7 @@ enum SettingRow {
     BubbleFill,
     BubbleShuffle,
     BubbleVideo,
+    BubbleSound,
     BoxCase,
     BoxWidth,
     BoxHeight,
@@ -682,7 +684,8 @@ pub struct App {
     mode: Mode,
     toast: Option<(String, Instant)>,
     bubble_layout: RefCell<Option<BubbleLayout>>,
-    bubble_centers: RefCell<Vec<Pos2>>,
+    bubble_empty: Option<usize>,
+    sounds: Sounds,
     video: Option<VideoPlayer>,
     video_wanted: (Option<PathBuf>, Instant),
     video_failed: bool,
@@ -759,7 +762,8 @@ impl App {
             mode: Mode::Home,
             toast: None,
             bubble_layout: RefCell::new(None),
-            bubble_centers: RefCell::new(Vec::new()),
+            bubble_empty: None,
+            sounds: Sounds::default(),
             video: None,
             video_wanted: (None, Instant::now()),
             video_failed: false,
@@ -1255,12 +1259,13 @@ impl App {
         match &mut self.mode {
             Mode::Home => match action {
                 Action::Left | Action::Right | Action::Up | Action::Down => {
-                    self.selected = if self.is_bubbles() {
-                        navigate_free(&self.bubble_centers.borrow(), self.selected, action)
+                    if self.is_bubbles() {
+                        self.navigate_bubbles(action);
                     } else {
-                        navigate(self.home_layout(), self.selected, self.tile_count(), action)
-                    };
+                        self.selected = navigate(self.home_layout(), self.selected, self.tile_count(), action);
+                    }
                 }
+                Action::Confirm | Action::Options if self.empty_bubble().is_some() => {}
                 Action::Confirm => self.activate_selected(),
                 Action::Options if self.selected_game().is_some() => {
                     self.mode = Mode::Options { cursor: 0 }
@@ -1283,8 +1288,12 @@ impl App {
             },
             Mode::SwapBubble { from, target } => match action {
                 Action::Left | Action::Right | Action::Up | Action::Down => {
-                    let layout = self.bubble_layout.borrow();
-                    *target = navigate_free(layout.as_ref().map_or(&[], |l| &l.centers), *target, action);
+                    let from = *target;
+                    let to = navigate_free(self.bubble_layout.borrow().as_ref().map_or(&[], |l| &l.centers), from, action);
+                    *target = to;
+                    if to != from {
+                        self.bubble_sound(to);
+                    }
                 }
                 Action::Confirm => {
                     let (from, target) = (*from, *target);
@@ -1615,7 +1624,7 @@ impl App {
         rows.extend([R::ViewKind, R::TileStyle]);
         let bubbles = theme.kind == ThemeKind::Bubbles;
         if bubbles {
-            rows.extend([R::BubbleSize, R::BubbleVariance, R::BubbleFill, R::BubbleShuffle, R::BubbleVideo]);
+            rows.extend([R::BubbleSize, R::BubbleVariance, R::BubbleFill, R::BubbleShuffle, R::BubbleVideo, R::BubbleSound]);
         } else {
             match theme.view {
             ViewKind::Row => {
@@ -2131,6 +2140,7 @@ impl App {
             | SettingRow::BubbleVariance
             | SettingRow::BubbleFill
             | SettingRow::BubbleVideo
+            | SettingRow::BubbleSound
             | SettingRow::Bar(..) => self.adjust_setting(row, 1),
         }
     }
@@ -2246,6 +2256,7 @@ impl App {
                 b.size_variance = step(b.size_variance, 5.0 * d, BubbleSettings::VARIANCE_RANGE);
             }
             SettingRow::BubbleVideo => settings.bubbles.play_video ^= true,
+            SettingRow::BubbleSound => settings.bubbles.sound ^= true,
             SettingRow::BubbleFill => settings.bubbles.fill_screen ^= true,
             SettingRow::TileStyle => settings.tile_style = cycle(&TileStyle::ALL, settings.tile_style, delta),
             SettingRow::BoxCase => settings.boxes.case = cycle(&BoxCase::ALL, settings.boxes.case, delta),
@@ -3448,6 +3459,53 @@ impl App {
         self.theme().settings.kind == ThemeKind::Bubbles
     }
 
+    /// The tile sitting in a bubble slot; `None` for an empty bubble.
+    fn bubble_occupant(&self, slot: usize) -> Option<usize> {
+        let specials = self.library.games.len()..self.tile_count();
+        self.bubble_places().iter().position(|&p| p == slot).or_else(|| specials.contains(&slot).then_some(slot))
+    }
+
+    /// The empty bubble the cursor rests on in Home, if it isn't on a tile.
+    fn empty_bubble(&self) -> Option<usize> {
+        let slot = self.bubble_empty.filter(|_| self.is_bubbles() && matches!(self.mode, Mode::Home))?;
+        let total = self.bubble_layout.borrow().as_ref().map_or(0, |l| l.centers.len());
+        (slot < total && self.bubble_occupant(slot).is_none()).then_some(slot)
+    }
+
+    fn navigate_bubbles(&mut self, action: Action) {
+        let from = self.empty_bubble().unwrap_or_else(|| self.bubble_places().get(self.selected).copied().unwrap_or(self.selected));
+        let to = match self.bubble_layout.borrow().as_ref() {
+            Some(layout) if layout.centers.len() >= self.tile_count() => navigate_free(&layout.centers, from, action),
+            _ => return,
+        };
+        if to == from {
+            return;
+        }
+        match self.bubble_occupant(to) {
+            Some(i) => {
+                self.selected = i;
+                self.bubble_empty = None;
+            }
+            None => self.bubble_empty = Some(to),
+        }
+        self.bubble_sound(to);
+    }
+
+    /// Bigger bubbles sound lower.
+    fn bubble_sound(&mut self, slot: usize) {
+        if !self.theme().settings.bubbles.sound {
+            return;
+        }
+        let pitch = {
+            let layout = self.bubble_layout.borrow();
+            let Some(layout) = layout.as_ref() else { return };
+            let Some(&r) = layout.radii.get(slot) else { return };
+            let mean = layout.radii.iter().sum::<f32>() / layout.radii.len() as f32;
+            (620.0 * (mean / r.max(1.0)).powf(0.7)).clamp(300.0, 1400.0)
+        };
+        self.sounds.bubble(pitch);
+    }
+
     fn bubble_key(&self, i: usize) -> String {
         match self.library.games.get(i) {
             Some(game) => game.id.clone(),
@@ -3463,6 +3521,7 @@ impl App {
         let wanted = (theme.kind == ThemeKind::Bubbles
             && theme.bubbles.play_video
             && matches!(self.mode, Mode::Home)
+            && self.empty_bubble().is_none()
             && ctx.input(|i| i.focused))
         .then(|| self.selected_game().and_then(|g| g.video.clone()))
         .flatten();
@@ -3512,12 +3571,10 @@ impl App {
             (layout.centers.clone(), layout.radii.clone())
         };
         if centers.len() < count {
-            self.bubble_centers.borrow_mut().clear();
             return;
         }
         let places = self.bubble_places();
         let slot = |i: usize| places.get(i).copied().unwrap_or(i);
-        *self.bubble_centers.borrow_mut() = (0..count).map(|i| centers[slot(i)]).collect();
         let mut occupant: Vec<Option<usize>> = vec![None; centers.len()];
         for i in 0..count {
             occupant[slot(i)] = Some(i);
@@ -3535,7 +3592,8 @@ impl App {
             _ => (None, None),
         };
         let selected = self.selected.min(count - 1);
-        let focused = target.unwrap_or(slot(selected));
+        let empty = self.empty_bubble();
+        let focused = target.or(empty).unwrap_or(slot(selected));
         let moving = swapping.map(slot);
         let mut clicked = None;
         let order = (0..centers.len())
@@ -3569,7 +3627,7 @@ impl App {
                 running: tile.is_some_and(|i| self.is_active(i)),
             };
             paint_bubble(ui.painter(), center, r, &look, t, focus, s);
-            if interactive && (!look.empty || swapping.is_some()) {
+            if interactive {
                 let resp = ui.interact(Rect::from_center_size(center, Vec2::splat(r * 2.0)), Id::new(("bubble", j)), Sense::click());
                 if resp.clicked() && resp.interact_pointer_pos().is_some_and(|p| p.distance(center) <= r) {
                     clicked = Some(j);
@@ -3582,12 +3640,20 @@ impl App {
             let text = tr!("Pick a bubble to swap places with {name}", name = name);
             shadow_text(ui.painter(), details - vec2(0.0, 44.0 * s), Align2::LEFT_TOP, &text, 24.0 * s, SWAP_GLOW);
         }
-        self.draw_details(ui, details, s, false);
+        if empty.is_none() {
+            self.draw_details(ui, details, s, false);
+        }
         match (clicked, swapping) {
             (Some(j), Some(from)) => self.move_bubble(from, j),
             (Some(j), None) => {
-                if let Some(i) = occupant[j] {
-                    self.click_tile(i);
+                if j != focused {
+                    self.bubble_sound(j);
+                }
+                self.bubble_empty = None;
+                match occupant[j] {
+                    Some(i) if empty.is_some() => self.selected = i,
+                    Some(i) => self.click_tile(i),
+                    None => self.bubble_empty = Some(j),
                 }
             }
             _ => {}
@@ -3923,6 +3989,7 @@ impl App {
 
     fn draw_hints(&self, ui: &Ui, screen: Rect, s: f32) -> Option<Action> {
         let hints: &[Hint] = match self.mode {
+            Mode::Home if self.empty_bubble().is_some() => &[],
             Mode::Home if self.app_running_at(self.selected) => &[
                 Hint(Action::Confirm, tr!("Switch to app")),
                 Hint(Action::Options, tr!("Options")),
@@ -4682,9 +4749,10 @@ impl App {
         match row {
             SettingRow::Fullscreen => Some((tr!("General"), None)),
             SettingRow::ProfileActive => Some((
-                tr!("Power user options"),
+                tr!("Profiles"),
                 Some((tr!("Profile: {name}", name = profiles::active()), Color32::from_gray(140))),
             )),
+            SettingRow::AppReset => Some((tr!("Power options"), None)),
             SettingRow::AppStoreActive => Some((tr!("YASAFF Store"), Some(self.store_status()))),
             SettingRow::AboutApp => Some((tr!("About"), None)),
             SettingRow::AddonBar(0) => Some(self.addons_heading()),
@@ -4967,6 +5035,11 @@ impl App {
                 tr!("Play video on selected game").into(),
                 tr!("Set a video in the game's Options; needs ffmpeg installed"),
                 Toggle(theme.bubbles.play_video),
+            ),
+            SettingRow::BubbleSound => (
+                tr!("Bubble sounds").into(),
+                tr!("A soft bloop when moving between bubbles"),
+                Toggle(theme.bubbles.sound),
             ),
             SettingRow::BoxCase => {
                 let label = if theme.tile_style == TileStyle::Cover { tr!("Cover shape") } else { tr!("Box shape") };
@@ -5863,6 +5936,9 @@ impl eframe::App for App {
         self.poll_profile_job();
         self.poll_setup();
         self.update_launching(&ctx);
+        if !matches!(self.mode, Mode::Home) {
+            self.bubble_empty = None;
+        }
         self.update_video(&ctx);
         self.guard_focus(&ctx);
 

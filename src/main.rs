@@ -24,6 +24,7 @@ mod profiles;
 mod saves;
 mod scan;
 mod settings;
+mod sound;
 mod stores;
 mod theme;
 mod video;

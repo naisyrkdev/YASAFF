@@ -441,11 +441,12 @@ pub struct BubbleSettings {
     pub seed: u32,
     pub fill_screen: bool,
     pub play_video: bool,
+    pub sound: bool,
 }
 
 impl Default for BubbleSettings {
     fn default() -> Self {
-        Self { size: 150.0, size_variance: 20.0, seed: 0, fill_screen: true, play_video: true }
+        Self { size: 150.0, size_variance: 20.0, seed: 0, fill_screen: true, play_video: true, sound: true }
     }
 }
 
