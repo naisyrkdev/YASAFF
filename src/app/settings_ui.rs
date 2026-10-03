@@ -328,7 +328,7 @@ impl App {
         }
         let theme = &self.theme().settings;
         let mut rows = vec![R::Fullscreen, R::Autostart, R::Language];
-        rows.extend([R::ProfileActive, R::ProfileRename, R::ProfileNew, R::ProfileExport, R::ProfileImport, R::ProfileReset, R::AppReset]);
+        rows.extend([R::ProfileActive, R::ProfileRename, R::ProfileNew, R::ProfileExport, R::ProfileImport, R::ProfileReset]);
         rows.extend([R::ViewKind, R::TileStyle]);
         let bubbles = theme.kind == ThemeKind::Bubbles;
         if bubbles {
@@ -455,7 +455,7 @@ impl App {
             rows.extend([R::AddonBar(i), R::AddonRemove(i)]);
         }
         rows.push(R::AddonImport);
-        rows.extend([R::AboutApp, R::AboutSource, R::AboutServer]);
+        rows.extend([R::AboutApp, R::AboutSource, R::AboutServer, R::AppReset]);
         rows
     }
 
