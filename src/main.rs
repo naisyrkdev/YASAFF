@@ -4,6 +4,7 @@
 mod i18n;
 mod app;
 mod appstore;
+mod autostart;
 mod box3d;
 mod disc3d;
 mod fonts;
@@ -20,6 +21,7 @@ mod scan;
 mod settings;
 mod stores;
 mod theme;
+mod video;
 mod watch;
 
 fn main() -> eframe::Result {

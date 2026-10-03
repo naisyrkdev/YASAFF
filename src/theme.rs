@@ -9,6 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const SETTINGS_FILE: &str = "themeSettings.json";
 const IMAGES_DIR: &str = "images";
+pub const BUBBLES_ID: &str = "bubbles";
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug, Default)]
 #[serde(rename_all = "lowercase")]
@@ -25,6 +26,23 @@ impl ViewKind {
         match self {
             Self::Row => tr!("Row view"),
             Self::Grid => tr!("Grid view"),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeKind {
+    #[default]
+    Standard,
+    Bubbles,
+}
+
+impl ThemeKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Standard => tr!("Standard"),
+            Self::Bubbles => tr!("Bubbles"),
         }
     }
 }
@@ -413,6 +431,45 @@ impl GridSettings {
     pub const SPACING_RANGE: (f32, f32) = (0.0, 120.0);
 }
 
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(default)]
+pub struct BubbleSettings {
+    pub size: f32,
+    pub size_variance: f32,
+    pub seed: u32,
+    pub fill_screen: bool,
+    pub play_video: bool,
+}
+
+impl Default for BubbleSettings {
+    fn default() -> Self {
+        Self { size: 150.0, size_variance: 20.0, seed: 0, fill_screen: true, play_video: true }
+    }
+}
+
+impl BubbleSettings {
+    pub const SIZE_RANGE: (f32, f32) = (60.0, 400.0);
+    pub const VARIANCE_RANGE: (f32, f32) = (0.0, 150.0);
+
+    pub fn diameter(&self, key: &str) -> f32 {
+        let (min, max) = Self::SIZE_RANGE;
+        let size = if self.size.is_finite() { self.size.clamp(min, max) } else { Self::default().size };
+        let variance = if self.size_variance.is_finite() { self.size_variance.clamp(0.0, size * 0.75) } else { 0.0 };
+        size + variance * (unit_hash(key, self.seed) * 2.0 - 1.0)
+    }
+}
+
+fn unit_hash(key: &str, seed: u32) -> f32 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ u64::from(seed).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    for b in key.bytes() {
+        h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+    }
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    h ^= h >> 33;
+    (h >> 40) as f32 / (1u64 << 24) as f32
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct Background {
@@ -552,6 +609,8 @@ pub struct ThemeSettings {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub store: Option<StoreOrigin>,
+    #[serde(skip_serializing_if = "is_standard")]
+    pub kind: ThemeKind,
     pub view: ViewKind,
     pub tiles: TileSettings,
     pub grid: GridSettings,
@@ -559,12 +618,42 @@ pub struct ThemeSettings {
     pub boxes: BoxSettings,
     pub objects: ObjectSettings,
     pub discs: DiscSettings,
+    pub bubbles: BubbleSettings,
     pub background: Background,
     pub top_bar: BarStyle,
     pub bottom_bar: BarStyle,
 }
 
 impl ThemeSettings {
+    pub fn bubbles_preset() -> Self {
+        Self {
+            name: "Bubbles".to_owned(),
+            kind: ThemeKind::Bubbles,
+            background: Background {
+                game_art: false,
+                gradient_from: Color32::from_rgb(0x0a, 0x3a, 0x5c),
+                gradient_to: Color32::from_rgb(0x02, 0x0a, 0x1c),
+                ..Background::default()
+            },
+            ..Self::default()
+        }
+    }
+
+    pub fn disabled_options(&self) -> &'static [&'static str] {
+        match self.kind {
+            ThemeKind::Bubbles => &["view", "tiles", "grid", "tile_style", "boxes", "objects", "discs"],
+            ThemeKind::Standard => &["bubbles"],
+        }
+    }
+
+    pub fn to_json(&self) -> Result<String> {
+        let mut value = serde_json::to_value(self)?;
+        if let Some(map) = value.as_object_mut() {
+            map.insert("disabled_options".to_owned(), serde_json::json!(self.disabled_options()));
+        }
+        Ok(serde_json::to_string_pretty(&value)?)
+    }
+
     pub fn bar(&self, slot: BarSlot) -> &BarStyle {
         match slot {
             BarSlot::Top => &self.top_bar,
@@ -585,6 +674,7 @@ impl Default for ThemeSettings {
         Self {
             name: "Default".to_owned(),
             store: None,
+            kind: ThemeKind::default(),
             view: ViewKind::default(),
             tiles: TileSettings::default(),
             grid: GridSettings::default(),
@@ -592,6 +682,7 @@ impl Default for ThemeSettings {
             boxes: BoxSettings::default(),
             objects: ObjectSettings::default(),
             discs: DiscSettings::default(),
+            bubbles: BubbleSettings::default(),
             background: Background::default(),
             top_bar: BarStyle::default(),
             bottom_bar: BarStyle::default(),
@@ -626,7 +717,14 @@ impl Theme {
                 Err(e) => warnings.push(tr!("Skipping theme: {error}", error = format!("{e:#}"))),
             }
         }
-        if themes.is_empty() {
+        if !themes.iter().any(|t| t.id == BUBBLES_ID) {
+            let theme = Theme { id: BUBBLES_ID.to_owned(), dir: Self::themes_dir().join(BUBBLES_ID), settings: ThemeSettings::bubbles_preset() };
+            if let Err(e) = theme.save() {
+                warnings.push(tr!("Could not create the Bubbles theme: {error}", error = format!("{e:#}")));
+            }
+            themes.push(theme);
+        }
+        if !themes.iter().any(|t| t.settings.kind == ThemeKind::Standard) {
             match Theme::create(ThemeSettings::default()) {
                 Ok(theme) => themes.push(theme),
                 Err(e) => {
@@ -652,9 +750,13 @@ impl Theme {
         fs::create_dir_all(self.images_dir())?;
         let file = self.dir.join(SETTINGS_FILE);
         let tmp = file.with_extension("json.tmp");
-        fs::write(&tmp, serde_json::to_string_pretty(&self.settings)?)?;
+        fs::write(&tmp, self.settings.to_json()?)?;
         fs::rename(&tmp, &file)?;
         Ok(())
+    }
+
+    pub fn is_builtin(&self) -> bool {
+        self.id == BUBBLES_ID
     }
 
     pub fn images_dir(&self) -> PathBuf {
@@ -706,6 +808,9 @@ impl Theme {
     }
 
     pub fn delete(&self) -> Result<()> {
+        if self.is_builtin() {
+            bail!("{} is a built-in theme", self.settings.name);
+        }
         if self.dir.parent() != Some(Self::themes_dir().as_path()) {
             bail!("{} is not a theme folder", self.dir.display());
         }
@@ -722,7 +827,7 @@ impl Theme {
             dest = parent.join(format!("{base} ({n})"));
         }
         fs::create_dir_all(dest.join(IMAGES_DIR))?;
-        fs::write(dest.join(SETTINGS_FILE), serde_json::to_string_pretty(&self.settings)?)?;
+        fs::write(dest.join(SETTINGS_FILE), self.settings.to_json()?)?;
         copy_images(&self.images_dir(), &dest.join(IMAGES_DIR))?;
         Ok(dest)
     }
@@ -764,6 +869,12 @@ impl Theme {
     }
 }
 
+pub fn deletable(themes: &[Theme], index: usize) -> bool {
+    let Some(theme) = themes.get(index) else { return false };
+    let standard = themes.iter().filter(|t| t.settings.kind == ThemeKind::Standard).count();
+    !theme.is_builtin() && (theme.settings.kind != ThemeKind::Standard || standard > 1)
+}
+
 pub fn sort(themes: &mut [Theme]) {
     themes.sort_by_key(|t| t.settings.name.to_lowercase());
 }
@@ -771,7 +882,22 @@ pub fn sort(themes: &mut [Theme]) {
 fn read_settings(dir: &Path) -> Result<ThemeSettings> {
     let file = dir.join(SETTINGS_FILE);
     let text = fs::read_to_string(&file).with_context(|| format!("reading {}", file.display()))?;
-    serde_json::from_str(&text).with_context(|| format!("parsing {}", file.display()))
+    parse_settings(&text).with_context(|| format!("parsing {}", file.display()))
+}
+
+fn parse_settings(text: &str) -> serde_json::Result<ThemeSettings> {
+    let mut value: serde_json::Value = serde_json::from_str(text)?;
+    if let Some(map) = value.as_object_mut()
+        && map.get("view").and_then(|v| v.as_str()) == Some("bubbles")
+    {
+        map.insert("view".to_owned(), "row".into());
+        map.insert("kind".to_owned(), "bubbles".into());
+    }
+    serde_json::from_value(value)
+}
+
+fn is_standard(kind: &ThemeKind) -> bool {
+    *kind == ThemeKind::Standard
 }
 
 fn copy_images(src: &Path, dest: &Path) -> Result<()> {
@@ -899,6 +1025,46 @@ mod tests {
         assert_eq!(s.view, ViewKind::Row);
         assert_eq!(s.tiles.rows, 1);
         assert_eq!(s.grid, GridSettings::default());
+    }
+
+    #[test]
+    fn bubble_sizes_stay_within_the_variance() {
+        let b = BubbleSettings::default();
+        let sizes: Vec<f32> = (0..200).map(|i| b.diameter(&format!("game-{i}"))).collect();
+        assert!(sizes.iter().all(|d| (130.0..=170.0).contains(d)));
+        assert!(sizes.iter().any(|d| *d < 140.0) && sizes.iter().any(|d| *d > 160.0));
+        assert_eq!(b.diameter("x"), b.diameter("x"));
+        assert_ne!(b.diameter("x"), BubbleSettings { seed: 1, ..b.clone() }.diameter("x"));
+    }
+
+    #[test]
+    fn export_marks_options_bubbles_do_not_use() {
+        let s = ThemeSettings::bubbles_preset();
+        let json: serde_json::Value = serde_json::from_str(&s.to_json().unwrap()).unwrap();
+        let disabled: Vec<&str> = json["disabled_options"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(["view", "tiles", "grid", "tile_style"].iter().all(|o| disabled.contains(o)));
+        let back = parse_settings(&json.to_string()).unwrap();
+        assert_eq!(back.kind, ThemeKind::Bubbles);
+        let standard: serde_json::Value = serde_json::from_str(&ThemeSettings::default().to_json().unwrap()).unwrap();
+        assert!(standard.get("kind").is_none());
+    }
+
+    #[test]
+    fn bubbles_never_count_as_the_last_own_theme() {
+        let theme = |id: &str, settings: ThemeSettings| Theme { id: id.to_owned(), dir: PathBuf::from(id), settings };
+        let mut themes = vec![theme(BUBBLES_ID, ThemeSettings::bubbles_preset()), theme("mine", ThemeSettings::default())];
+        assert!(!deletable(&themes, 0));
+        assert!(!deletable(&themes, 1));
+        themes.push(theme("second", ThemeSettings::default()));
+        themes.push(theme("bubbles-copy", ThemeSettings::bubbles_preset()));
+        assert!(!deletable(&themes, 0));
+        assert!(deletable(&themes, 1) && deletable(&themes, 2) && deletable(&themes, 3));
+    }
+
+    #[test]
+    fn bubbles_saved_as_a_layout_become_a_bubbles_theme() {
+        let s = parse_settings(r#"{"name":"Old","view":"bubbles"}"#).unwrap();
+        assert_eq!((s.kind, s.view), (ThemeKind::Bubbles, ViewKind::Row));
     }
 
     #[test]

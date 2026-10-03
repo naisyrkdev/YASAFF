@@ -4,6 +4,7 @@ mod keyboard;
 mod store_screen;
 
 use crate::apps::{self, AppEntry};
+use crate::autostart;
 use crate::box3d;
 use crate::disc3d;
 use crate::fonts;
@@ -17,13 +18,14 @@ use crate::object3d::{self, Objects};
 use crate::scan;
 use crate::settings::{DiscAction, Language, MouseSettings, Settings};
 use crate::stores::Store;
+use crate::video::{self, VideoPlayer};
 use crate::theme::{
-    self, BackgroundKind, BarPosition, BarSlot, BarStyle, BoxCase, DiscKind, DiscSettings, DiscSpin, GradientDirection, GridAlign, GridSettings,
-    ImageFit, SpineLabel, Theme, TileSettings, TileStyle, ViewKind,
+    self, BackgroundKind, BarPosition, BarSlot, BarStyle, BoxCase, BubbleSettings, DiscKind, DiscSettings, DiscSpin, GradientDirection, GridAlign, GridSettings,
+    ImageFit, SpineLabel, Theme, ThemeKind, TileSettings, TileStyle, ViewKind,
 };
 use egui::{
     Align2, Color32, Context, FontId, Id, Mesh, Painter, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, TextureOptions,
-    Ui, Vec2, ViewportCommand, pos2, vec2,
+    TextureId, Ui, Vec2, ViewportCommand, pos2, vec2,
 };
 use std::cell::{Cell, RefCell};
 use std::ops::Range;
@@ -48,6 +50,7 @@ const SPIN_TIME: Duration = Duration::from_secs(12);
 const DISC_FOCUS_GRACE: Duration = Duration::from_secs(5);
 const BURN_QUIET: Duration = Duration::from_secs(20);
 const BURNER_REFRESH: Duration = Duration::from_secs(1);
+const VIDEO_DELAY: Duration = Duration::from_millis(700);
 
 #[derive(Clone, Copy, PartialEq)]
 enum MenuItem {
@@ -142,6 +145,7 @@ enum PromptKind {
 #[derive(Clone, Copy, PartialEq)]
 enum SettingRow {
     Fullscreen,
+    Autostart,
     Language,
     AppStoreActive,
     AppStoreUrl,
@@ -179,6 +183,11 @@ enum SettingRow {
     GridSpacing,
     GridEnlarge,
     GridAlign,
+    BubbleSize,
+    BubbleVariance,
+    BubbleFill,
+    BubbleShuffle,
+    BubbleVideo,
     BoxCase,
     BoxWidth,
     BoxHeight,
@@ -222,6 +231,8 @@ enum SettingRow {
     GameModel,
     GameModelUp,
     GameModelClear,
+    GameVideo,
+    GameVideoClear,
     GameObjectColor,
     GameSpineLabel,
     GameSpineColor,
@@ -271,6 +282,8 @@ impl SettingRow {
             | R::GameModel
             | R::GameModelUp
             | R::GameModelClear
+            | R::GameVideo
+            | R::GameVideoClear
             | R::GameObjectColor
             | R::GameSpineLabel
             | R::GameSpineColor
@@ -557,7 +570,13 @@ pub struct App {
     global_mouse: GlobalMouse,
     mode: Mode,
     toast: Option<(String, Instant)>,
+    bubble_layout: RefCell<Option<BubbleLayout>>,
+    bubble_centers: RefCell<Vec<Pos2>>,
+    video: Option<VideoPlayer>,
+    video_wanted: (Option<PathBuf>, Instant),
+    video_failed: bool,
     fullscreen: bool,
+    autostart: bool,
     bg_current: Option<PathBuf>,
     bg_previous: Option<PathBuf>,
     bg_changed: Instant,
@@ -623,7 +642,13 @@ impl App {
             global_mouse: GlobalMouse::spawn(cc.egui_ctx.clone()),
             mode: Mode::Home,
             toast: None,
+            bubble_layout: RefCell::new(None),
+            bubble_centers: RefCell::new(Vec::new()),
+            video: None,
+            video_wanted: (None, Instant::now()),
+            video_failed: false,
             fullscreen,
+            autostart: autostart::is_enabled(),
             bg_current: None,
             bg_previous: None,
             bg_changed: Instant::now(),
@@ -833,8 +858,17 @@ impl App {
     }
 
     fn select_theme(&mut self, id: &str) {
+        let focused = match self.mode {
+            Mode::Settings { cursor, page, in_rows: true } => self.setting_rows(page).get(cursor).copied(),
+            _ => None,
+        };
         theme::sort(&mut self.themes);
         self.theme = self.themes.iter().position(|t| t.id == id).unwrap_or(0);
+        if let Some(row) = focused
+            && self.setting_rows(row.page()).contains(&row)
+        {
+            self.mode = self.settings_at(row);
+        }
         if self.settings.theme != self.theme().id {
             self.settings.theme = self.theme().id.clone();
             self.save_settings();
@@ -1049,7 +1083,11 @@ impl App {
         match &mut self.mode {
             Mode::Home => match action {
                 Action::Left | Action::Right | Action::Up | Action::Down => {
-                    self.selected = navigate(self.home_layout(), self.selected, self.tile_count(), action);
+                    self.selected = if self.is_bubbles() {
+                        navigate_free(&self.bubble_centers.borrow(), self.selected, action)
+                    } else {
+                        navigate(self.home_layout(), self.selected, self.tile_count(), action)
+                    };
                 }
                 Action::Confirm => self.activate_selected(),
                 Action::Options if self.selected_game().is_some() => {
@@ -1337,14 +1375,22 @@ impl App {
             if game.is_some_and(|g| g.model.is_some()) {
                 rows.extend([R::GameModelUp, R::GameModelClear]);
             }
+            rows.push(R::GameVideo);
+            if game.is_some_and(|g| g.video.is_some()) {
+                rows.push(R::GameVideoClear);
+            }
             rows.push(R::GameObjectColor);
             rows.extend([R::GameSpineLabel, R::GameSpineColor, R::GameSpineText, R::GameTopColor, R::GameTitleFont]);
             return rows;
         }
         let theme = &self.theme().settings;
-        let mut rows = vec![R::Fullscreen, R::Language];
+        let mut rows = vec![R::Fullscreen, R::Autostart, R::Language];
         rows.extend([R::ViewKind, R::TileStyle]);
-        match theme.view {
+        let bubbles = theme.kind == ThemeKind::Bubbles;
+        if bubbles {
+            rows.extend([R::BubbleSize, R::BubbleVariance, R::BubbleFill, R::BubbleShuffle, R::BubbleVideo]);
+        } else {
+            match theme.view {
             ViewKind::Row => {
                 rows.extend([R::TileRows, R::TileSize, R::TileSpacing, R::EnlargeSelected]);
                 if theme.tiles.enlarge_selected {
@@ -1353,6 +1399,7 @@ impl App {
                 rows.push(R::TileBar);
             }
             ViewKind::Grid => rows.extend([R::GridColumns, R::GridRows, R::GridSpacing, R::GridEnlarge, R::GridAlign]),
+            }
         }
         rows.extend([R::GameArt, R::BackgroundKind]);
         rows.extend_from_slice(match theme.background.kind {
@@ -1387,10 +1434,11 @@ impl App {
             rows.extend(kind_rows.iter().map(|&r| R::Bar(slot, r)));
         }
         rows.extend([R::Theme, R::ThemeRename, R::ThemeNew, R::ThemeExport, R::ThemeImport]);
-        if self.themes.len() > 1 {
+        if theme::deletable(&self.themes, self.theme) {
             rows.push(R::ThemeDelete);
         }
-        if theme.tile_style.is_box() || theme.tile_style == TileStyle::Cover {
+        let tiles_used = !bubbles;
+        if tiles_used && (theme.tile_style.is_box() || theme.tile_style == TileStyle::Cover) {
             rows.push(R::BoxCase);
             if theme.boxes.case == BoxCase::Custom {
                 rows.extend([R::BoxWidth, R::BoxHeight]);
@@ -1399,11 +1447,11 @@ impl App {
                 }
             }
         }
-        if theme.tile_style.is_box() {
+        if tiles_used && theme.tile_style.is_box() {
             rows.extend([R::BoxSpineLabel, R::BoxSpineColor, R::BoxSpineText, R::BoxTopColor]);
-        } else if theme.tile_style == TileStyle::Object {
+        } else if tiles_used && theme.tile_style == TileStyle::Object {
             rows.push(R::ObjectColor);
-        } else if theme.tile_style == TileStyle::Disc {
+        } else if tiles_used && theme.tile_style == TileStyle::Disc {
             rows.extend([R::DiscKind, R::DiscAngle, R::DiscSpin]);
             if theme.discs.spin {
                 rows.extend([R::DiscSpinDirection, R::DiscSpinSpeed]);
@@ -1442,6 +1490,7 @@ impl App {
     fn setting_enabled(&self, row: SettingRow) -> bool {
         match row {
             SettingRow::TileBar => self.theme().settings.tiles.rows <= 1,
+            SettingRow::ViewKind | SettingRow::TileStyle => !self.is_bubbles(),
             SettingRow::DiscAngle => !self.theme().settings.discs.lying_flat(),
             _ => true,
         }
@@ -1516,6 +1565,10 @@ impl App {
                 self.settings.start_fullscreen ^= true;
                 self.save_settings();
             }
+            SettingRow::Autostart => match autostart::set(!self.autostart) {
+                Ok(()) => self.autostart = autostart::is_enabled(),
+                Err(e) => self.notify(tr!("Could not change startup setting: {error}", error = format!("{e:#}"))),
+            },
             SettingRow::AppStoreUrl => {
                 let buffer = self.settings.app_store().url.clone();
                 self.mode = Mode::Prompt { kind: PromptKind::AppStoreUrl, buffer };
@@ -1643,8 +1696,10 @@ impl App {
                 }
             }
             SettingRow::ThemeDelete => {
-                if self.themes.len() == 1 {
-                    self.notify(tr!("This is the only theme. Create another one before deleting it."));
+                if self.theme().is_builtin() {
+                    self.notify(tr!("Bubbles is a built-in theme and can't be deleted."));
+                } else if !theme::deletable(&self.themes, self.theme) {
+                    self.notify(tr!("This is your only own theme. Create another one before deleting it."));
                 } else {
                     self.mode = Mode::ConfirmRemove { what: Removal::Theme, yes: false };
                 }
@@ -1713,12 +1768,21 @@ impl App {
             SettingRow::GameBack => self.pick_asset(AssetKind::Back),
             SettingRow::GameSide => self.pick_asset(AssetKind::Side),
             SettingRow::GameModel => self.pick_asset(AssetKind::Model),
+            SettingRow::GameVideo => self.pick_asset(AssetKind::Video),
+            SettingRow::BubbleShuffle => {
+                let bubbles = &mut self.themes[self.theme].settings.bubbles;
+                let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
+                bubbles.seed = bubbles.seed.wrapping_add(nanos | 1);
+                self.save_theme();
+            }
             SettingRow::GameSpineClear
             | SettingRow::GameTopClear
             | SettingRow::GameBackClear
             | SettingRow::GameSideClear
-            | SettingRow::GameModelClear => {
+            | SettingRow::GameModelClear
+            | SettingRow::GameVideoClear => {
                 let (kind, next) = match row {
+                    SettingRow::GameVideoClear => (AssetKind::Video, SettingRow::GameVideo),
                     SettingRow::GameSpineClear => (AssetKind::Spine, SettingRow::GameSpine),
                     SettingRow::GameTopClear => (AssetKind::Top, SettingRow::GameTop),
                     SettingRow::GameSideClear => (AssetKind::Side, SettingRow::GameSide),
@@ -1763,6 +1827,10 @@ impl App {
             | SettingRow::BackgroundKind
             | SettingRow::GradientDirection
             | SettingRow::ImageFit
+            | SettingRow::BubbleSize
+            | SettingRow::BubbleVariance
+            | SettingRow::BubbleFill
+            | SettingRow::BubbleVideo
             | SettingRow::Bar(..) => self.adjust_setting(row, 1),
         }
     }
@@ -1791,7 +1859,6 @@ impl App {
         let d = delta as f32;
         let settings = &mut self.themes[self.theme].settings;
         let (tiles, grid, bg, discs) = (&mut settings.tiles, &mut settings.grid, &mut settings.background, &mut settings.discs);
-        let mut note = None;
         match row {
             SettingRow::MouseSpeed => {
                 let m = &mut self.settings.mouse;
@@ -1810,6 +1877,7 @@ impl App {
                 return self.set_title_font(next);
             }
             SettingRow::Fullscreen
+            | SettingRow::Autostart
             | SettingRow::VirtualMouse
             | SettingRow::StoreEnabled(_)
             | SettingRow::StoreBackground(_)
@@ -1842,22 +1910,19 @@ impl App {
                 return self.select_theme(&id);
             }
             SettingRow::ViewKind => {
-                let old = settings.view;
-                settings.view = cycle(&ViewKind::ALL, old, delta);
-                let fresh = match settings.view {
-                    ViewKind::Row => *tiles == TileSettings::default(),
-                    ViewKind::Grid => *grid == GridSettings::default(),
-                };
-                note = Some(if fresh {
-                    tr!(
-                        "{old} setup saved; switching back restores it. Now editing {new}, starting from a blank setup.",
-                        old = old.label(),
-                        new = settings.view.label(),
-                    )
-                } else {
-                    tr!("{old} setup saved; switching back restores it. Now editing {new}.", old = old.label(), new = settings.view.label())
-                });
+                let next = cycle(&ViewKind::ALL, settings.view, delta);
+                return self.set_view(next);
             }
+            SettingRow::BubbleSize => {
+                let b = &mut settings.bubbles;
+                b.size = step(b.size, 10.0 * d, BubbleSettings::SIZE_RANGE);
+            }
+            SettingRow::BubbleVariance => {
+                let b = &mut settings.bubbles;
+                b.size_variance = step(b.size_variance, 5.0 * d, BubbleSettings::VARIANCE_RANGE);
+            }
+            SettingRow::BubbleVideo => settings.bubbles.play_video ^= true,
+            SettingRow::BubbleFill => settings.bubbles.fill_screen ^= true,
             SettingRow::TileStyle => settings.tile_style = cycle(&TileStyle::ALL, settings.tile_style, delta),
             SettingRow::BoxCase => settings.boxes.case = cycle(&BoxCase::ALL, settings.boxes.case, delta),
             SettingRow::BoxWidth | SettingRow::BoxHeight | SettingRow::BoxDepth => {
@@ -1931,9 +1996,27 @@ impl App {
             _ => return,
         }
         self.save_theme();
-        if let Some(note) = note {
-            self.notify(note);
-        }
+    }
+
+    fn set_view(&mut self, view: ViewKind) {
+        let settings = &mut self.themes[self.theme].settings;
+        let old = settings.view;
+        settings.view = view;
+        let fresh = match view {
+            ViewKind::Row => settings.tiles == TileSettings::default(),
+            ViewKind::Grid => settings.grid == GridSettings::default(),
+        };
+        let note = if fresh {
+            tr!(
+                "{old} setup saved; switching back restores it. Now editing {new}, starting from a blank setup.",
+                old = old.label(),
+                new = view.label(),
+            )
+        } else {
+            tr!("{old} setup saved; switching back restores it. Now editing {new}.", old = old.label(), new = view.label())
+        };
+        self.save_theme();
+        self.notify(note);
     }
 
     fn adjust_game_setting(&mut self, row: SettingRow, delta: i32) {
@@ -1967,7 +2050,7 @@ impl App {
     }
 
     fn delete_theme(&mut self) {
-        if self.themes.len() == 1 {
+        if !theme::deletable(&self.themes, self.theme) {
             return;
         }
         if let Err(e) = self.theme().delete() {
@@ -2350,6 +2433,15 @@ impl App {
         if let AssetKind::Model = kind {
             return self.pick_model();
         }
+        if let AssetKind::Video = kind {
+            let Some(path) = rfd::FileDialog::new().set_title(tr!("Select preview video")).add_filter(tr!("Videos"), video::EXTS).pick_file() else {
+                return;
+            };
+            return match self.library.set_asset(self.selected, kind, &path) {
+                Ok(()) => self.save(),
+                Err(e) => self.notify(tr!("Could not use the video: {error}", error = format!("{e:#}"))),
+            };
+        }
         let title = match kind {
             AssetKind::Cover => tr!("Select cover image (square works best)"),
             AssetKind::Background => tr!("Select background image (16:9 works best)"),
@@ -2357,7 +2449,7 @@ impl App {
             AssetKind::Top => tr!("Select box top image"),
             AssetKind::Back => tr!("Select back cover image"),
             AssetKind::Side => tr!("Select right side image (the edge opposite the spine)"),
-            AssetKind::Model => unreachable!(),
+            AssetKind::Model | AssetKind::Video => unreachable!(),
         };
         let Some(path) = rfd::FileDialog::new().set_title(title).add_filter(tr!("Images"), IMAGE_EXTS).pick_file() else {
             return;
@@ -2714,6 +2806,121 @@ impl App {
             let counter = tr!("Page {page} / {pages}", page = page + 1, pages = pages);
             let pos = pos2(screen.left() + 110.0 * s, self.bar_rect(BarSlot::Bottom, screen, s).center().y);
             shadow_text(painter, pos, Align2::LEFT_CENTER, &counter, 22.0 * s, Color32::from_gray(210));
+        }
+
+        self.draw_details(ui, pos2(screen.left() + 110.0 * s, screen.bottom() - 200.0 * s), s, false);
+        if let Some(i) = clicked {
+            self.click_tile(i);
+        }
+    }
+
+    fn is_bubbles(&self) -> bool {
+        self.theme().settings.kind == ThemeKind::Bubbles
+    }
+
+    fn bubble_key(&self, i: usize) -> String {
+        match self.library.games.get(i) {
+            Some(game) => game.id.clone(),
+            None => format!("special-{}", i - self.library.games.len()),
+        }
+    }
+
+    fn update_video(&mut self, ctx: &Context) {
+        let theme = &self.theme().settings;
+        let wanted = (theme.kind == ThemeKind::Bubbles
+            && theme.bubbles.play_video
+            && matches!(self.mode, Mode::Home)
+            && ctx.input(|i| i.focused))
+        .then(|| self.selected_game().and_then(|g| g.video.clone()))
+        .flatten();
+        if wanted != self.video_wanted.0 {
+            self.video_wanted = (wanted.clone(), Instant::now());
+        }
+        if self.video.as_ref().map(VideoPlayer::path) != wanted.as_deref() {
+            self.video = None;
+        }
+        let Some(path) = wanted else { return };
+        if self.video.is_some() || self.video_failed {
+            return;
+        }
+        let waited = self.video_wanted.1.elapsed();
+        if waited < VIDEO_DELAY {
+            ctx.request_repaint_after(VIDEO_DELAY - waited);
+            return;
+        }
+        match VideoPlayer::start(ctx, &path) {
+            Ok(player) => self.video = Some(player),
+            Err(e) => {
+                self.video_failed = true;
+                self.notify(tr!("Videos need ffmpeg installed: {error}", error = format!("{e:#}")));
+            }
+        }
+    }
+
+    fn draw_bubbles(&mut self, ui: &Ui, screen: Rect, s: f32) {
+        let count = self.tile_count();
+        let bubbles = self.theme().settings.bubbles.clone();
+        let top = self.bar_rect(BarSlot::Top, screen, s).bottom() + 16.0 * s;
+        let area = Rect::from_min_max(pos2(screen.left() + 60.0 * s, top), pos2(screen.right() - 60.0 * s, screen.bottom() - 220.0 * s));
+        let mut keys: Vec<String> = (0..count).map(|i| self.bubble_key(i)).collect();
+        if bubbles.fill_screen {
+            let base = bubbles.size.max(BubbleSettings::SIZE_RANGE.0) * s;
+            let fits = (area.area() * 0.5 / (std::f32::consts::FRAC_PI_4 * base * base)) as usize;
+            keys.extend((0..fits.saturating_sub(count)).map(|k| format!("empty-{k}")));
+        }
+        let diameters: Vec<f32> = keys.iter().map(|key| bubbles.diameter(key) * s).collect();
+        let (centers, radii) = {
+            let mut cache = self.bubble_layout.borrow_mut();
+            if cache.as_ref().is_none_or(|c| c.diameters != diameters || c.area != area) {
+                let (centers, radii) = pack_bubbles(&diameters, area);
+                *cache = Some(BubbleLayout { diameters, area, centers, radii });
+            }
+            let layout = cache.as_ref().unwrap();
+            (layout.centers.clone(), layout.radii.clone())
+        };
+        *self.bubble_centers.borrow_mut() = centers.iter().take(count).copied().collect();
+        if centers.len() < count {
+            return;
+        }
+
+        let ctx = ui.ctx().clone();
+        let video = match &mut self.video {
+            Some(player) if bubbles.play_video => player.texture(&ctx).map(|t| (t.id(), t.size_vec2())),
+            _ => None,
+        };
+        let t = ctx.input(|i| i.time) as f32;
+        let interactive = matches!(self.mode, Mode::Home);
+        let selected = self.selected.min(count - 1);
+        let mut clicked = None;
+        let order = (count..centers.len()).chain((0..count).filter(|&i| i != selected)).chain([selected]);
+        for i in order {
+            let focus = ctx.animate_bool_with_time(Id::new(("bubble-focus", i)), i == selected, 0.18);
+            let phase = i as f32 * 1.7;
+            let center = centers[i] + vec2((t * 0.5 + phase).cos() * 3.0 * s, (t * 0.7 + phase).sin() * 4.0 * s);
+            let r = radii[i] * (1.0 + 0.18 * focus);
+            let game = self.library.games.get(i);
+            let cover = game.and_then(|g| g.cover.as_deref()).and_then(|path| {
+                match egui::Image::new(file_uri(path)).load_for_size(&ctx, Vec2::splat(r * 2.0)) {
+                    Ok(egui::load::TexturePoll::Ready { texture }) => Some((texture.id, texture.size)),
+                    _ => None,
+                }
+            });
+            let look = BubbleLook {
+                empty: i >= count,
+                texture: video.filter(|_| i == selected && game.is_some_and(|g| g.video.is_some())).or(cover),
+                fill: game.map_or(Color32::from_white_alpha(40), |g| placeholder_color(&g.name)),
+                label: match game {
+                    Some(g) => initials(&g.name),
+                    None => self.special(i).map_or("", Special::glyph).to_owned(),
+                },
+            };
+            paint_bubble(ui.painter(), center, r, &look, t, focus, s);
+            if interactive && !look.empty {
+                let resp = ui.interact(Rect::from_center_size(center, Vec2::splat(r * 2.0)), Id::new(("tile", i)), Sense::click());
+                if resp.clicked() && resp.interact_pointer_pos().is_some_and(|p| p.distance(center) <= r) {
+                    clicked = Some(i);
+                }
+            }
         }
 
         self.draw_details(ui, pos2(screen.left() + 110.0 * s, screen.bottom() - 200.0 * s), s, false);
@@ -3687,6 +3894,9 @@ impl App {
                 Some((tr!("Controller"), Some(self.controller_warning())))
             }
             SettingRow::FontTitle => Some((tr!("Fonts"), Some((tr!("{count} imported", count = self.fonts.len()), Color32::from_gray(140))))),
+            SettingRow::Theme if self.is_bubbles() => {
+                Some((tr!("Theme"), Some((tr!("Custom theme · Not all options are available in this pre-defined theme").to_owned(), PAD_Y))))
+            }
             SettingRow::Theme => Some((tr!("Theme"), Some((tr!("{count} installed", count = self.themes.len()), Color32::from_gray(140))))),
             SettingRow::ViewKind => Some((tr!("Home screen"), None)),
             SettingRow::BoxCase => {
@@ -3706,6 +3916,8 @@ impl App {
                 tr!("3D objects"),
                 Some((tr!("Games without a 3D model show their name in 3D letters").to_owned(), Color32::from_gray(140))),
             )),
+            SettingRow::BubbleSize => Some((tr!("Bubbles"), Some((tr!("Every game on one screen").to_owned(), Color32::from_gray(140))))),
+            SettingRow::GameVideo => Some((tr!("Bubble video"), Some((tr!("Plays in the selected bubble").to_owned(), Color32::from_gray(140))))),
             SettingRow::GameModel => Some((tr!("3D object"), Some((tr!("For the 3D objects tile style").to_owned(), Color32::from_gray(140))))),
             SettingRow::GameTitleFont => Some((tr!("Title"), None)),
             SettingRow::StoreEnabled(store) => {
@@ -3751,6 +3963,7 @@ impl App {
         let game_color_sub = tr!("Enter to type a hex value; empty uses the theme's");
         match row {
             SettingRow::Fullscreen => (tr!("Start in fullscreen").into(), "", Toggle(self.settings.start_fullscreen)),
+            SettingRow::Autostart => (tr!("Run at system startup").into(), tr!("Start YASAFF when you log in"), Toggle(self.autostart)),
             SettingRow::Language => {
                 let label = match self.settings.language {
                     Language::English => "Language".to_owned(),
@@ -3845,18 +4058,48 @@ impl App {
                 let sub = if self.fonts.is_empty() { tr!("Import fonts in Settings to choose one") } else { tr!("Font of this game's name") };
                 (tr!("Title font").into(), sub, Choice(value))
             }
-            SettingRow::Theme => (tr!("Theme").into(), tr!("Left/Right switches between themes"), Choice(theme.name.clone())),
+            SettingRow::Theme => {
+                let sub = if self.theme().is_builtin() { tr!("Built-in; it can't be deleted") } else { tr!("Left/Right switches between themes") };
+                (tr!("Theme").into(), sub, Choice(theme.name.clone()))
+            }
             SettingRow::ThemeRename => (tr!("Rename theme").into(), "", Action(tr!("Edit…"))),
             SettingRow::ThemeNew => (tr!("New theme").into(), tr!("Starts as a copy of the current theme"), Action(tr!("Create"))),
             SettingRow::ThemeExport => (tr!("Export theme…").into(), tr!("Copies the theme folder, images included, to a folder you pick"), Action(tr!("Export"))),
             SettingRow::ThemeImport => (tr!("Import theme…").into(), tr!("Select an exported theme folder (with themeSettings.json)"), Action(tr!("Import"))),
             SettingRow::ThemeDelete => (tr!("Delete theme").into(), "", Action(tr!("Delete…"))),
+            SettingRow::ViewKind if theme.kind == ThemeKind::Bubbles => {
+                (tr!("Layout").into(), tr!("Not available in this pre-defined theme"), Choice(theme.kind.label().into()))
+            }
             SettingRow::ViewKind => (
                 tr!("Layout").into(),
                 tr!("Each layout keeps its own setup; switching back restores it"),
                 Choice(theme.view.label().into()),
             ),
-            SettingRow::TileStyle => (tr!("Tile style").into(), tr!("How games are drawn, in either layout"), Choice(theme.tile_style.label().into())),
+            SettingRow::TileStyle => {
+                let sub = if theme.kind == ThemeKind::Bubbles { tr!("Not available in this pre-defined theme") } else { tr!("How games are drawn, in either layout") };
+                (tr!("Tile style").into(), sub, Choice(theme.tile_style.label().into()))
+            }
+            SettingRow::BubbleSize => (
+                tr!("Bubble size").into(),
+                tr!("At 1080p; shrinks when needed to keep every game on screen"),
+                px(theme.bubbles.size),
+            ),
+            SettingRow::BubbleVariance => (
+                tr!("Random size difference").into(),
+                tr!("Each bubble is up to this much smaller or bigger"),
+                Choice(format!("± {:.0} px", theme.bubbles.size_variance)),
+            ),
+            SettingRow::BubbleFill => (
+                tr!("Fill the screen with bubbles").into(),
+                tr!("Empty bubbles fill the space around your games"),
+                Toggle(theme.bubbles.fill_screen),
+            ),
+            SettingRow::BubbleShuffle => (tr!("Randomize bubbles").into(), tr!("Picks new random sizes and places"), Action(tr!("Shuffle"))),
+            SettingRow::BubbleVideo => (
+                tr!("Play video on selected game").into(),
+                tr!("Set a video in the game's Options; needs ffmpeg installed"),
+                Toggle(theme.bubbles.play_video),
+            ),
             SettingRow::BoxCase => {
                 let label = if theme.tile_style == TileStyle::Cover { tr!("Cover shape") } else { tr!("Box shape") };
                 (label.into(), tr!("Select box size"), Choice(boxes.case.label().into()))
@@ -3930,6 +4173,11 @@ impl App {
                 Choice(game.map(|g| g.model_up).unwrap_or_default().label().into()),
             ),
             SettingRow::GameModelClear => (tr!("Remove 3D model").into(), tr!("Shows the name in 3D letters again"), Action(tr!("Remove"))),
+            SettingRow::GameVideo => {
+                let sub = if has(|g| g.video.is_some()) { tr!("Copied next to the game's images") } else { tr!("None; the cover is shown") };
+                (tr!("Preview video").into(), sub, Action(tr!("Choose…")))
+            }
+            SettingRow::GameVideoClear => (tr!("Remove preview video").into(), "", Action(tr!("Remove"))),
             SettingRow::GameObjectColor => (
                 tr!("Object color").into(),
                 tr!("For the letters and models without colors; empty uses the theme's"),
@@ -4601,6 +4849,7 @@ impl eframe::App for App {
         self.poll_save_dirs();
         self.poll_backup();
         self.update_launching(&ctx);
+        self.update_video(&ctx);
         self.guard_focus(&ctx);
 
         let screen = ui.max_rect();
@@ -4611,6 +4860,7 @@ impl eframe::App for App {
         let painter = ui.painter().clone();
         self.draw_top_bar(&painter, screen, s);
         match self.theme().settings.view {
+            _ if self.is_bubbles() => self.draw_bubbles(ui, screen, s),
             ViewKind::Row => self.draw_row(ui, screen, s),
             ViewKind::Grid => self.draw_grid(ui, screen, s),
         }
@@ -4730,6 +4980,186 @@ fn navigate(layout: Layout, selected: usize, count: usize, action: Action) -> us
                 _ => selected,
             }
         }
+    }
+}
+
+fn navigate_free(centers: &[Pos2], selected: usize, action: Action) -> usize {
+    let dir = match action {
+        Action::Left => vec2(-1.0, 0.0),
+        Action::Right => vec2(1.0, 0.0),
+        Action::Up => vec2(0.0, -1.0),
+        Action::Down => vec2(0.0, 1.0),
+        _ => return selected,
+    };
+    let Some(&from) = centers.get(selected) else { return selected };
+    centers
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &c)| {
+            let d = c - from;
+            let along = d.dot(dir);
+            let across = (d - dir * along).length();
+            (i != selected && along > 1.0 && across <= along * 2.0).then_some((i, along + across * 2.0))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map_or(selected, |(i, _)| i)
+}
+
+struct BubbleLayout {
+    diameters: Vec<f32>,
+    area: Rect,
+    centers: Vec<Pos2>,
+    radii: Vec<f32>,
+}
+
+fn pack_bubbles(diameters: &[f32], area: Rect) -> (Vec<Pos2>, Vec<f32>) {
+    let n = diameters.len();
+    if n == 0 || !area.is_positive() {
+        return (Vec::new(), Vec::new());
+    }
+    let half = area.size() / 2.0;
+    let total: f32 = diameters.iter().map(|d| d * d).sum::<f32>() * std::f32::consts::FRAC_PI_4;
+    let biggest = diameters.iter().copied().fold(1.0, f32::max);
+    let mut scale = (area.area() * 0.6 / total).sqrt().min(1.0).min(area.height() / biggest).min(area.width() / biggest);
+    let aspect = (area.width() / area.height()).max(0.2);
+    let mut best = (Vec::new(), Vec::new());
+    for _ in 0..10 {
+        let radii: Vec<f32> = diameters.iter().map(|d| d * scale / 2.0).collect();
+        let mean = radii.iter().sum::<f32>() / n as f32;
+        let mut pos: Vec<Vec2> = (0..n)
+            .map(|i| {
+                let (sin, cos) = (i as f32 * 2.399_963).sin_cos();
+                vec2(cos * aspect.sqrt(), sin / aspect.sqrt()) * (i as f32 + 0.5).sqrt() * mean * 1.9
+            })
+            .collect();
+        let steps = 320;
+        for step in 0..steps {
+            for i in 0..n {
+                for j in i + 1..n {
+                    let d = pos[j] - pos[i];
+                    let dist = d.length();
+                    let want = (radii[i] + radii[j]) * 1.04;
+                    if dist < want {
+                        let dir = if dist > 1e-3 { d / dist } else { Vec2::angled(i as f32 + j as f32) };
+                        let push = dir * (want - dist) / 2.0;
+                        pos[i] -= push;
+                        pos[j] += push;
+                    }
+                }
+            }
+            let pull = if step < steps - 80 { 0.012 } else { 0.0 };
+            for (p, r) in pos.iter_mut().zip(&radii) {
+                p.x -= p.x * pull;
+                p.y -= p.y * pull * aspect;
+                p.x = p.x.clamp(-(half.x - r).max(0.0), (half.x - r).max(0.0));
+                p.y = p.y.clamp(-(half.y - r).max(0.0), (half.y - r).max(0.0));
+            }
+        }
+        let worst = (0..n)
+            .flat_map(|i| (i + 1..n).map(move |j| (i, j)))
+            .map(|(i, j)| (radii[i] + radii[j] - (pos[j] - pos[i]).length()) / radii[i].min(radii[j]))
+            .fold(0.0f32, f32::max);
+        let (min, max) = pos.iter().zip(&radii).fold((Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)), |(lo, hi), (p, r)| {
+            (lo.min(*p - Vec2::splat(*r)), hi.max(*p + Vec2::splat(*r)))
+        });
+        let shift = -(min + max) / 2.0;
+        best = (pos.iter().map(|p| area.center() + *p + shift).collect(), radii);
+        if worst < 0.05 {
+            break;
+        }
+        scale *= 0.9;
+    }
+    best
+}
+
+struct BubbleLook {
+    empty: bool,
+    texture: Option<(TextureId, Vec2)>,
+    fill: Color32,
+    label: String,
+}
+
+fn disc_mesh(texture: TextureId, rings: usize, segments: usize, vertex: impl Fn(f32, f32) -> (Pos2, Pos2, Color32)) -> Mesh {
+    let mut mesh = Mesh::with_texture(texture);
+    let push = |mesh: &mut Mesh, rho: f32, theta: f32| {
+        let (pos, uv, color) = vertex(rho, theta);
+        mesh.vertices.push(egui::epaint::Vertex { pos, uv, color });
+    };
+    push(&mut mesh, 0.0, 0.0);
+    for ring in 1..=rings {
+        let rho = ring as f32 / rings as f32;
+        for seg in 0..segments {
+            push(&mut mesh, rho, seg as f32 / segments as f32 * std::f32::consts::TAU);
+        }
+    }
+    let at = |ring: usize, seg: usize| (1 + (ring - 1) * segments + seg % segments) as u32;
+    for seg in 0..segments {
+        mesh.add_triangle(0, at(1, seg), at(1, seg + 1));
+        for ring in 1..rings {
+            mesh.add_triangle(at(ring, seg), at(ring + 1, seg), at(ring + 1, seg + 1));
+            mesh.add_triangle(at(ring, seg), at(ring + 1, seg + 1), at(ring, seg + 1));
+        }
+    }
+    mesh
+}
+
+fn scale_color(c: Color32, k: f32) -> Color32 {
+    let f = |v: u8| (v as f32 * k).round().clamp(0.0, 255.0) as u8;
+    Color32::from_rgba_premultiplied(f(c.r()), f(c.g()), f(c.b()), c.a())
+}
+
+fn paint_bubble(painter: &Painter, center: Pos2, r: f32, look: &BubbleLook, t: f32, focus: f32, s: f32) {
+    use std::f32::consts::{FRAC_PI_2, TAU};
+    let white_uv = egui::epaint::WHITE_UV;
+    if !look.empty {
+        painter.circle_filled(center + vec2(0.0, r * 0.06 + 6.0 * s), r * 0.97, Color32::from_black_alpha(60));
+    }
+
+    let light = egui::emath::Vec2::new(-0.45, -0.55);
+    let light_z = (1.0 - light.length_sq()).sqrt();
+    let (texture, uv_half, base) = match look.texture {
+        Some((id, size)) => (id, vec2((size.y / size.x).min(1.0), (size.x / size.y).min(1.0)) * 0.5, Color32::WHITE),
+        None => (TextureId::default(), Vec2::ZERO, look.fill),
+    };
+    if !look.empty {
+        painter.add(disc_mesh(texture, 10, 56, |rho, theta| {
+        let dir = Vec2::angled(theta);
+        let z = (1.0 - rho * rho).max(0.0).sqrt();
+        let lit = 0.62 + 0.38 * (dir.dot(light) * rho + z * light_z).max(0.0);
+        let rim = 1.0 - 0.3 * rho.powi(4);
+        let uv = if look.texture.is_some() { pos2(0.5, 0.5) + dir * (rho.asin() / FRAC_PI_2) * uv_half * 2.0 } else { white_uv };
+        (center + dir * rho * r, uv, scale_color(base, lit * rim))
+        }));
+    }
+    if !look.empty && look.texture.is_none() && !look.label.is_empty() {
+        shadow_text(painter, center, Align2::CENTER_CENTER, &look.label, r * 0.5, Color32::WHITE);
+    }
+
+    painter.add(disc_mesh(TextureId::default(), 8, 56, |rho, theta| {
+        let hue = (theta / TAU + t * 0.04 + rho * 0.35).rem_euclid(1.0);
+        let strength = 0.03 + 0.5 * rho.powi(3);
+        let rgb = egui::ecolor::Hsva::new(hue, 0.6, 1.0, 1.0).to_rgb();
+        let c = |v: f32| (v * strength * 255.0) as u8;
+        let color = Color32::from_rgba_premultiplied(c(rgb[0]), c(rgb[1]), c(rgb[2]), (strength * 90.0) as u8);
+        (center + Vec2::angled(theta) * rho * r, white_uv, color)
+    }));
+
+    let highlight = |at: Vec2, radii: Vec2, angle: f32, alpha: f32| {
+        let turn = egui::emath::Rot2::from_angle(angle);
+        disc_mesh(TextureId::default(), 6, 32, move |rho, theta| {
+            let fade = (1.0 - rho * rho).powi(2);
+            let pos = center + at * r + turn * (Vec2::angled(theta) * rho * radii * r);
+            (pos, white_uv, Color32::from_white_alpha((alpha * fade) as u8))
+        })
+    };
+    painter.add(highlight(vec2(-0.36, -0.42), vec2(0.34, 0.19), -0.65, 200.0));
+    painter.add(highlight(vec2(0.44, 0.47), vec2(0.11, 0.07), -0.65, 90.0));
+
+    painter.circle_stroke(center, r, Stroke::new(1.4 * s, Color32::from_white_alpha(90)));
+    painter.circle_stroke(center, r * 0.96, Stroke::new(1.0 * s, Color32::from_white_alpha(22)));
+    if focus > 0.0 {
+        painter.circle_stroke(center, r + 5.0 * s, Stroke::new(3.0 * s, Color32::WHITE.gamma_multiply(focus)));
+        painter.circle_stroke(center, r + 10.0 * s, Stroke::new(4.0 * s, Color32::from_white_alpha((40.0 * focus) as u8)));
     }
 }
 
@@ -5158,7 +5588,36 @@ fn shadow_text_font(painter: &Painter, pos: egui::Pos2, align: Align2, text: &st
 
 #[cfg(test)]
 mod tests {
-    use super::{Action, Layout, navigate};
+    use super::{Action, Layout, navigate, navigate_free, pack_bubbles};
+    use egui::{Rect, pos2};
+
+    #[test]
+    fn bubbles_fit_on_screen_without_overlapping() {
+        let area = Rect::from_min_max(pos2(60.0, 100.0), pos2(1860.0, 860.0));
+        for n in [1, 3, 20, 80] {
+            let diameters: Vec<f32> = (0..n).map(|i| 130.0 + (i * 7 % 41) as f32).collect();
+            let (centers, radii) = pack_bubbles(&diameters, area);
+            assert_eq!(centers.len(), n);
+            for i in 0..n {
+                let r = radii[i];
+                assert!(area.expand(1.0).contains_rect(Rect::from_center_size(centers[i], egui::Vec2::splat(r * 2.0))), "{n} bubbles: {i} sticks out");
+                for j in i + 1..n {
+                    let overlap = radii[i] + radii[j] - centers[i].distance(centers[j]);
+                    assert!(overlap < 0.05 * radii[i].min(radii[j]), "{n} bubbles: {i} and {j} overlap by {overlap}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bubbles_move_to_the_nearest_one_in_that_direction() {
+        let centers = [pos2(500.0, 500.0), pos2(700.0, 520.0), pos2(300.0, 480.0), pos2(510.0, 300.0), pos2(900.0, 500.0)];
+        assert_eq!(navigate_free(&centers, 0, Action::Right), 1);
+        assert_eq!(navigate_free(&centers, 0, Action::Left), 2);
+        assert_eq!(navigate_free(&centers, 0, Action::Up), 3);
+        assert_eq!(navigate_free(&centers, 0, Action::Down), 0);
+        assert_eq!(navigate_free(&centers, 4, Action::Right), 4);
+    }
 
     #[test]
     fn single_row_moves_sideways_only() {

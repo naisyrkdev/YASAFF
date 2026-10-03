@@ -30,6 +30,8 @@ pub struct Game {
     pub side: Option<PathBuf>,
     #[serde(default)]
     pub model: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "ModelUp::is_default")]
     pub model_up: ModelUp,
     #[serde(default)]
@@ -76,6 +78,7 @@ impl Game {
             AssetKind::Back => &mut self.back,
             AssetKind::Side => &mut self.side,
             AssetKind::Model => &mut self.model,
+            AssetKind::Video => &mut self.video,
         }
     }
 
@@ -88,6 +91,7 @@ impl Game {
             AssetKind::Back => self.back.as_deref(),
             AssetKind::Side => self.side.as_deref(),
             AssetKind::Model => self.model.as_deref(),
+            AssetKind::Video => self.video.as_deref(),
         }
     }
 
@@ -143,6 +147,7 @@ pub enum AssetKind {
     Back,
     Side,
     Model,
+    Video,
 }
 
 impl AssetKind {
@@ -155,6 +160,7 @@ impl AssetKind {
             AssetKind::Back => "back",
             AssetKind::Side => "side",
             AssetKind::Model => "model",
+            AssetKind::Video => "video",
         }
     }
 }
@@ -236,6 +242,7 @@ impl Library {
             back: None,
             side: None,
             model: None,
+            video: None,
             model_up: ModelUp::default(),
             box_style: BoxOverrides::default(),
             cover_placement: CoverPlacement::default(),
@@ -304,7 +311,7 @@ impl Library {
     pub fn remove(&mut self, index: usize) {
         let assets = self.assets_dir();
         let game = self.games.remove(index);
-        for path in [game.cover, game.background, game.spine, game.top, game.back, game.side, game.model].into_iter().flatten() {
+        for path in [game.cover, game.background, game.spine, game.top, game.back, game.side, game.model, game.video].into_iter().flatten() {
             remove_if_owned(&assets, &path);
         }
     }
