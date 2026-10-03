@@ -5522,6 +5522,7 @@ dependencies = [
  "gilrs",
  "gltf",
  "image",
+ "log",
  "lyon_tessellation",
  "open",
  "ply-rs-bw",

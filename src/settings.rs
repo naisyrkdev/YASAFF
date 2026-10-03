@@ -221,22 +221,28 @@ impl Settings {
         Library::data_dir().join(FILE)
     }
 
-    pub fn load() -> Self {
+    /// Reads the settings, falling back to defaults. A file that can't be parsed is moved aside
+    /// (rather than overwritten by the next save) and described in the returned warning.
+    pub fn load() -> (Self, Option<String>) {
         let mut file = Self::file();
         if !file.exists() {
             file = Library::data_dir().join(LEGACY_FILE);
         }
-        fs::read_to_string(&file)
-            .ok()
-            .and_then(|text| match serde_json::from_str(&text) {
-                Ok(s) => Some(s),
-                Err(e) => {
-                    eprintln!("ignoring invalid {}: {e}", file.display());
-                    None
-                }
-            })
-            .map(Self::migrated)
-            .unwrap_or_default()
+        let Ok(text) = fs::read_to_string(&file) else { return (Self::default(), None) };
+        match serde_json::from_str::<Self>(&text) {
+            Ok(settings) => (settings.migrated(), None),
+            Err(e) => {
+                let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+                let backup = file.with_extension(format!("json.broken-{stamp}"));
+                let moved = fs::rename(&file, &backup);
+                log::warn!("ignoring invalid {}: {e}", file.display());
+                let warning = match moved {
+                    Ok(()) => format!("{}: {e} (moved to {})", file.display(), backup.display()),
+                    Err(_) => format!("{}: {e}", file.display()),
+                };
+                (Self::default(), Some(warning))
+            }
+        }
     }
 
     fn migrated(mut self) -> Self {
@@ -276,10 +282,8 @@ impl Settings {
     }
 
     pub fn save(&self) -> Result<()> {
-        let dir = Library::data_dir();
-        fs::create_dir_all(&dir)?;
-        fs::write(Self::file(), serde_json::to_string_pretty(self)?)?;
-        let _ = fs::remove_file(dir.join(LEGACY_FILE));
+        crate::fsutil::write_atomic(&Self::file(), serde_json::to_string_pretty(self)?)?;
+        let _ = fs::remove_file(Library::data_dir().join(LEGACY_FILE));
         Ok(())
     }
 

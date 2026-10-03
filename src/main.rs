@@ -10,12 +10,14 @@ mod box3d;
 mod case3d;
 mod disc3d;
 mod fonts;
+mod fsutil;
 mod initial;
 mod global_mouse;
 mod apps;
 mod input;
 mod launcher;
 mod library;
+mod logging;
 mod metadata;
 mod mock_game;
 mod object3d;
@@ -31,8 +33,11 @@ mod video;
 mod watch;
 
 fn main() -> eframe::Result {
-    let settings = settings::Settings::load();
+    logging::init();
+    let mut warnings = profiles::init();
+    let (settings, settings_warning) = settings::Settings::load();
     i18n::set(settings.language);
+    warnings.extend(settings_warning.map(|e| tr!("Could not read settings: {error}", error = e)));
     let args: Vec<String> = std::env::args().collect();
     if let Some(dir) = args.iter().position(|a| a == mock_game::FLAG).and_then(|i| args.get(i + 1)) {
         return mock_game::run(std::path::Path::new(dir));
@@ -48,5 +53,7 @@ fn main() -> eframe::Result {
             .with_icon(eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon-256.png")).expect("valid icon")),
         ..Default::default()
     };
-    eframe::run_native("YASAFF", options, Box::new(move |cc| Ok(Box::new(app::App::new(cc, settings, fullscreen, disc)))))
+    let result = eframe::run_native("YASAFF", options, Box::new(move |cc| Ok(Box::new(app::App::new(cc, settings, warnings, fullscreen, disc)))));
+    profiles::restart_if_requested();
+    result
 }

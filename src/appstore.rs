@@ -17,6 +17,7 @@ const API_KEY_HEADER: &str = "X-Api-Key";
 const MAX_JSON_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_ICON_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_PACKAGE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+const MAX_UNPACKED_BYTES: u64 = 4 * MAX_PACKAGE_BYTES;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -338,13 +339,14 @@ pub fn launch(ctx: &Context, id: &str, placement: Placement) -> Result<AppProces
     let (home_tx, home) = mpsc::channel();
     let stdout = child.stdout.take().expect("stdout is piped");
     let ctx = ctx.clone();
+    let app_id = id.to_owned();
     std::thread::spawn(move || {
         for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
             if line.trim() == "yasaff:home" {
                 let _ = home_tx.send(());
                 ctx.request_repaint();
             } else {
-                println!("{line}");
+                log::info!("[{app_id}] {line}");
             }
         }
     });
@@ -598,7 +600,7 @@ impl Client {
             for (i, url) in theme.preview_urls.iter().enumerate() {
                 match cached_preview(agent, &endpoint, &theme.id, url) {
                     Ok(path) => send(Event::ThemePreview(theme.id.clone(), i, path)),
-                    Err(e) => eprintln!("{} preview {i}: {e:#}", theme.id),
+                    Err(e) => log::warn!("{} preview {i}: {e:#}", theme.id),
                 }
             }
         });
@@ -621,8 +623,22 @@ fn agent() -> ureq::Agent {
         .into()
 }
 
+/// The `scheme://host[:port]` part of `url`, lowercased, or `None` when it has no scheme.
+fn origin(url: &str) -> Option<String> {
+    let (scheme, rest) = url.trim().split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let authority = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    (!scheme.is_empty() && !authority.is_empty()).then(|| format!("{scheme}://{authority}").to_ascii_lowercase())
+}
+
 fn get(agent: &ureq::Agent, endpoint: &Endpoint, url: &str) -> Result<ureq::http::Response<ureq::Body>> {
-    let response = agent.get(url).header(API_KEY_HEADER, &endpoint.key).call().map_err(|e| match e {
+    let mut request = agent.get(url);
+    // The store hands out icon and package URLs that may live on another host (a CDN); the key
+    // only ever goes back to the store itself.
+    if origin(url).is_some_and(|o| Some(o) == origin(&endpoint.base)) {
+        request = request.header(API_KEY_HEADER, &endpoint.key);
+    }
+    let response = request.call().map_err(|e| match e {
         ureq::Error::Io(e) => anyhow::anyhow!("{e}"),
         ureq::Error::HostNotFound => anyhow::anyhow!("the store's address was not found"),
         ureq::Error::ConnectionFailed => anyhow::anyhow!("could not connect to the store"),
@@ -721,6 +737,7 @@ pub(crate) fn install_package_in(root: &Path, zip_path: &Path, busy: &[String]) 
 }
 
 fn download(agent: &ureq::Agent, endpoint: &Endpoint, url: &str, size: u64, sha256: &str, to: &Path, progress: &dyn Fn(u64, u64)) -> Result<()> {
+    ensure!(sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_hexdigit()), "the store did not send a valid checksum for this package");
     let response = get(agent, endpoint, url)?;
     let total = response.body().content_length().unwrap_or(size);
     let mut body = response.into_body().into_with_config().limit(MAX_PACKAGE_BYTES).reader();
@@ -745,7 +762,7 @@ fn download(agent: &ureq::Agent, endpoint: &Endpoint, url: &str, size: u64, sha2
     file.flush()?;
     progress(done, total);
     let hash = hex(&hasher.finalize());
-    ensure!(sha256.is_empty() || hash.eq_ignore_ascii_case(sha256), "the download is damaged (checksum mismatch); try again");
+    ensure!(hash.eq_ignore_ascii_case(sha256), "the download is damaged (checksum mismatch); try again");
     Ok(())
 }
 
@@ -754,6 +771,8 @@ pub(crate) fn unpack(zip_path: &Path, dir: &Path, marker: &str) -> Result<()> {
     let names: Vec<PathBuf> = (0..archive.len())
         .map(|i| archive.by_index(i).ok().and_then(|f| f.enclosed_name()).context("the package has an unsafe file path"))
         .collect::<Result<_>>()?;
+    let unpacked = (0..archive.len()).filter_map(|i| archive.by_index_raw(i).ok().map(|f| f.size())).fold(0u64, u64::saturating_add);
+    ensure!(unpacked <= MAX_UNPACKED_BYTES, "the package unpacks to more than {} GiB", MAX_UNPACKED_BYTES >> 30);
     let junk = |n: &Path| n.starts_with("__MACOSX") || n.file_name().is_some_and(|f| f == ".DS_Store");
     let prefix = if names.iter().any(|n| n == Path::new(marker)) {
         PathBuf::new()
@@ -782,7 +801,9 @@ pub(crate) fn unpack(zip_path: &Path, dir: &Path, marker: &str) -> Result<()> {
             fs::create_dir_all(parent)?;
         }
         let mut file = fs::File::create(&out).with_context(|| format!("writing {}", out.display()))?;
-        std::io::copy(&mut entry, &mut file)?;
+        let declared = entry.size();
+        let written = std::io::copy(&mut std::io::Read::take(&mut entry, declared), &mut file)?;
+        ensure!(written == declared, "{} in the package is damaged", rel.display());
         #[cfg(unix)]
         if let Some(mode) = entry.unix_mode() {
             use std::os::unix::fs::PermissionsExt;
@@ -849,6 +870,16 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn api_key_stays_with_the_store() {
+        assert_eq!(origin("https://Store.example.com/api/v1").as_deref(), Some("https://store.example.com"));
+        assert_eq!(origin("http://localhost:5130/api/v1/apps?x=1").as_deref(), Some("http://localhost:5130"));
+        assert_eq!(origin("https://user@cdn.example.com/a.zip").as_deref(), Some("https://cdn.example.com"));
+        assert_ne!(origin("https://store.example.com.evil.net/x"), origin("https://store.example.com/api/v1"));
+        assert_ne!(origin("http://store.example.com/x"), origin("https://store.example.com/api/v1"));
+        assert_eq!(origin("store.example.com"), None);
+    }
 
     #[test]
     fn api_base_from_what_users_paste() {

@@ -309,7 +309,7 @@ impl Input {
         let gilrs = match Gilrs::new() {
             Ok(g) => Some(g),
             Err(e) => {
-                eprintln!("gamepad support unavailable: {e}");
+                log::warn!("gamepad support unavailable: {e}");
                 None
             }
         };

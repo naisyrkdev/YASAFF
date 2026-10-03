@@ -7,7 +7,14 @@ use anyhow::{Context, Result, bail};
 use std::path::Path;
 use std::process::Command;
 
-pub fn launch(game: &Game, settings: &Settings) -> Result<Option<Store>> {
+pub struct Launched {
+    /// The store the game was handed to, if any.
+    pub via: Option<Store>,
+    /// The process YASAFF started for the game itself; `None` when a store or URI handler did.
+    pub pid: Option<u32>,
+}
+
+pub fn launch(game: &Game, settings: &Settings) -> Result<Launched> {
     let target = game.target.trim();
     let path = Path::new(target);
 
@@ -24,13 +31,13 @@ pub fn launch(game: &Game, settings: &Settings) -> Result<Option<Store>> {
         && let Some(command) = settings.store_command(store)
     {
         store.launch_uri(&command, &uri)?;
-        return Ok(Some(store));
+        return Ok(Launched { via: Some(store), pid: None });
     }
-    run(target, args, working_dir)?;
-    Ok(None)
+    let pid = run(target, args, working_dir)?;
+    Ok(Launched { via: None, pid })
 }
 
-fn run(target: &str, args: &[String], working_dir: Option<&Path>) -> Result<()> {
+fn run(target: &str, args: &[String], working_dir: Option<&Path>) -> Result<Option<u32>> {
     let path = Path::new(target);
 
     if is_uri(target) || (path.exists() && !is_native_executable(path)) {
@@ -41,7 +48,8 @@ fn run(target: &str, args: &[String], working_dir: Option<&Path>) -> Result<()> 
                 file = path.display()
             ));
         }
-        return open::that_detached(target).with_context(|| format!("opening {target}"));
+        open::that_detached(target).with_context(|| format!("opening {target}"))?;
+        return Ok(None);
     }
 
     let mut cmd = Command::new(target);
@@ -51,10 +59,12 @@ fn run(target: &str, args: &[String], working_dir: Option<&Path>) -> Result<()> 
         cmd.current_dir(dir);
     }
     let mut child = cmd.spawn().with_context(|| format!("starting {target}"))?;
+    let pid = child.id();
+    // Reaps the game when it exits; the game itself is followed by `watch::GameWatch`.
     std::thread::spawn(move || {
         let _ = child.wait();
     });
-    Ok(())
+    Ok(Some(pid))
 }
 
 pub fn is_uri(s: &str) -> bool {

@@ -20,7 +20,7 @@ pub fn title_mesh(text: &str, font: Option<&Path>) -> Result<Mesh> {
     if let Some(path) = font {
         match std::fs::read(path) {
             Ok(bytes) => data.push((Cow::Owned(bytes), 0)),
-            Err(e) => eprintln!("title font {}: {e}", path.display()),
+            Err(e) => log::warn!("title font {}: {e}", path.display()),
         }
     }
     let defaults = egui::FontDefinitions::default();

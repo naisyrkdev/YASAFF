@@ -14,6 +14,9 @@ pub enum Resolution {
     NotFound,
 }
 
+/// Finds the library games an inserted disc stands for. A disc made by this YASAFF names the game by
+/// its library id, which wins outright; otherwise (a disc from another PC or a store's own disc
+/// file) the store ids (Steam, GOG, …) are compared. Several matches let the user choose.
 pub fn resolve(manifests: &[DiscManifest], games: &[GameIds]) -> Resolution {
     let by_id = candidates(games, |g| manifests.iter().any(|m| m.id.as_deref() == Some(g.id.as_str())));
     let found = if by_id.is_empty() {

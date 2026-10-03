@@ -762,7 +762,7 @@
   "Importing profile…": "Importando perfil…",
   "Its library, settings, themes and apps are deleted. YASAFF restarts.": "Se borran su biblioteca, ajustes, temas y apps. YASAFF se reinicia.",
   "Left/Right picks a profile; Enter switches to it and restarts YASAFF": "Izquierda/Derecha elige un perfil; Intro cambia a él y reinicia YASAFF",
-  "Library, settings, themes, images and apps in one .zip": "Biblioteca, ajustes, temas, imágenes y apps en un .zip",
+  "Library, settings, themes, images and apps in one .zip (store API keys are left out)": "Biblioteca, ajustes, temas, imágenes y apps en un .zip (sin las claves de API de las tiendas)",
   "New profile name": "Nombre del perfil nuevo",
   "Not found on this computer; fix these after switching:": "No encontrado en este equipo; corrígelo tras cambiar:",
   "Profiles": "Perfiles",
@@ -822,5 +822,16 @@
   "Start blank (with mock games)": "Empezar en blanco (con juegos de ejemplo)",
   "All customization images included": "Todas las imágenes de personalización incluidas",
   "Welcome!": "¡Bienvenido!",
-  "How would you like to start?": "¿Cómo quieres empezar?"
+  "How would you like to start?": "¿Cómo quieres empezar?",
+  "Could not read settings: {error}": "No se pudieron leer los ajustes: {error}",
+  "a disc is being burned": "la grabación del disco",
+  "a save backup is being made": "la copia de seguridad de las partidas",
+  "a profile is being exported or imported": "la exportación o importación del perfil",
+  "the bundled games are being installed": "la instalación de los juegos incluidos",
+  "something is downloading from the store": "la descarga desde la tienda",
+  "Wait until {what} finishes, then try again": "Espera a que termine {what} y vuelve a intentarlo",
+  "Restarting…": "Reiniciando…",
+  "Could not open the file dialog: {error}": "No se pudo abrir la ventana de archivos: {error}",
+  "Finish choosing in the file window…": "Termina de elegir en la ventana de archivos…",
+  "Its games run the launch commands saved in it. Only use profiles from people you trust.": "Sus juegos ejecutan los comandos de inicio guardados en él. Usa solo perfiles de personas de confianza."
 }

@@ -772,7 +772,7 @@
   "Importing profile…": "Importowanie profilu…",
   "Its library, settings, themes and apps are deleted. YASAFF restarts.": "Jego biblioteka, ustawienia, motywy i aplikacje zostaną usunięte. YASAFF uruchomi się ponownie.",
   "Left/Right picks a profile; Enter switches to it and restarts YASAFF": "Lewo/Prawo wybiera profil; Enter przełącza na niego i uruchamia YASAFF ponownie",
-  "Library, settings, themes, images and apps in one .zip": "Biblioteka, ustawienia, motywy, obrazy i aplikacje w jednym pliku .zip",
+  "Library, settings, themes, images and apps in one .zip (store API keys are left out)": "Biblioteka, ustawienia, motywy, obrazy i aplikacje w jednym pliku .zip (bez kluczy API sklepów)",
   "New profile name": "Nazwa nowego profilu",
   "Not found on this computer; fix these after switching:": "Nie znaleziono na tym komputerze; popraw to po przełączeniu:",
   "Profiles": "Profile",
@@ -833,5 +833,16 @@
   "Start blank (with mock games)": "Zacznij od zera (z przykładowymi grami)",
   "All customization images included": "Wszystkie obrazy personalizacji w zestawie",
   "Welcome!": "Witaj!",
-  "How would you like to start?": "Jak chcesz zacząć?"
+  "How would you like to start?": "Jak chcesz zacząć?",
+  "Could not read settings: {error}": "Nie udało się odczytać ustawień: {error}",
+  "a disc is being burned": "nagrywanie płyty",
+  "a save backup is being made": "tworzenie kopii zapisów",
+  "a profile is being exported or imported": "eksport lub import profilu",
+  "the bundled games are being installed": "instalacja dołączonych gier",
+  "something is downloading from the store": "pobieranie ze sklepu",
+  "Wait until {what} finishes, then try again": "Poczekaj, aż zakończy się {what}, i spróbuj ponownie",
+  "Restarting…": "Ponowne uruchamianie…",
+  "Could not open the file dialog: {error}": "Nie udało się otworzyć okna wyboru plików: {error}",
+  "Finish choosing in the file window…": "Dokończ wybór w oknie plików…",
+  "Its games run the launch commands saved in it. Only use profiles from people you trust.": "Jego gry uruchamiają zapisane w nim polecenia. Używaj tylko profili od zaufanych osób."
 }

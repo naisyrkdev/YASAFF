@@ -8,11 +8,13 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const DEFAULT: &str = "DefaultUser";
 const STATE: &str = "profiles.json";
 const MARKER: &str = "yasaffProfile.json";
-const PATH_FILES: [&str; 2] = ["library.json", "userSettings.json"];
+const SETTINGS_FILE: &str = "userSettings.json";
+const PATH_FILES: [&str; 2] = ["library.json", SETTINGS_FILE];
 const SKIPPED: [&str; 1] = ["cache"];
 
 static ACTIVE: OnceLock<(String, PathBuf)> = OnceLock::new();
@@ -49,25 +51,54 @@ fn profile_dir(name: &str) -> PathBuf {
     profiles_dir().join(name)
 }
 
+/// The active profile's folder. Every profile-specific file lives under it.
 pub fn dir() -> PathBuf {
-    ACTIVE.get_or_init(start).1.clone()
+    active_profile().1.clone()
 }
 
 pub fn active() -> String {
-    ACTIVE.get_or_init(start).0.clone()
+    active_profile().0.clone()
 }
 
-fn start() -> (String, PathBuf) {
+fn active_profile() -> &'static (String, PathBuf) {
+    ACTIVE.get_or_init(|| {
+        let (profile, warnings) = start();
+        for w in warnings {
+            log::warn!("{w}");
+        }
+        profile
+    })
+}
+
+/// Picks the active profile (migrating pre-profile data first). `main` calls this before anything
+/// reads profile data, so this work happens at a known point and its problems can be shown to the
+/// user; the returned texts describe them. Later calls do nothing.
+pub fn init() -> Vec<String> {
+    let mut warnings = Vec::new();
+    ACTIVE.get_or_init(|| {
+        let (profile, found) = start();
+        warnings = found;
+        profile
+    });
+    warnings
+}
+
+fn start() -> ((String, PathBuf), Vec<String>) {
+    let mut warnings = Vec::new();
     if let Err(e) = migrate_legacy() {
-        eprintln!("could not move old data into {DEFAULT}: {e:#}");
+        warnings.push(format!("could not move old data into {DEFAULT}: {e:#}"));
     }
     let state: State = fs::read_to_string(root().join(STATE)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
     let name = Some(state.active).filter(|n| valid_name(n).is_ok() && profile_dir(n).is_dir()).or_else(|| list().into_iter().next());
     let name = name.unwrap_or_else(|| DEFAULT.to_owned());
     let dir = profile_dir(&name);
-    let _ = fs::create_dir_all(&dir);
-    let _ = write_state(&name);
-    (name, dir)
+    if let Err(e) = fs::create_dir_all(&dir) {
+        warnings.push(format!("could not create {}: {e}", dir.display()));
+    }
+    if let Err(e) = write_state(&name) {
+        warnings.push(format!("could not remember the active profile: {e:#}"));
+    }
+    ((name, dir), warnings)
 }
 
 fn migrate_legacy() -> Result<()> {
@@ -88,9 +119,7 @@ fn migrate_legacy() -> Result<()> {
 }
 
 fn write_state(name: &str) -> Result<()> {
-    fs::create_dir_all(root())?;
-    fs::write(root().join(STATE), serde_json::to_string_pretty(&State { active: name.to_owned() })?)?;
-    Ok(())
+    crate::fsutil::write_atomic(&root().join(STATE), serde_json::to_string_pretty(&State { active: name.to_owned() })?)
 }
 
 pub fn list() -> Vec<String> {
@@ -191,6 +220,9 @@ fn remove(dir: &Path) -> Result<()> {
     fs::remove_dir_all(&trash).with_context(|| format!("deleting {}", trash.display()))
 }
 
+/// Library and settings files store absolute paths into their profile folder. After the folder
+/// moved (import, rename, migration) every JSON string that starts with `old_dir` is rebased onto
+/// `dir`; paths elsewhere on the disk, such as game executables, are left alone.
 fn rewrite_paths(dir: &Path, old_dir: &str) -> Result<()> {
     let old = old_dir.trim_end_matches(['/', '\\']);
     if old.is_empty() {
@@ -200,7 +232,7 @@ fn rewrite_paths(dir: &Path, old_dir: &str) -> Result<()> {
         let Ok(text) = fs::read_to_string(&file) else { continue };
         let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
         if rewrite_value(&mut json, old, dir) {
-            fs::write(&file, serde_json::to_string_pretty(&json)?).with_context(|| format!("writing {}", file.display()))?;
+            crate::fsutil::write_atomic(&file, serde_json::to_string_pretty(&json)?)?;
         }
     }
     Ok(())
@@ -251,7 +283,12 @@ pub fn export(dest: &Path) -> Result<()> {
                         options.unix_permissions(entry.metadata()?.permissions().mode())
                     };
                     zip.start_file(&rel, options)?;
-                    io::copy(&mut fs::File::open(&path).with_context(|| format!("reading {}", path.display()))?, &mut zip)?;
+                    if rel == SETTINGS_FILE {
+                        let text = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+                        io::Write::write_all(&mut zip, without_secrets(&text).as_bytes())?;
+                    } else {
+                        io::copy(&mut fs::File::open(&path).with_context(|| format!("reading {}", path.display()))?, &mut zip)?;
+                    }
                 }
             }
         }
@@ -265,6 +302,23 @@ pub fn export(dest: &Path) -> Result<()> {
             Err(e)
         }
     }
+}
+
+/// The settings JSON with every store API key blanked, so an exported profile can be shared safely.
+fn without_secrets(settings: &str) -> String {
+    let Ok(mut json) = serde_json::from_str::<serde_json::Value>(settings) else { return "{}".to_owned() };
+    let Some(json_map) = json.as_object_mut() else { return "{}".to_owned() };
+    for (field, value) in json_map.iter_mut() {
+        let stores: Vec<&mut serde_json::Value> = match (field.as_str(), value) {
+            ("app_stores", serde_json::Value::Array(stores)) => stores.iter_mut().collect(),
+            ("app_store", store) => vec![store],
+            _ => continue,
+        };
+        for key in stores.into_iter().filter_map(|store| store.get_mut("api_key")) {
+            *key = serde_json::Value::String(String::new());
+        }
+    }
+    serde_json::to_string_pretty(&json).unwrap_or_else(|_| "{}".to_owned())
 }
 
 fn zip_name(root: &Path, path: &Path) -> String {
@@ -324,8 +378,7 @@ fn missing_in_game(game: &Game) -> Vec<String> {
     if let Some(dir) = game.save_dir.as_ref().filter(|d| !d.is_dir()) {
         out.push(tr!("{game}: save folder {path}", game = name, path = dir.display()));
     }
-    let assets = [&game.cover, &game.background, &game.spine, &game.top, &game.back, &game.side, &game.bottom, &game.booklet, &game.model, &game.video];
-    for path in assets.into_iter().flatten().filter(|p| !p.exists()) {
+    for (_, path) in game.assets.paths().filter(|(_, p)| !p.exists()) {
         out.push(tr!("{game}: image or video {path}", game = name, path = path.display()));
     }
     out
@@ -341,8 +394,18 @@ pub fn exe() -> Option<PathBuf> {
     std::env::var_os("APPIMAGE").map(PathBuf::from).or_else(|| std::env::current_exe().ok())
 }
 
-pub fn restart() -> ! {
-    let exe = exe();
+static RESTART: AtomicBool = AtomicBool::new(false);
+
+/// Asks `main` to start YASAFF again once the window has closed and the app has shut down cleanly.
+pub fn request_restart() {
+    RESTART.store(true, Ordering::Relaxed);
+}
+
+/// Starts a new YASAFF if one was requested; called by `main` after the window closed.
+pub fn restart_if_requested() {
+    if !RESTART.load(Ordering::Relaxed) {
+        return;
+    }
     let mut args = std::env::args().skip(1).peekable();
     let mut kept = Vec::new();
     while let Some(arg) = args.next() {
@@ -352,12 +415,14 @@ pub fn restart() -> ! {
             kept.push(arg);
         }
     }
-    if let Some(exe) = exe
-        && let Err(e) = std::process::Command::new(&exe).args(&kept).spawn()
-    {
-        eprintln!("could not restart {}: {e}", exe.display());
+    match exe() {
+        Some(exe) => {
+            if let Err(e) = std::process::Command::new(&exe).args(&kept).spawn() {
+                log::error!("could not restart {}: {e}", exe.display());
+            }
+        }
+        None => log::error!("could not restart: YASAFF can't find its own program"),
     }
-    std::process::exit(0)
 }
 
 #[cfg(test)]
@@ -376,6 +441,16 @@ mod tests {
         assert_eq!(json["games"][0]["cover"], dir.join("assets").join("x.png").to_string_lossy().as_ref());
         assert_eq!(json["games"][0]["target"], "C:\\Games\\a.exe");
         assert_eq!(json["other"], "C:\\Users\\a\\yasaff\\profiles\\Ann2\\x");
+    }
+
+    #[test]
+    fn exports_leave_api_keys_out() {
+        let settings = r#"{"theme":"x","app_stores":[{"url":"a","api_key":"secret1","name":"A"}],"app_store":{"url":"b","api_key":"secret2"}}"#;
+        let clean = without_secrets(settings);
+        assert!(!clean.contains("secret"), "{clean}");
+        let json: serde_json::Value = serde_json::from_str(&clean).unwrap();
+        assert_eq!(json["app_stores"][0]["url"], "a");
+        assert_eq!(json["theme"], "x");
     }
 
     #[test]

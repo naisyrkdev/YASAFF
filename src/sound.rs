@@ -58,7 +58,7 @@ impl Sounds {
                     self.sink = Some(sink);
                 }
                 Err(e) => {
-                    eprintln!("sounds disabled: {e}");
+                    log::warn!("sounds disabled: {e}");
                     self.failed = true;
                 }
             }
@@ -70,7 +70,7 @@ impl Sounds {
 fn decode(path: &Path) -> Option<Clip> {
     let decoder = File::open(path).ok().and_then(|f| Decoder::try_from(f).ok());
     let Some(decoder) = decoder else {
-        eprintln!("could not decode sound {}", path.display());
+        log::warn!("could not decode sound {}", path.display());
         return None;
     };
     let (channels, rate) = (decoder.channels(), decoder.sample_rate());

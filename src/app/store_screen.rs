@@ -305,13 +305,13 @@ impl App {
     }
 
     pub(super) fn import_app_file(&mut self) {
-        let Some(zip) = rfd::FileDialog::new()
+        let dialog = rfd::FileDialog::new()
             .set_title(tr!("Select a YASAFF app package (.zip with yasaffConfig.json)"))
-            .add_filter(tr!("YASAFF app package"), &["zip"])
-            .pick_file()
-        else {
-            return;
-        };
+            .add_filter(tr!("YASAFF app package"), &["zip"]);
+        self.ask_path(dialog, super::Pick::File, Self::import_app_zip);
+    }
+
+    fn import_app_zip(&mut self, zip: PathBuf) {
         let busy = self.running.iter().filter_map(|r| self.library.games.iter().find(|g| g.id == r.game_id)?.app_id.clone()).collect();
         self.notify(tr!("Importing {file}…", file = zip.file_name().unwrap_or_default().to_string_lossy()));
         self.store.client.import_file(zip, busy);
@@ -382,7 +382,7 @@ impl App {
                 && self.library.games[i].asset(kind).is_none()
                 && let Err(e) = self.library.set_asset(i, kind, &dir.join(file))
             {
-                eprintln!("{id}: {e:#}");
+                log::warn!("{id}: {e:#}");
             }
         }
         self.save();
@@ -515,6 +515,11 @@ impl App {
         }
     }
 
+    /// Whether a store download or install is in progress.
+    pub(super) fn store_busy(&self) -> bool {
+        self.store.installs.values().chain(self.store.theme_installs.values()).any(|i| matches!(i, Install::Downloading(..)))
+    }
+
     pub(super) fn running_app(&self, game_id: &str) -> Option<&RunningApp> {
         self.running.iter().find(|r| r.game_id == game_id)
     }
@@ -534,13 +539,14 @@ impl App {
             self.switch_to_running();
             return;
         }
-        let (name, cover, font, game_id) = (game.name.clone(), game.cover.clone(), self.game_font(game), game.id.clone());
+        let (name, cover, font, game_id) = (game.name.clone(), game.asset(AssetKind::Cover).map(Path::to_path_buf), self.game_font(game), game.id.clone());
         match appstore::launch(&self.ctx, &app_id, Placement::of(&self.ctx, self.fullscreen)) {
             Ok(process) => {
+                let pid = process.child.id();
                 self.running.push(RunningApp { game_id, name: name.clone(), process, started: Instant::now() });
                 self.selected = self.library.mark_played(self.selected);
                 self.save();
-                let watch = GameWatch::start(self.ctx.clone());
+                let watch = GameWatch::start(self.ctx.clone(), Some(pid));
                 self.focus_guard_until = None;
                 self.mode = Mode::Launching(Launching { name, font, cover, via: None, store_app: true, started: Instant::now(), watch });
             }
@@ -579,7 +585,7 @@ impl App {
                 Ok(Some(status)) => ended.push((self.running.remove(i), status)),
                 Ok(None) => i += 1,
                 Err(e) => {
-                    eprintln!("{}: {e}", running.name);
+                    log::warn!("{}: {e}", running.name);
                     i += 1;
                 }
             }

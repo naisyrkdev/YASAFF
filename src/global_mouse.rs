@@ -27,7 +27,7 @@ impl GlobalMouse {
             }
         });
         if let Err(e) = spawned {
-            eprintln!("can't look for Global Virtual Mouse: {e}");
+            log::warn!("can't look for Global Virtual Mouse: {e}");
         }
         Self { connected }
     }

@@ -104,7 +104,7 @@ impl AddonHost {
             .collect();
         for (id, error) in exited {
             self.running.remove(&id);
-            eprintln!("addon {id}: {error}");
+            log::warn!("addon {id}: {error}");
             self.failed.insert(id, Stopped { at: Instant::now(), error });
         }
 
@@ -125,7 +125,7 @@ impl AddonHost {
                     self.running.insert(id, running);
                 }
                 Err(e) => {
-                    eprintln!("addon {id}: {e:#}");
+                    log::warn!("addon {id}: {e:#}");
                     self.failed.insert(id, Stopped { at: Instant::now(), error: format!("{e:#}") });
                 }
             }
@@ -176,8 +176,8 @@ impl AddonHost {
                         *shared.lock().unwrap() = Some(frame);
                         ctx.request_repaint();
                     }
-                    Some(Err(e)) => eprintln!("addon {id}: bad widget line: {e}"),
-                    None => println!("[{id}] {line}"),
+                    Some(Err(e)) => log::warn!("addon {id}: bad widget line: {e}"),
+                    None => log::info!("[{id}] {line}"),
                 }
             }
         });

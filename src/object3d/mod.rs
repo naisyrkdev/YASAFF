@@ -396,7 +396,7 @@ impl Objects {
             let model = match load(&source) {
                 Ok(m) => Some(m),
                 Err(e) => {
-                    eprintln!("3D object {source:?}: {e:#}");
+                    log::warn!("3D object {source:?}: {e:#}");
                     None
                 }
             };

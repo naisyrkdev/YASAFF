@@ -854,11 +854,7 @@ impl Theme {
 
     pub fn save(&self) -> Result<()> {
         fs::create_dir_all(self.images_dir())?;
-        let file = self.dir.join(SETTINGS_FILE);
-        let tmp = file.with_extension("json.tmp");
-        fs::write(&tmp, self.settings.to_json()?)?;
-        fs::rename(&tmp, &file)?;
-        Ok(())
+        crate::fsutil::write_atomic(&self.dir.join(SETTINGS_FILE), self.settings.to_json()?)
     }
 
     pub fn is_builtin(&self) -> bool {

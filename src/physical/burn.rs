@@ -242,7 +242,7 @@ fn burn_in(job: &BurnJob, tool: Tool, work: &Path, progress: &mut impl FnMut(Pro
                 if wrote || !first.calibration() {
                     return Err(first.explain());
                 }
-                eprintln!("burn: {program} failed before writing; retrying in SAO mode at 4x");
+                log::warn!("burn: {program} failed before writing; retrying in SAO mode at 4x");
                 progress(Progress::stage(tr!("Calibration failed; trying again at a slower speed")));
                 let last = args.pop().unwrap();
                 args.extend(["-dao", "speed=4", last]);
@@ -317,7 +317,7 @@ impl Failure {
 
 fn run(program: &str, args: &[&str], on_line: &mut dyn FnMut(&str)) -> Result<(), Failure> {
     let fail = |status: String, lines: Vec<String>| Failure { program: program.to_owned(), status, lines };
-    eprintln!("burn: {program} {}", args.join(" "));
+    log::info!("burn: {program} {}", args.join(" "));
     let mut child = Command::new(program)
         .args(args)
         .env("LC_ALL", "C")
@@ -363,7 +363,7 @@ fn run(program: &str, args: &[&str], on_line: &mut dyn FnMut(&str)) -> Result<()
         if line.is_empty() {
             continue;
         }
-        eprintln!("burn: {line}");
+        log::info!("burn: {line}");
         on_line(&line);
         tail.push(line);
         if tail.len() > 40 {

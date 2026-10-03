@@ -762,7 +762,7 @@
   "Importing profile…": "Import du profil…",
   "Its library, settings, themes and apps are deleted. YASAFF restarts.": "Sa bibliothèque, ses réglages, ses thèmes et ses applis sont supprimés. YASAFF redémarre.",
   "Left/Right picks a profile; Enter switches to it and restarts YASAFF": "Gauche/Droite choisit un profil ; Entrée le charge et redémarre YASAFF",
-  "Library, settings, themes, images and apps in one .zip": "Bibliothèque, réglages, thèmes, images et applis dans un .zip",
+  "Library, settings, themes, images and apps in one .zip (store API keys are left out)": "Bibliothèque, réglages, thèmes, images et applis dans un .zip (sans les clés d’API des boutiques)",
   "New profile name": "Nom du nouveau profil",
   "Not found on this computer; fix these after switching:": "Introuvable sur cet ordinateur ; à corriger après le changement :",
   "Profiles": "Profils",
@@ -822,5 +822,16 @@
   "Start blank (with mock games)": "Commencer à vide (avec des jeux fictifs)",
   "All customization images included": "Toutes les images de personnalisation incluses",
   "Welcome!": "Bienvenue !",
-  "How would you like to start?": "Comment voulez-vous commencer ?"
+  "How would you like to start?": "Comment voulez-vous commencer ?",
+  "Could not read settings: {error}": "Impossible de lire les réglages : {error}",
+  "a disc is being burned": "la gravure du disque",
+  "a save backup is being made": "la sauvegarde des parties",
+  "a profile is being exported or imported": "l’export ou l’import du profil",
+  "the bundled games are being installed": "l’installation des jeux inclus",
+  "something is downloading from the store": "le téléchargement depuis la boutique",
+  "Wait until {what} finishes, then try again": "Attendez la fin de {what}, puis réessayez",
+  "Restarting…": "Redémarrage…",
+  "Could not open the file dialog: {error}": "Impossible d’ouvrir la fenêtre de fichiers : {error}",
+  "Finish choosing in the file window…": "Terminez votre choix dans la fenêtre de fichiers…",
+  "Its games run the launch commands saved in it. Only use profiles from people you trust.": "Ses jeux lancent les commandes enregistrées dans le profil. N’utilisez que des profils de personnes de confiance."
 }

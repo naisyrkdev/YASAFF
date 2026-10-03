@@ -4,6 +4,7 @@ use crate::object3d::ModelUp;
 use crate::theme::BoxOverrides;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -18,44 +19,12 @@ pub struct Game {
     pub args: Vec<String>,
     #[serde(default)]
     pub working_dir: Option<PathBuf>,
-    #[serde(default)]
-    pub cover: Option<PathBuf>,
-    #[serde(default)]
-    pub spine: Option<PathBuf>,
-    #[serde(default)]
-    pub top: Option<PathBuf>,
-    #[serde(default)]
-    pub back: Option<PathBuf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub side: Option<PathBuf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bottom: Option<PathBuf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub booklet: Option<PathBuf>,
-    #[serde(default)]
-    pub model: Option<PathBuf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub video: Option<PathBuf>,
+    #[serde(flatten)]
+    pub assets: Assets,
     #[serde(default, skip_serializing_if = "ModelUp::is_default")]
     pub model_up: ModelUp,
     #[serde(default)]
     pub box_style: BoxOverrides,
-    #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
-    pub cover_placement: CoverPlacement,
-    #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
-    pub spine_placement: CoverPlacement,
-    #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
-    pub top_placement: CoverPlacement,
-    #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
-    pub back_placement: CoverPlacement,
-    #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
-    pub side_placement: CoverPlacement,
-    #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
-    pub bottom_placement: CoverPlacement,
-    #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
-    pub booklet_placement: CoverPlacement,
-    #[serde(default)]
-    pub background: Option<PathBuf>,
     #[serde(default)]
     pub last_played: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -79,7 +48,77 @@ impl Game {
         ids::from_command(&self.target, &self.args)
     }
 
-    fn asset_mut(&mut self, kind: AssetKind) -> &mut Option<PathBuf> {
+    pub fn asset(&self, kind: AssetKind) -> Option<&Path> {
+        self.assets.paths.get(&kind).map(PathBuf::as_path)
+    }
+
+    pub fn placement(&self, kind: AssetKind) -> CoverPlacement {
+        self.assets.placements.get(&kind.placement_key()).copied().unwrap_or_default()
+    }
+
+    pub fn placement_mut(&mut self, kind: AssetKind) -> &mut CoverPlacement {
+        self.assets.placements.entry(kind.placement_key()).or_default()
+    }
+}
+
+/// A game's artwork files and how each image is placed on its surface.
+///
+/// Stored in `library.json` as the flat `cover`, `cover_placement`, … fields of earlier versions
+/// (see `AssetFields`), so libraries stay readable in both directions.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(from = "AssetFields", into = "AssetFields")]
+pub struct Assets {
+    paths: BTreeMap<AssetKind, PathBuf>,
+    /// Keyed by `AssetKind::placement_key`; a missing entry is the default placement.
+    placements: BTreeMap<AssetKind, CoverPlacement>,
+}
+
+impl Assets {
+    pub fn paths(&self) -> impl Iterator<Item = (AssetKind, &Path)> {
+        self.paths.iter().map(|(k, p)| (*k, p.as_path()))
+    }
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct AssetFields {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cover: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    spine: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    top: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    back: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    side: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bottom: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    booklet: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    video: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    background: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
+    cover_placement: CoverPlacement,
+    #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
+    spine_placement: CoverPlacement,
+    #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
+    top_placement: CoverPlacement,
+    #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
+    back_placement: CoverPlacement,
+    #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
+    side_placement: CoverPlacement,
+    #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
+    bottom_placement: CoverPlacement,
+    #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
+    booklet_placement: CoverPlacement,
+}
+
+impl AssetFields {
+    fn path(&mut self, kind: AssetKind) -> &mut Option<PathBuf> {
         match kind {
             AssetKind::Cover => &mut self.cover,
             AssetKind::Background => &mut self.background,
@@ -94,35 +133,8 @@ impl Game {
         }
     }
 
-    pub fn asset(&self, kind: AssetKind) -> Option<&Path> {
-        match kind {
-            AssetKind::Cover => self.cover.as_deref(),
-            AssetKind::Background => self.background.as_deref(),
-            AssetKind::Spine => self.spine.as_deref(),
-            AssetKind::Top => self.top.as_deref(),
-            AssetKind::Back => self.back.as_deref(),
-            AssetKind::Side => self.side.as_deref(),
-            AssetKind::Bottom => self.bottom.as_deref(),
-            AssetKind::Booklet => self.booklet.as_deref(),
-            AssetKind::Model => self.model.as_deref(),
-            AssetKind::Video => self.video.as_deref(),
-        }
-    }
-
-    pub fn placement(&self, kind: AssetKind) -> CoverPlacement {
-        match kind {
-            AssetKind::Spine => self.spine_placement,
-            AssetKind::Top => self.top_placement,
-            AssetKind::Back => self.back_placement,
-            AssetKind::Side => self.side_placement,
-            AssetKind::Bottom => self.bottom_placement,
-            AssetKind::Booklet => self.booklet_placement,
-            _ => self.cover_placement,
-        }
-    }
-
-    pub fn placement_mut(&mut self, kind: AssetKind) -> &mut CoverPlacement {
-        match kind {
+    fn placement(&mut self, kind: AssetKind) -> &mut CoverPlacement {
+        match kind.placement_key() {
             AssetKind::Spine => &mut self.spine_placement,
             AssetKind::Top => &mut self.top_placement,
             AssetKind::Back => &mut self.back_placement,
@@ -131,6 +143,35 @@ impl Game {
             AssetKind::Booklet => &mut self.booklet_placement,
             _ => &mut self.cover_placement,
         }
+    }
+}
+
+impl From<AssetFields> for Assets {
+    fn from(mut fields: AssetFields) -> Self {
+        let mut assets = Assets::default();
+        for kind in AssetKind::ALL {
+            if let Some(path) = fields.path(kind).take() {
+                assets.paths.insert(kind, path);
+            }
+            let placement = *fields.placement(kind);
+            if !placement.is_default() {
+                assets.placements.insert(kind.placement_key(), placement);
+            }
+        }
+        assets
+    }
+}
+
+impl From<Assets> for AssetFields {
+    fn from(assets: Assets) -> Self {
+        let mut fields = AssetFields::default();
+        for (kind, path) in assets.paths {
+            *fields.path(kind) = Some(path);
+        }
+        for (kind, placement) in assets.placements {
+            *fields.placement(kind) = placement;
+        }
+        fields
     }
 }
 
@@ -156,7 +197,7 @@ impl CoverPlacement {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum AssetKind {
     Cover,
     Background,
@@ -171,6 +212,28 @@ pub enum AssetKind {
 }
 
 impl AssetKind {
+    pub const ALL: [AssetKind; 10] = [
+        AssetKind::Cover,
+        AssetKind::Background,
+        AssetKind::Spine,
+        AssetKind::Top,
+        AssetKind::Back,
+        AssetKind::Side,
+        AssetKind::Bottom,
+        AssetKind::Booklet,
+        AssetKind::Model,
+        AssetKind::Video,
+    ];
+
+    /// The surface whose placement this asset uses: the box faces have their own, everything
+    /// else (background, model, video) shares the cover's.
+    fn placement_key(self) -> AssetKind {
+        match self {
+            AssetKind::Spine | AssetKind::Top | AssetKind::Back | AssetKind::Side | AssetKind::Bottom | AssetKind::Booklet => self,
+            _ => AssetKind::Cover,
+        }
+    }
+
     fn slug(self) -> &'static str {
         match self {
             AssetKind::Cover => "cover",
@@ -232,11 +295,7 @@ impl Library {
     }
 
     pub fn save(&self) -> Result<()> {
-        fs::create_dir_all(&self.data_dir)?;
-        let tmp = self.file().with_extension("json.tmp");
-        fs::write(&tmp, serde_json::to_string_pretty(self)?)?;
-        fs::rename(&tmp, self.file())?;
-        Ok(())
+        crate::fsutil::write_atomic(&self.file(), serde_json::to_string_pretty(self)?)
     }
 
     fn sort(&mut self) {
@@ -255,25 +314,9 @@ impl Library {
             target: entry.target.clone(),
             args: entry.args.clone(),
             working_dir: entry.working_dir.clone(),
-            cover: None,
-            background: None,
-            spine: None,
-            top: None,
-            back: None,
-            side: None,
-            bottom: None,
-            booklet: None,
-            model: None,
-            video: None,
+            assets: Assets::default(),
             model_up: ModelUp::default(),
             box_style: BoxOverrides::default(),
-            cover_placement: CoverPlacement::default(),
-            spine_placement: CoverPlacement::default(),
-            top_placement: CoverPlacement::default(),
-            back_placement: CoverPlacement::default(),
-            side_placement: CoverPlacement::default(),
-            bottom_placement: CoverPlacement::default(),
-            booklet_placement: CoverPlacement::default(),
             last_played: None,
             title_font: None,
             app_id: None,
@@ -321,14 +364,14 @@ impl Library {
 
     fn replace_asset(&mut self, index: usize, kind: AssetKind, dest: PathBuf) {
         let assets = self.assets_dir();
-        if let Some(old) = self.games[index].asset_mut(kind).replace(dest) {
+        if let Some(old) = self.games[index].assets.paths.insert(kind, dest) {
             remove_if_owned(&assets, &old);
         }
     }
 
     pub fn clear_asset(&mut self, index: usize, kind: AssetKind) {
         let assets = self.assets_dir();
-        if let Some(old) = self.games[index].asset_mut(kind).take() {
+        if let Some(old) = self.games[index].assets.paths.remove(&kind) {
             remove_if_owned(&assets, &old);
         }
     }
@@ -336,8 +379,8 @@ impl Library {
     pub fn remove(&mut self, index: usize) {
         let assets = self.assets_dir();
         let game = self.games.remove(index);
-        for path in [game.cover, game.background, game.spine, game.top, game.back, game.side, game.bottom, game.booklet, game.model, game.video].into_iter().flatten() {
-            remove_if_owned(&assets, &path);
+        for (_, path) in game.assets.paths() {
+            remove_if_owned(&assets, path);
         }
     }
 
@@ -361,4 +404,30 @@ fn now_secs() -> u64 {
 
 fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assets_keep_the_flat_library_format() {
+        let json = r#"{"id":"g","name":"G","target":"/g","cover":"/a/c.png","spine":"/a/s.png","video":"/a/v.mp4",
+            "cover_placement":{"zoom":2.0,"x":0.1,"y":0.5},"spine_placement":{"zoom":1.5,"x":0.5,"y":0.5}}"#;
+        let game: Game = serde_json::from_str(json).unwrap();
+        assert_eq!(game.asset(AssetKind::Cover), Some(Path::new("/a/c.png")));
+        assert_eq!(game.asset(AssetKind::Video), Some(Path::new("/a/v.mp4")));
+        assert_eq!(game.asset(AssetKind::Top), None);
+        assert_eq!(game.placement(AssetKind::Cover).zoom, 2.0);
+        assert_eq!(game.placement(AssetKind::Background).zoom, 2.0, "the background shares the cover's placement");
+        assert_eq!(game.placement(AssetKind::Spine).zoom, 1.5);
+        assert!(game.placement(AssetKind::Top).is_default());
+
+        let saved: serde_json::Value = serde_json::to_value(&game).unwrap();
+        assert_eq!(saved["cover"], "/a/c.png");
+        assert_eq!(saved["spine_placement"]["zoom"], 1.5);
+        assert!(saved.get("top").is_none() && saved.get("top_placement").is_none());
+        let again: Game = serde_json::from_value(saved).unwrap();
+        assert_eq!(again.assets, game.assets);
+    }
 }

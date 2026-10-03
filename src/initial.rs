@@ -32,7 +32,7 @@ pub fn wanted(library: &Library) -> bool {
 
 pub fn mark_done() {
     if let Err(e) = fs::write(marker(), "{ \"imported\": true }\n") {
-        eprintln!("could not write {}: {e}", marker().display());
+        log::warn!("could not write {}: {e}", marker().display());
     }
 }
 
@@ -111,5 +111,33 @@ mod tests {
             assert_eq!(manifest.artwork.assets().iter().filter(|(_, p)| p.is_some()).count(), 5, "{name}");
         }
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// `dist/*.zip` are build outputs of `initial_content/build.py`; fail when they no longer match
+    /// the game folders they are packed from.
+    #[test]
+    fn bundled_zips_match_their_sources() {
+        use std::io::Read;
+        let games = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("initial_content/games");
+        let mut folders: Vec<String> = fs::read_dir(&games).unwrap().flatten().filter(|e| e.path().is_dir()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        let mut bundled: Vec<String> = BUNDLED.iter().map(|(name, _)| name.trim_end_matches(".zip").to_owned()).collect();
+        folders.sort();
+        bundled.sort();
+        assert_eq!(folders, bundled, "every game folder is bundled; run initial_content/build.py and update BUNDLED");
+        for (name, bytes) in BUNDLED {
+            let dir = games.join(name.trim_end_matches(".zip"));
+            let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+            let mut packed = Vec::new();
+            for i in 0..archive.len() {
+                let mut entry = archive.by_index(i).unwrap();
+                let mut data = Vec::new();
+                entry.read_to_end(&mut data).unwrap();
+                let path = entry.name().to_owned();
+                assert_eq!(fs::read(dir.join(&path)).ok(), Some(data), "{name}: {path} is out of date; run initial_content/build.py");
+                packed.push(path);
+            }
+            let on_disk = fs::read_dir(&dir).unwrap().flatten().filter(|e| e.path().is_file()).count();
+            assert_eq!(packed.len(), on_disk, "{name}: files were added to {}; run initial_content/build.py", dir.display());
+        }
     }
 }

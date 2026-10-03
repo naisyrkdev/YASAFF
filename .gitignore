@@ -2,3 +2,5 @@
 /.vscode
 /ScriptHelpers
 /GeneralTodo.md
+__pycache__/
+*.pyc

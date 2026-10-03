@@ -99,7 +99,7 @@ impl Fetcher {
                     done.push(art);
                 }
                 Update::Finished(id, Err(e)) => {
-                    eprintln!("artwork for {id}: {e}");
+                    log::warn!("artwork for {id}: {e}");
                     self.status.insert(id, Status::Failed(e));
                 }
             }
