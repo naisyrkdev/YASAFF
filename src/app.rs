@@ -17,6 +17,7 @@ use crate::launcher;
 use crate::library::{AssetKind, CoverPlacement, Game, Library};
 use crate::metadata::{self, Fetcher};
 use crate::object3d::{self, Objects};
+use crate::profiles;
 use crate::scan;
 use crate::settings::{DiscAction, Language, MouseSettings, Settings};
 use crate::stores::Store;
@@ -153,6 +154,8 @@ enum PromptKind {
     AppStoreKey,
     Color(SettingRow),
     BoxSize(SettingRow),
+    ProfileName,
+    ProfileNew,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -160,6 +163,13 @@ enum SettingRow {
     Fullscreen,
     Autostart,
     Language,
+    ProfileActive,
+    ProfileRename,
+    ProfileNew,
+    ProfileExport,
+    ProfileImport,
+    ProfileReset,
+    AppReset,
     AppStoreActive,
     AppStoreUrl,
     AppStoreKey,
@@ -352,6 +362,8 @@ enum Removal {
     Theme,
     AppStore,
     Addon(usize),
+    Profile,
+    Everything,
 }
 
 struct Launching {
@@ -390,6 +402,12 @@ enum Mode {
     Burn(BurnDialog),
     Store { cursor: usize, scroll: usize },
     StoreTheme { index: usize, image: usize },
+    ProfileImported { name: String, missing: Vec<String>, switch: bool },
+}
+
+enum ProfileJob {
+    Exported(Result<PathBuf, String>),
+    Imported(Result<profiles::Imported, String>),
 }
 
 struct BurnDialog {
@@ -633,6 +651,9 @@ pub struct App {
     save_dirs_found: Option<mpsc::Receiver<Vec<(String, PathBuf)>>>,
     backup: Option<(String, mpsc::Receiver<Result<PathBuf, String>>)>,
     keyboard: keyboard::Keyboard,
+    profiles: Vec<String>,
+    profile_pick: String,
+    profile_job: Option<mpsc::Receiver<ProfileJob>>,
 }
 
 impl App {
@@ -706,6 +727,9 @@ impl App {
             game: None,
             save_dirs_found: None,
             backup: None,
+            profiles: profiles::list(),
+            profile_pick: profiles::active(),
+            profile_job: None,
         };
         app.apply_fonts();
         if let Some(w) = warning {
@@ -1299,6 +1323,13 @@ impl App {
                                 self.uninstall_addon(i);
                             }
                         }
+                        Removal::Profile | Removal::Everything => {
+                            let row = if what == Removal::Profile { SettingRow::ProfileReset } else { SettingRow::AppReset };
+                            self.mode = self.settings_at(row);
+                            if yes {
+                                self.reset_profiles(what == Removal::Everything);
+                            }
+                        }
                     }
                 }
                 Action::Back => {
@@ -1308,6 +1339,8 @@ impl App {
                         Removal::Theme => self.settings_at(SettingRow::ThemeDelete),
                         Removal::AppStore => self.settings_at(SettingRow::AppStoreRemove),
                         Removal::Addon(i) => self.settings_at(SettingRow::AddonRemove(i)),
+                        Removal::Profile => self.settings_at(SettingRow::ProfileReset),
+                        Removal::Everything => self.settings_at(SettingRow::AppReset),
                     }
                 }
                 _ => {}
@@ -1403,6 +1436,18 @@ impl App {
                     self.mode = Mode::Home;
                 }
             }
+            Mode::ProfileImported { name, switch, .. } => match action {
+                Action::Left | Action::Right | Action::Up | Action::Down => *switch = !*switch,
+                Action::Confirm if *switch => {
+                    let name = name.clone();
+                    match profiles::switch(&name) {
+                        Ok(()) => profiles::restart(),
+                        Err(e) => self.notify(tr!("Could not switch profile: {error}", error = format!("{e:#}"))),
+                    }
+                }
+                Action::Confirm | Action::Back => self.mode = self.settings_at(SettingRow::ProfileImport),
+                _ => {}
+            },
             Mode::Burn(dialog) => {
                 if let Some(b) = &self.burning {
                     let done = b.result.is_some();
@@ -1491,6 +1536,7 @@ impl App {
         }
         let theme = &self.theme().settings;
         let mut rows = vec![R::Fullscreen, R::Autostart, R::Language];
+        rows.extend([R::ProfileActive, R::ProfileRename, R::ProfileNew, R::ProfileExport, R::ProfileImport, R::ProfileReset, R::AppReset]);
         rows.extend([R::ViewKind, R::TileStyle]);
         let bubbles = theme.kind == ThemeKind::Bubbles;
         if bubbles {
@@ -1712,6 +1758,22 @@ impl App {
                 self.mode = Mode::Prompt { kind: PromptKind::AppStoreUrl, buffer: String::new() };
             }
             SettingRow::AppStoreRemove => self.mode = Mode::ConfirmRemove { what: Removal::AppStore, yes: false },
+            SettingRow::ProfileActive => {
+                if self.profile_pick == profiles::active() {
+                    return self.adjust_setting(row, 1);
+                }
+                let name = self.profile_pick.clone();
+                match profiles::switch(&name) {
+                    Ok(()) => profiles::restart(),
+                    Err(e) => self.notify(tr!("Could not switch profile: {error}", error = format!("{e:#}"))),
+                }
+            }
+            SettingRow::ProfileRename => self.mode = Mode::Prompt { kind: PromptKind::ProfileName, buffer: profiles::active() },
+            SettingRow::ProfileNew => self.mode = Mode::Prompt { kind: PromptKind::ProfileNew, buffer: profiles::unique_name(profiles::DEFAULT) },
+            SettingRow::ProfileExport => self.export_profile(),
+            SettingRow::ProfileImport => self.import_profile(),
+            SettingRow::ProfileReset => self.mode = Mode::ConfirmRemove { what: Removal::Profile, yes: false },
+            SettingRow::AppReset => self.mode = Mode::ConfirmRemove { what: Removal::Everything, yes: false },
             SettingRow::AboutSource | SettingRow::AboutServer => {
                 let url = if row == SettingRow::AboutSource { SOURCE_URL } else { SERVER_URL };
                 if let Err(e) = open::that_detached(url) {
@@ -2068,6 +2130,15 @@ impl App {
                 self.settings.language = cycle(&Language::ALL, self.settings.language, delta);
                 i18n::set(self.settings.language);
                 return self.save_settings();
+            }
+            SettingRow::ProfileActive => {
+                self.profiles = profiles::list();
+                let n = self.profiles.len() as i32;
+                if n > 0 {
+                    let i = self.profiles.iter().position(|p| *p == self.profile_pick).unwrap_or(0) as i32;
+                    self.profile_pick = self.profiles[(i + delta).rem_euclid(n) as usize].clone();
+                }
+                return;
             }
             SettingRow::AppStoreActive => {
                 let n = self.settings.app_stores.len() as i32;
@@ -2567,6 +2638,80 @@ impl App {
         self.notify(tr!("Backing up the saves of {name}…", name = name));
     }
 
+    fn export_profile(&mut self) {
+        if self.profile_job.is_some() {
+            return self.notify(tr!("A profile export or import is already running"));
+        }
+        let name = profiles::active();
+        let Some(mut dest) = rfd::FileDialog::new()
+            .set_title(tr!("Export profile {name}", name = name))
+            .add_filter("ZIP", &["zip"])
+            .set_file_name(format!("{name}.zip"))
+            .save_file()
+        else {
+            return;
+        };
+        if dest.extension().is_none_or(|e| !e.eq_ignore_ascii_case("zip")) {
+            dest.as_mut_os_string().push(".zip");
+        }
+        self.start_profile_job(move || ProfileJob::Exported(profiles::export(&dest).map(|()| dest).map_err(|e| format!("{e:#}"))));
+        self.notify(tr!("Exporting profile {name}…", name = name));
+    }
+
+    fn import_profile(&mut self) {
+        if self.profile_job.is_some() {
+            return self.notify(tr!("A profile export or import is already running"));
+        }
+        let Some(path) = rfd::FileDialog::new().set_title(tr!("Select an exported profile")).add_filter("ZIP", &["zip"]).pick_file() else { return };
+        self.start_profile_job(move || ProfileJob::Imported(profiles::import(&path).map_err(|e| format!("{e:#}"))));
+        self.notify(tr!("Importing profile…"));
+    }
+
+    fn start_profile_job(&mut self, job: impl FnOnce() -> ProfileJob + Send + 'static) {
+        let (tx, rx) = mpsc::channel();
+        let ctx = self.ctx.clone();
+        std::thread::spawn(move || {
+            if tx.send(job()).is_ok() {
+                ctx.request_repaint();
+            }
+        });
+        self.profile_job = Some(rx);
+    }
+
+    fn poll_profile_job(&mut self) {
+        let Some(rx) = &self.profile_job else { return };
+        let job = match rx.try_recv() {
+            Ok(job) => job,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => ProfileJob::Exported(Err(tr!("it stopped unexpectedly").to_owned())),
+        };
+        self.profile_job = None;
+        match job {
+            ProfileJob::Exported(Ok(zip)) => self.notify(tr!("Profile exported to {file}", file = zip.display())),
+            ProfileJob::Exported(Err(e)) => self.notify(tr!("Could not export profile: {error}", error = e)),
+            ProfileJob::Imported(Ok(imported)) => {
+                self.profiles = profiles::list();
+                self.mode = Mode::ProfileImported { name: imported.name, missing: imported.missing, switch: false };
+            }
+            ProfileJob::Imported(Err(e)) => self.notify(tr!("Could not import profile: {error}", error = e)),
+        }
+    }
+
+    fn reset_profiles(&mut self, everything: bool) {
+        let result = if everything {
+            if self.autostart {
+                let _ = autostart::set(false);
+            }
+            profiles::reset_all()
+        } else {
+            profiles::reset_current()
+        };
+        match result {
+            Ok(()) => profiles::restart(),
+            Err(e) => self.notify(tr!("Could not reset: {error}", error = format!("{e:#}"))),
+        }
+    }
+
     fn poll_backup(&mut self) {
         let Some((name, rx)) = &self.backup else { return };
         let result = match rx.try_recv() {
@@ -2762,6 +2907,22 @@ impl App {
                 }
                 self.mode = self.settings_at(row);
             }
+            PromptKind::ProfileName => {
+                let result = if text == profiles::active() { Ok(()) } else { profiles::rename(text) };
+                self.mode = self.settings_at(SettingRow::ProfileRename);
+                match result {
+                    Ok(()) if text != profiles::active() => profiles::restart(),
+                    Ok(()) => {}
+                    Err(e) => self.notify(tr!("Could not rename profile: {error}", error = format!("{e:#}"))),
+                }
+            }
+            PromptKind::ProfileNew => {
+                self.mode = self.settings_at(SettingRow::ProfileNew);
+                match profiles::create(text).and_then(|()| profiles::switch(text)) {
+                    Ok(()) => profiles::restart(),
+                    Err(e) => self.notify(tr!("Could not create profile: {error}", error = format!("{e:#}"))),
+                }
+            }
             PromptKind::Rename => {}
         }
     }
@@ -2771,6 +2932,8 @@ impl App {
             Mode::Prompt { kind: PromptKind::AddCommand, .. } => Mode::AddMenu { cursor: add_menu_index(AddSource::Command) },
             Mode::Prompt { kind: PromptKind::StoreCommand(store), .. } => self.settings_at(SettingRow::StoreCommand(*store)),
             Mode::Prompt { kind: PromptKind::ThemeName, .. } => self.settings_at(SettingRow::ThemeRename),
+            Mode::Prompt { kind: PromptKind::ProfileName, .. } => self.settings_at(SettingRow::ProfileRename),
+            Mode::Prompt { kind: PromptKind::ProfileNew, .. } => self.settings_at(SettingRow::ProfileNew),
             Mode::Prompt { kind: PromptKind::AppStoreUrl, .. } => self.settings_at(SettingRow::AppStoreUrl),
             Mode::Prompt { kind: PromptKind::AppStoreKey, .. } => self.settings_at(SettingRow::AppStoreKey),
             Mode::Prompt { kind: PromptKind::Color(row) | PromptKind::BoxSize(row), .. } => self.settings_at(*row),
@@ -3680,6 +3843,7 @@ impl App {
             ],
             Mode::DiscChooser { .. } => &[Hint(Action::Confirm, tr!("Start")), Hint(Action::Back, tr!("Cancel"))],
             Mode::DiscNotFound { .. } => &[Hint(Action::Confirm, tr!("OK"))],
+            Mode::ProfileImported { .. } => &[Hint(Action::Confirm, tr!("Select")), Hint(Action::Back, tr!("Back"))],
             Mode::Burn(_) => match &self.burning {
                 Some(Burning { result: Some(Err(_)), .. }) => &[Hint(Action::Confirm, tr!("Try again"))],
                 Some(b) if b.result.is_some() => &[Hint(Action::Confirm, tr!("OK"))],
@@ -4073,6 +4237,14 @@ impl App {
                 let Some(addon) = self.addons.installed.get(i) else { return };
                 (tr!("Uninstall \"{name}\"?", name = addon.name), tr!("Its files are deleted. Its saved data is kept for a reinstall."))
             }
+            Removal::Profile => (
+                tr!("Reset profile \"{name}\"?", name = profiles::active()),
+                tr!("Its library, settings, themes and apps are deleted. YASAFF restarts."),
+            ),
+            Removal::Everything => (
+                tr!("Reset YASAFF?").to_owned(),
+                tr!("Every profile and all data are deleted. YASAFF restarts as on a fresh install."),
+            ),
         };
         let painter = ui.painter();
         painter.rect_filled(screen, 0, Color32::from_black_alpha(160));
@@ -4086,6 +4258,7 @@ impl App {
             Removal::Theme => tr!("Delete"),
             Removal::AppStore => tr!("Remove"),
             Removal::Addon(_) => tr!("Uninstall"),
+            Removal::Profile | Removal::Everything => tr!("Reset"),
             Removal::Game if self.selected_game().is_some_and(|g| g.app_id.is_some()) => tr!("Uninstall"),
             Removal::Game => tr!("Remove"),
         };
@@ -4220,6 +4393,8 @@ impl App {
                 Some(tr!("Leave empty to auto-detect. Example: flatpak run com.heroicgameslauncher.hgl")),
             ),
             PromptKind::ThemeName => (tr!("Rename theme"), None),
+            PromptKind::ProfileName => (tr!("Rename profile"), Some(tr!("YASAFF restarts after renaming."))),
+            PromptKind::ProfileNew => (tr!("New profile name"), Some(tr!("YASAFF restarts into the new, empty profile."))),
             PromptKind::AppStoreUrl => (
                 tr!("YASAFF Store address"),
                 Some(tr!("Paste the address shown on the store's API keys page. Just the site address works too.")),
@@ -4308,6 +4483,10 @@ impl App {
     fn setting_heading(&self, row: SettingRow) -> Option<(&'static str, Option<(String, Color32)>)> {
         match row {
             SettingRow::Fullscreen => Some((tr!("General"), None)),
+            SettingRow::ProfileActive => Some((
+                tr!("Power user options"),
+                Some((tr!("Profile: {name}", name = profiles::active()), Color32::from_gray(140))),
+            )),
             SettingRow::AppStoreActive => Some((tr!("YASAFF Store"), Some(self.store_status()))),
             SettingRow::AboutApp => Some((tr!("About"), None)),
             SettingRow::AddonBar(0) => Some(self.addons_heading()),
@@ -4422,6 +4601,22 @@ impl App {
                 };
                 (tr!("Store").into(), sub, Choice(value))
             }
+            SettingRow::ProfileActive => {
+                let n = self.profiles.len();
+                let i = self.profiles.iter().position(|p| *p == self.profile_pick).unwrap_or(0);
+                let (sub, value) = match (n, self.profile_pick == profiles::active()) {
+                    (0 | 1, _) => (tr!("Create another profile below to switch between them"), self.profile_pick.clone()),
+                    (_, true) => (tr!("Left/Right picks a profile; Enter switches to it and restarts YASAFF"), tr!("{name} ({index} of {count})", name = self.profile_pick, index = i + 1, count = n)),
+                    (_, false) => (tr!("Press Enter to switch; YASAFF restarts"), tr!("{name} ({index} of {count})", name = self.profile_pick, index = i + 1, count = n)),
+                };
+                (tr!("Change profile").into(), sub, Choice(value))
+            }
+            SettingRow::ProfileRename => (tr!("Rename current profile").into(), tr!("YASAFF restarts"), Action(tr!("Edit…"))),
+            SettingRow::ProfileNew => (tr!("Create new profile").into(), tr!("An empty profile; YASAFF restarts into it"), Action(tr!("Create"))),
+            SettingRow::ProfileExport => (tr!("Export current profile…").into(), tr!("Library, settings, themes, images and apps in one .zip"), Action(tr!("Export"))),
+            SettingRow::ProfileImport => (tr!("Import profile…").into(), tr!("An exported .zip; added as a new profile, renamed if the name is taken"), Action(tr!("Import"))),
+            SettingRow::ProfileReset => (tr!("Reset current profile").into(), tr!("Deletes this profile's library, settings, themes and apps"), Action(tr!("Reset…"))),
+            SettingRow::AppReset => (tr!("Reset application").into(), tr!("Deletes every profile and all data, as on a fresh install"), Action(tr!("Reset…"))),
             SettingRow::AppStoreAdd => (tr!("Add another store…").into(), tr!("Each store has its own address and API key"), Action(tr!("Add"))),
             SettingRow::AppStoreRemove => (tr!("Remove this store").into(), tr!("Installed apps and themes stay"), Action(tr!("Remove…"))),
             SettingRow::AboutApp => (
@@ -5190,6 +5385,60 @@ impl App {
         }
     }
 
+    fn draw_profile_imported(&mut self, ui: &Ui, screen: Rect, s: f32) {
+        let Mode::ProfileImported { name, missing, switch } = &self.mode else { return };
+        const SHOWN: usize = 12;
+        let painter = ui.painter();
+        painter.rect_filled(screen, 0, Color32::from_black_alpha(160));
+        let lines = missing.len().min(SHOWN + 1);
+        let height = (260.0 + if missing.is_empty() { 0.0 } else { 40.0 + 26.0 * lines as f32 }) * s;
+        let dialog = Rect::from_center_size(screen.center(), vec2((900.0 * s).min(screen.width() - 40.0), height.min(screen.height() - 40.0)));
+        painter.rect_filled(dialog, (8.0 * s) as u8, Color32::from_rgb(18, 24, 40));
+        painter.text(
+            dialog.center_top() + vec2(0.0, 50.0 * s),
+            Align2::CENTER_CENTER,
+            tr!("Imported as \"{name}\"", name = name),
+            FontId::proportional(28.0 * s),
+            Color32::WHITE,
+        );
+        let gray = Color32::from_gray(170);
+        let detail = if missing.is_empty() {
+            tr!("Everything it uses was found on this computer.")
+        } else {
+            tr!("Not found on this computer; fix these after switching:")
+        };
+        painter.text(dialog.center_top() + vec2(0.0, 95.0 * s), Align2::CENTER_CENTER, detail, FontId::proportional(17.0 * s), gray);
+        let left = dialog.left() + 40.0 * s;
+        let width = dialog.width() - 80.0 * s;
+        for (i, line) in missing.iter().take(SHOWN).enumerate() {
+            let galley = painter.layout_no_wrap(format!("• {line}"), FontId::proportional(16.0 * s), PAD_Y);
+            let pos = pos2(left, dialog.top() + (125.0 + 26.0 * i as f32) * s);
+            painter.with_clip_rect(Rect::from_min_size(pos, vec2(width, 26.0 * s))).galley(pos, galley, PAD_Y);
+        }
+        if missing.len() > SHOWN {
+            let more = tr!("…and {count} more", count = missing.len() - SHOWN);
+            painter.text(pos2(left, dialog.top() + (125.0 + 26.0 * SHOWN as f32) * s), Align2::LEFT_TOP, more, FontId::proportional(16.0 * s), gray);
+        }
+        let switch_label = tr!("Switch to it");
+        let mut choice = None;
+        for (i, (label, is_switch)) in [(tr!("Stay"), false), (switch_label, true)].into_iter().enumerate() {
+            let center = dialog.center_bottom() + vec2((i as f32 - 0.5) * 240.0 * s, -60.0 * s);
+            let btn = Rect::from_center_size(center, vec2(200.0 * s, 54.0 * s));
+            let focused = *switch == is_switch;
+            painter.rect_filled(btn, (4.0 * s) as u8, if focused { Color32::WHITE } else { Color32::from_white_alpha(25) });
+            painter.text(btn.center(), Align2::CENTER_CENTER, label, FontId::proportional(22.0 * s), if focused { Color32::BLACK } else { Color32::WHITE });
+            if ui.interact(btn, Id::new(("profile-imported", i)), Sense::click()).clicked() {
+                choice = Some(is_switch);
+            }
+        }
+        if let Some(pick) = choice
+            && let Mode::ProfileImported { switch, .. } = &mut self.mode
+        {
+            *switch = pick;
+            self.handle(ui.ctx(), Action::Confirm);
+        }
+    }
+
     fn draw_burn(&mut self, ui: &Ui, screen: Rect, s: f32) {
         let Mode::Burn(dialog) = &self.mode else { return };
         let painter = ui.painter();
@@ -5364,6 +5613,7 @@ impl eframe::App for App {
         self.poll_game(&ctx);
         self.poll_save_dirs();
         self.poll_backup();
+        self.poll_profile_job();
         self.update_launching(&ctx);
         self.update_video(&ctx);
         self.guard_focus(&ctx);
@@ -5397,6 +5647,7 @@ impl eframe::App for App {
         self.draw_font_manager(ui, screen, s);
         self.draw_disc_chooser(ui, screen, s);
         self.draw_disc_not_found(ui, screen, s);
+        self.draw_profile_imported(ui, screen, s);
         self.draw_burn(ui, screen, s);
         self.draw_toast(&painter, screen, s);
         self.draw_launching(ui, screen, s);

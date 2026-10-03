@@ -58,7 +58,7 @@ How YASAFF unpacks it (`unpack` and `install_package_in` in `appstore.rs`):
 
 - `yasaffConfig.json` can sit at the zip root, **or** inside a single top-level folder (e.g. `calculator/yasaffConfig.json`). YASAFF strips that folder.
 - `__MACOSX/` and `.DS_Store` are ignored. Paths that would escape the package are refused.
-- The package is unpacked to a staging folder, validated, then swapped into `<YASAFF data>/apps/<id>/`. On Linux that's `~/.local/share/yasaff/apps/<id>/`.
+- The package is unpacked to a staging folder, validated, then swapped into `<YASAFF data>/apps/<id>/`, where `<YASAFF data>` is the active profile's folder. On Linux that's `~/.local/share/yasaff/profiles/<profile>/apps/<id>/`.
 - Installing the same `id` again **replaces** the app (that's how updates work). You can't install over an app while it is running.
 - On Unix, the `run.<platform>.command` file and every file listed in `install.executables` get `chmod +x`.
 - Uninstalling deletes `apps/<id>/` but **keeps** `appdata/<id>/` (see §5).

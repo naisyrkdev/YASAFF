@@ -698,7 +698,7 @@ fn download(agent: &ureq::Agent, endpoint: &Endpoint, url: &str, size: u64, sha2
     Ok(())
 }
 
-fn unpack(zip_path: &Path, dir: &Path, marker: &str) -> Result<()> {
+pub(crate) fn unpack(zip_path: &Path, dir: &Path, marker: &str) -> Result<()> {
     let mut archive = zip::ZipArchive::new(fs::File::open(zip_path)?).context("the package is not a valid .zip")?;
     let names: Vec<PathBuf> = (0..archive.len())
         .map(|i| archive.by_index(i).ok().and_then(|f| f.enclosed_name()).context("the package has an unsafe file path"))

@@ -186,9 +186,7 @@ pub struct Library {
 
 impl Library {
     pub fn data_dir() -> PathBuf {
-        directories::ProjectDirs::from("", "", "yasaff")
-            .map(|d| d.data_dir().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("yasaff-data"))
+        crate::profiles::dir()
     }
 
     fn file(&self) -> PathBuf {

@@ -18,6 +18,7 @@ mod library;
 mod metadata;
 mod object3d;
 mod physical;
+mod profiles;
 mod saves;
 mod scan;
 mod settings;
