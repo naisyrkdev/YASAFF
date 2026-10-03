@@ -7,6 +7,7 @@ use crate::addons::{self, AddonHost};
 use crate::apps::{self, AppEntry};
 use crate::autostart;
 use crate::box3d;
+use crate::case3d;
 use crate::disc3d;
 use crate::fonts;
 use crate::i18n;
@@ -242,6 +243,8 @@ enum SettingRow {
     GameBackClear,
     GameSide,
     GameSideClear,
+    GameBooklet,
+    GameBookletClear,
     GameModel,
     GameModelUp,
     GameModelClear,
@@ -304,6 +307,8 @@ impl SettingRow {
             | R::GameBackClear
             | R::GameSide
             | R::GameSideClear
+            | R::GameBooklet
+            | R::GameBookletClear
             | R::GameModel
             | R::GameModelUp
             | R::GameModelClear
@@ -1462,6 +1467,7 @@ impl App {
                 (AssetKind::Top, R::GameTop, R::GameTopClear),
                 (AssetKind::Back, R::GameBack, R::GameBackClear),
                 (AssetKind::Side, R::GameSide, R::GameSideClear),
+                (AssetKind::Booklet, R::GameBooklet, R::GameBookletClear),
             ] {
                 rows.push(pick);
                 let Some(game) = game.filter(|g| g.asset(kind).is_some()) else { continue };
@@ -1556,6 +1562,9 @@ impl App {
         }
         if tiles_used && theme.tile_style.is_box() {
             rows.extend([R::BoxSpineLabel, R::BoxSpineColor, R::BoxSpineText, R::BoxTopColor]);
+            if theme.tile_style == TileStyle::Case {
+                rows.push(R::DiscKind);
+            }
         } else if tiles_used && theme.tile_style == TileStyle::Object {
             rows.push(R::ObjectColor);
         } else if tiles_used && theme.tile_style == TileStyle::Disc {
@@ -1915,6 +1924,7 @@ impl App {
             SettingRow::GameTop => self.pick_asset(AssetKind::Top),
             SettingRow::GameBack => self.pick_asset(AssetKind::Back),
             SettingRow::GameSide => self.pick_asset(AssetKind::Side),
+            SettingRow::GameBooklet => self.pick_asset(AssetKind::Booklet),
             SettingRow::GameModel => self.pick_asset(AssetKind::Model),
             SettingRow::GameVideo => self.pick_asset(AssetKind::Video),
             SettingRow::BubbleShuffle => {
@@ -1927,6 +1937,7 @@ impl App {
             | SettingRow::GameTopClear
             | SettingRow::GameBackClear
             | SettingRow::GameSideClear
+            | SettingRow::GameBookletClear
             | SettingRow::GameModelClear
             | SettingRow::GameVideoClear => {
                 let (kind, next) = match row {
@@ -1934,6 +1945,7 @@ impl App {
                     SettingRow::GameSpineClear => (AssetKind::Spine, SettingRow::GameSpine),
                     SettingRow::GameTopClear => (AssetKind::Top, SettingRow::GameTop),
                     SettingRow::GameSideClear => (AssetKind::Side, SettingRow::GameSide),
+                    SettingRow::GameBookletClear => (AssetKind::Booklet, SettingRow::GameBooklet),
                     SettingRow::GameModelClear => (AssetKind::Model, SettingRow::GameModel),
                     _ => (AssetKind::Back, SettingRow::GameBack),
                 };
@@ -2624,6 +2636,7 @@ impl App {
             AssetKind::Top => tr!("Select box top image"),
             AssetKind::Back => tr!("Select back cover image"),
             AssetKind::Side => tr!("Select right side image (the edge opposite the spine)"),
+            AssetKind::Booklet => tr!("Select instruction booklet image"),
             AssetKind::Model | AssetKind::Video => unreachable!(),
         };
         let Some(path) = rfd::FileDialog::new().set_title(title).add_filter(tr!("Images"), IMAGE_EXTS).pick_file() else {
@@ -3057,6 +3070,7 @@ impl App {
                     }
                     TileStyle::FlatBox => BoxShape::fit(rect, size).outline().to_vec(),
                     TileStyle::Model => box3d::outline(rect, size, box3d::REST_YAW),
+                    TileStyle::Case => case3d::outline(rect, size, case3d::Pose::CLOSED),
                     TileStyle::Disc => disc3d::outline(rect, self.disc_pose(usize::MAX)),
                     TileStyle::Object => {
                         let (floor, radius) = object_floor(rect);
@@ -3276,6 +3290,7 @@ impl App {
             TileStyle::Model => self.paint_model(ui, i, rect, s, focus),
             TileStyle::Object => self.paint_object(ui, i, rect, s, focus),
             TileStyle::Disc => self.paint_disc(ui, i, rect, s, focus),
+            TileStyle::Case => self.paint_case(ui, i, rect, s, focus),
         }
     }
 
@@ -3425,9 +3440,6 @@ impl App {
     }
 
     fn paint_model(&self, ui: &Ui, i: usize, rect: Rect, s: f32, focus: f32) {
-        let game = self.library.games.get(i);
-        let defaults = &self.theme().settings.boxes;
-        let look = game.map_or_else(|| defaults.clone(), |g| defaults.with(&g.box_style));
         let yaw = match &self.mode {
             Mode::CoverEditor(editor) if i == self.selected => match editor.kind {
                 AssetKind::Back => box3d::REST_YAW + std::f32::consts::PI,
@@ -3436,6 +3448,14 @@ impl App {
             },
             _ => self.turn(i, box3d::REST_YAW),
         };
+        let stroke = (i == self.selected).then(|| Stroke::new(3.0 * s, Color32::WHITE.gamma_multiply(focus.max(0.4))));
+        self.with_box_art(i, |art, look| box3d::paint(ui, rect, look.size_mm(), yaw, art, vec2(0.0, 8.0 * s), stroke));
+    }
+
+    fn with_box_art<R>(&self, i: usize, f: impl FnOnce(&box3d::Art, &crate::theme::BoxSettings) -> R) -> R {
+        let game = self.library.games.get(i);
+        let defaults = &self.theme().settings.boxes;
+        let look = game.map_or_else(|| defaults.clone(), |g| defaults.with(&g.box_style));
 
         use box3d::{Fill, Label};
         let placeholder = game.map_or(Color32::from_rgb(0x2a, 0x2d, 0x34), |g| placeholder_color(&g.name));
@@ -3466,8 +3486,33 @@ impl App {
             side: image(AssetKind::Side, look.top_color),
             plain: look.top_color,
         };
+        f(&art, &look)
+    }
+
+    fn paint_case(&self, ui: &Ui, i: usize, rect: Rect, s: f32, focus: f32) {
+        let pose = match &self.mode {
+            Mode::CoverEditor(editor) if i == self.selected && editor.kind == AssetKind::Booklet => case3d::Pose::opening(1.0, 0.0),
+            Mode::CoverEditor(_) => case3d::Pose::CLOSED,
+            _ => {
+                let ctx = ui.ctx();
+                let progress = ctx.animate_bool_with_time(Id::new(("case-open", i)), i == self.selected, case3d::OPEN_TIME);
+                let sway = ctx.input(|input| input.time) as f32 / case3d::SWAY_PERIOD * std::f32::consts::TAU;
+                case3d::Pose::opening(progress, sway)
+            }
+        };
         let stroke = (i == self.selected).then(|| Stroke::new(3.0 * s, Color32::WHITE.gamma_multiply(focus.max(0.4))));
-        box3d::paint(ui, rect, look.size_mm(), yaw, &art, vec2(0.0, 8.0 * s), stroke);
+        let game = self.library.games.get(i);
+        let placeholder = game.map_or(Color32::from_rgb(0x2a, 0x2d, 0x34), |g| placeholder_color(&g.name));
+        let booklet = match game.and_then(|g| Some((g.booklet.as_deref().or(g.cover.as_deref())?, g))) {
+            Some((path, g)) => box3d::Fill::Cover(path, placeholder, g.placement(if g.booklet.is_some() { AssetKind::Booklet } else { AssetKind::Cover })),
+            None => box3d::Fill::Color(placeholder),
+        };
+        self.with_box_art(i, |case, look| {
+            self.with_disc_art(i, |disc| {
+                let art = case3d::Art { case, disc, booklet, plastic: look.top_color };
+                case3d::paint(ui, rect, look.size_mm(), pose, &art, Some(vec2(0.0, 8.0 * s)), stroke);
+            })
+        });
     }
 
     fn disc_pose(&self, i: usize) -> disc3d::Pose {
@@ -3477,6 +3522,11 @@ impl App {
     }
 
     fn paint_disc(&self, ui: &Ui, i: usize, rect: Rect, s: f32, focus: f32) {
+        let stroke = (i == self.selected).then(|| Stroke::new(3.0 * s, Color32::WHITE.gamma_multiply(focus.max(0.4))));
+        self.with_disc_art(i, |art| disc3d::paint(ui, rect, self.disc_pose(i), art, vec2(0.0, 8.0 * s), stroke));
+    }
+
+    fn with_disc_art<R>(&self, i: usize, f: impl FnOnce(&disc3d::Art) -> R) -> R {
         let game = self.library.games.get(i);
         let text = match game {
             Some(g) => initials(&g.name),
@@ -3493,8 +3543,7 @@ impl App {
             },
             label: cover.is_none().then(|| disc3d::Label { text: &text, font, color: Color32::WHITE, size: 0.2 }),
         };
-        let stroke = (i == self.selected).then(|| Stroke::new(3.0 * s, Color32::WHITE.gamma_multiply(focus.max(0.4))));
-        disc3d::paint(ui, rect, self.disc_pose(i), &art, vec2(0.0, 8.0 * s), stroke);
+        f(&art)
     }
 
     fn draw_details(&self, ui: &Ui, pos: egui::Pos2, s: f32, start_button: bool) -> bool {
@@ -4070,6 +4119,7 @@ impl App {
             AssetKind::Top => tr!("Top image size and position · {name}", name = game.name),
             AssetKind::Back => tr!("Back cover size and position · {name}", name = game.name),
             AssetKind::Side => tr!("Side image size and position · {name}", name = game.name),
+            AssetKind::Booklet => tr!("Booklet image size and position · {name}", name = game.name),
             _ => tr!("Cover size and position · {name}", name = game.name),
         };
         painter.text(dialog.left_top() + vec2(40.0 * s, 32.0 * s), Align2::LEFT_TOP, title, FontId::proportional(30.0 * s), Color32::WHITE);
@@ -4584,6 +4634,15 @@ impl App {
                 (tr!("Right side image").into(), sub, Action(tr!("Choose…")))
             }
             SettingRow::GameSideClear => (tr!("Remove right side image").into(), "", Action(tr!("Remove"))),
+            SettingRow::GameBooklet => {
+                let sub = if has(|g| g.booklet.is_some()) {
+                    tr!("Inside the cover of a 3D opening case")
+                } else {
+                    tr!("None; the booklet shows the cover")
+                };
+                (tr!("Instruction booklet image").into(), sub, Action(tr!("Choose…")))
+            }
+            SettingRow::GameBookletClear => (tr!("Remove instruction booklet image").into(), "", Action(tr!("Remove"))),
             SettingRow::GameModel => {
                 let sub = if has(|g| g.model.is_some()) {
                     tr!("STL, OBJ, PLY, glTF / GLB or 3MF; big models are simplified")

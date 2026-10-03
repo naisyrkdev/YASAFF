@@ -716,5 +716,12 @@
   "Assign each a controller button above, then place it in the top or bottom bar": "Asigna a cada uno un botón del mando arriba y colócalo en la barra superior o inferior",
   "Library tile": "Mosaico de la biblioteca",
   "Left/Right picks where it shows: a library tile, or the top or bottom bar": "Izquierda/Derecha elige dónde se muestra: un mosaico de la biblioteca, o la barra superior o inferior",
-  "Assign it a controller button above to place it in a bar": "Asígnale un botón del mando arriba para colocarlo en una barra"
+  "Assign it a controller button above to place it in a bar": "Asígnale un botón del mando arriba para colocarlo en una barra",
+  "3D opening cases": "Cajas 3D que se abren",
+  "Select instruction booklet image": "Seleccionar imagen del manual",
+  "Inside the cover of a 3D opening case": "Dentro de la tapa de una caja 3D que se abre",
+  "None; the booklet shows the cover": "Ninguna; el manual muestra la portada",
+  "Instruction booklet image": "Imagen del manual",
+  "Remove instruction booklet image": "Quitar imagen del manual",
+  "Booklet image size and position · {name}": "Tamaño y posición de la imagen del manual · {name}"
 }

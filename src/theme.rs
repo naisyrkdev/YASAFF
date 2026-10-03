@@ -58,10 +58,11 @@ pub enum TileStyle {
     Model,
     Object,
     Disc,
+    Case,
 }
 
 impl TileStyle {
-    pub const ALL: [Self; 6] = [Self::Flat, Self::Cover, Self::FlatBox, Self::Model, Self::Object, Self::Disc];
+    pub const ALL: [Self; 7] = [Self::Flat, Self::Cover, Self::FlatBox, Self::Model, Self::Case, Self::Object, Self::Disc];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -71,11 +72,12 @@ impl TileStyle {
             Self::Model => tr!("3D model boxes"),
             Self::Object => tr!("3D objects"),
             Self::Disc => tr!("3D discs"),
+            Self::Case => tr!("3D opening cases"),
         }
     }
 
     pub fn is_box(self) -> bool {
-        matches!(self, Self::FlatBox | Self::Model)
+        matches!(self, Self::FlatBox | Self::Model | Self::Case)
     }
 
     pub fn aspect(self, [w, h, _]: [f32; 3]) -> f32 {

@@ -28,6 +28,8 @@ pub struct Game {
     pub back: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub side: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub booklet: Option<PathBuf>,
     #[serde(default)]
     pub model: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -46,6 +48,8 @@ pub struct Game {
     pub back_placement: CoverPlacement,
     #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
     pub side_placement: CoverPlacement,
+    #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
+    pub booklet_placement: CoverPlacement,
     #[serde(default)]
     pub background: Option<PathBuf>,
     #[serde(default)]
@@ -79,6 +83,7 @@ impl Game {
             AssetKind::Top => &mut self.top,
             AssetKind::Back => &mut self.back,
             AssetKind::Side => &mut self.side,
+            AssetKind::Booklet => &mut self.booklet,
             AssetKind::Model => &mut self.model,
             AssetKind::Video => &mut self.video,
         }
@@ -92,6 +97,7 @@ impl Game {
             AssetKind::Top => self.top.as_deref(),
             AssetKind::Back => self.back.as_deref(),
             AssetKind::Side => self.side.as_deref(),
+            AssetKind::Booklet => self.booklet.as_deref(),
             AssetKind::Model => self.model.as_deref(),
             AssetKind::Video => self.video.as_deref(),
         }
@@ -103,6 +109,7 @@ impl Game {
             AssetKind::Top => self.top_placement,
             AssetKind::Back => self.back_placement,
             AssetKind::Side => self.side_placement,
+            AssetKind::Booklet => self.booklet_placement,
             _ => self.cover_placement,
         }
     }
@@ -113,6 +120,7 @@ impl Game {
             AssetKind::Top => &mut self.top_placement,
             AssetKind::Back => &mut self.back_placement,
             AssetKind::Side => &mut self.side_placement,
+            AssetKind::Booklet => &mut self.booklet_placement,
             _ => &mut self.cover_placement,
         }
     }
@@ -148,6 +156,7 @@ pub enum AssetKind {
     Top,
     Back,
     Side,
+    Booklet,
     Model,
     Video,
 }
@@ -161,6 +170,7 @@ impl AssetKind {
             AssetKind::Top => "top",
             AssetKind::Back => "back",
             AssetKind::Side => "side",
+            AssetKind::Booklet => "booklet",
             AssetKind::Model => "model",
             AssetKind::Video => "video",
         }
@@ -243,6 +253,7 @@ impl Library {
             top: None,
             back: None,
             side: None,
+            booklet: None,
             model: None,
             video: None,
             model_up: ModelUp::default(),
@@ -252,6 +263,7 @@ impl Library {
             top_placement: CoverPlacement::default(),
             back_placement: CoverPlacement::default(),
             side_placement: CoverPlacement::default(),
+            booklet_placement: CoverPlacement::default(),
             last_played: None,
             title_font: None,
             app_id: None,
@@ -314,7 +326,7 @@ impl Library {
     pub fn remove(&mut self, index: usize) {
         let assets = self.assets_dir();
         let game = self.games.remove(index);
-        for path in [game.cover, game.background, game.spine, game.top, game.back, game.side, game.model, game.video].into_iter().flatten() {
+        for path in [game.cover, game.background, game.spine, game.top, game.back, game.side, game.booklet, game.model, game.video].into_iter().flatten() {
             remove_if_owned(&assets, &path);
         }
     }

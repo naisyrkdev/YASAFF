@@ -64,6 +64,17 @@ struct View {
     center: Pos2,
     scale: f32,
     axes: [V3; 3],
+    offset: V3,
+    distance: f32,
+}
+
+#[derive(Clone, Copy)]
+pub struct Placement {
+    pub center: Pos2,
+    pub scale: f32,
+    pub axes: [V3; 3],
+    pub offset: V3,
+    pub distance: f32,
 }
 
 impl View {
@@ -77,16 +88,24 @@ impl View {
         let tilt = |p: V3| v3(p.x, p.y * ct - p.z * st, p.y * st + p.z * ct);
         let axes = [v3(1.0, 0.0, 0.0), v3(0.0, 1.0, 0.0), v3(0.0, 0.0, 1.0)].map(|a| tilt(spin(a)));
         let scale = rect.width().min(rect.height()) / (2.0 * R_OUTER * 1.18);
-        View { center: rect.center(), scale, axes }
+        View { center: rect.center(), scale, axes, offset: v3(0.0, 0.0, 0.0), distance: DISTANCE }
     }
 
     fn rotate(&self, p: V3) -> V3 {
         self.axes[0] * p.x + self.axes[1] * p.y + self.axes[2] * p.z
     }
 
+    fn at(&self, p: V3) -> V3 {
+        self.rotate(p) + self.offset
+    }
+
+    fn camera(&self) -> V3 {
+        v3(0.0, 0.0, self.distance)
+    }
+
     fn project(&self, p: V3) -> Pos2 {
-        let r = self.rotate(p);
-        let k = self.scale * DISTANCE / (DISTANCE - r.z);
+        let r = self.at(p);
+        let k = self.scale * self.distance / (self.distance - r.z);
         pos2(self.center.x + r.x * k, self.center.y - r.y * k)
     }
 
@@ -99,29 +118,33 @@ impl View {
     }
 }
 
-fn camera() -> V3 {
-    v3(0.0, 0.0, DISTANCE)
-}
-
 pub fn outline(rect: Rect, pose: Pose) -> Vec<Pos2> {
     View::new(rect, pose).outline()
 }
 
 pub fn paint(ui: &Ui, rect: Rect, pose: Pose, art: &Art, shadow: Vec2, stroke: Option<Stroke>) {
-    let view = View::new(rect, pose);
+    paint_view(ui, &View::new(rect, pose), art, shadow, stroke);
+}
+
+pub fn paint_placed(ui: &Ui, placement: &Placement, art: &Art, shadow: Vec2) {
+    let Placement { center, scale, axes, offset, distance } = *placement;
+    paint_view(ui, &View { center, scale, axes, offset, distance }, art, shadow, None);
+}
+
+fn paint_view(ui: &Ui, view: &View, art: &Art, shadow: Vec2, stroke: Option<Stroke>) {
     let painter = ui.painter();
     let hull = view.outline();
     let shadow_points = hull.iter().map(|p| *p + shadow).collect();
     painter.add(Shape::convex_polygon(shadow_points, Color32::from_black_alpha(90), Stroke::NONE));
 
-    paint_edge(ui, &view, R_HOLE, -1.0);
-    paint_edge(ui, &view, R_OUTER, 1.0);
+    paint_edge(ui, view, R_HOLE, -1.0);
+    paint_edge(ui, view, R_OUTER, 1.0);
     let normal = view.rotate(v3(0.0, 0.0, 1.0));
-    if normal.dot(camera() - view.rotate(v3(0.0, 0.0, HALF_THICKNESS))) > 0.0 {
+    if normal.dot(view.camera() - view.at(v3(0.0, 0.0, HALF_THICKNESS))) > 0.0 {
         let brightness = 0.55 + 0.45 * normal.dot(LIGHT.normalized()).max(0.0);
-        paint_label_side(ui, &view, art, brightness);
+        paint_label_side(ui, view, art, brightness);
     } else {
-        paint_data_side(ui, &view, art.kind);
+        paint_data_side(ui, view, art.kind);
     }
     if let Some(stroke) = stroke {
         painter.add(Shape::closed_line(hull, stroke));
@@ -135,7 +158,7 @@ fn paint_edge(ui: &Ui, view: &View, r: f32, outward: f32) {
         let (a0, a1) = (i as f32 / SEGMENTS as f32 * TAU, (i + 1) as f32 / SEGMENTS as f32 * TAU);
         let (s, c) = ((a0 + a1) / 2.0).sin_cos();
         let normal = view.rotate(v3(c, s, 0.0) * outward);
-        if normal.dot(camera() - view.rotate(v3(c * r, s * r, 0.0))) <= 0.0 {
+        if normal.dot(view.camera() - view.at(v3(c * r, s * r, 0.0))) <= 0.0 {
             continue;
         }
         let color = shade(EDGE, 0.5 + 0.5 * normal.dot(light).max(0.0));
@@ -257,15 +280,15 @@ fn paint_data_side(ui: &Ui, view: &View, kind: DiscKind) {
 }
 
 fn shine(view: &View, normal: V3, p: V3, kind: DiscKind, tracks: bool) -> Color32 {
-    let at = view.rotate(p);
-    let to_eye = (camera() - at).normalized();
+    let at = view.at(p);
+    let to_eye = (view.camera() - at).normalized();
     let reflected = normal * (2.0 * normal.dot(to_eye)) - to_eye;
     let room = 0.2 + 0.55 * (reflected.y * 0.5 + 0.5).clamp(0.0, 1.0);
     let mut rgb = kind.tint().map(|c| c * room);
     let radial = view.rotate(v3(p.x, p.y, 0.0).normalized());
     let along = view.rotate(v3(-p.y, p.x, 0.0).normalized());
     for lamp in LAMPS {
-        let to_lamp = (lamp - at).normalized();
+        let to_lamp = (lamp + view.offset - at).normalized();
         let highlight = reflected.dot(to_lamp).max(0.0).powi(60) * 1.2;
         rgb = rgb.map(|c| c + highlight);
         if !tracks {
@@ -312,7 +335,7 @@ mod tests {
     }
 
     fn label_side_visible(view: &View) -> bool {
-        view.rotate(v3(0.0, 0.0, 1.0)).dot(camera() - view.rotate(v3(0.0, 0.0, HALF_THICKNESS))) > 0.0
+        view.rotate(v3(0.0, 0.0, 1.0)).dot(view.camera() - view.at(v3(0.0, 0.0, HALF_THICKNESS))) > 0.0
     }
 
     #[test]

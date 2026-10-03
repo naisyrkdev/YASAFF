@@ -8,7 +8,8 @@ use std::path::Path;
 
 pub const REST_YAW: f32 = 0.5;
 const PITCH: f32 = 0.25;
-const DISTANCE: f32 = 4.0;
+pub(crate) const DISTANCE: f32 = 4.0;
+const LIGHT: V3 = v3(-0.15, 0.3, 0.94);
 const SUBDIVISIONS: usize = 8;
 
 pub enum Fill<'a> {
@@ -82,10 +83,10 @@ impl V3 {
     }
 }
 
-struct View {
+pub(crate) struct View {
     half: V3,
-    center: Pos2,
-    scale: f32,
+    pub center: Pos2,
+    pub scale: f32,
     yaw: (f32, f32),
     pitch: (f32, f32),
 }
@@ -96,18 +97,22 @@ impl View {
         let half = v3(w / h / 2.0, 0.5, d / h / 2.0);
         let turning_width = 2.0 * (half.x * half.x + half.z * half.z).sqrt();
         let scale = (rect.height() / 1.15).min(rect.width() / (turning_width * 1.12));
-        let (sin_y, cos_y) = yaw.sin_cos();
-        let (sin_p, cos_p) = PITCH.sin_cos();
-        View { half, center: rect.center(), scale, yaw: (sin_y, cos_y), pitch: (sin_p, cos_p) }
+        Self::placed(rect.center(), scale, half, yaw)
     }
 
-    fn rotate(&self, p: V3) -> V3 {
+    pub(crate) fn placed(center: Pos2, scale: f32, half: V3, yaw: f32) -> Self {
+        let (sin_y, cos_y) = yaw.sin_cos();
+        let (sin_p, cos_p) = PITCH.sin_cos();
+        View { half, center, scale, yaw: (sin_y, cos_y), pitch: (sin_p, cos_p) }
+    }
+
+    pub(crate) fn rotate(&self, p: V3) -> V3 {
         let ((sy, cy), (sp, cp)) = (self.yaw, self.pitch);
         let (x, z) = (p.x * cy + p.z * sy, -p.x * sy + p.z * cy);
         v3(x, p.y * cp - z * sp, p.y * sp + z * cp)
     }
 
-    fn project(&self, p: V3) -> Pos2 {
+    pub(crate) fn project(&self, p: V3) -> Pos2 {
         let r = self.rotate(p);
         let k = self.scale * DISTANCE / (DISTANCE - r.z);
         pos2(self.center.x + r.x * k, self.center.y - r.y * k)
@@ -124,9 +129,9 @@ impl View {
     }
 }
 
-struct Face {
-    corners: [V3; 4],
-    normal: V3,
+pub(crate) struct Face {
+    pub corners: [V3; 4],
+    pub normal: V3,
 }
 
 impl Face {
@@ -142,6 +147,17 @@ impl Face {
         (self.corners[0] + self.corners[2]) * 0.5
     }
 
+    pub(crate) fn flipped(&self) -> Face {
+        let [lt, rt, rb, lb] = self.corners;
+        Face { corners: [rt, lt, lb, rb], normal: self.normal * -1.0 }
+    }
+
+    pub(crate) fn lit(&self, view: &View) -> Option<f32> {
+        let normal = view.rotate(self.normal);
+        let camera = v3(0.0, 0.0, DISTANCE);
+        (normal.dot(camera - view.rotate(self.center())) > 0.0).then(|| 0.55 + 0.45 * normal.dot(LIGHT.normalized()).max(0.0))
+    }
+
     fn at(&self, u: f32, v: f32) -> V3 {
         let [lt, rt, rb, lb] = self.corners;
         let top = lt + (rt - lt) * u;
@@ -151,14 +167,18 @@ impl Face {
 }
 
 fn faces(h: V3) -> [Face; 6] {
-    let (x, y, z) = (h.x, h.y, h.z);
+    cuboid(h * -1.0, h)
+}
+
+pub(crate) fn cuboid(min: V3, max: V3) -> [Face; 6] {
+    let ([x0, y0, z0], [x1, y1, z1]) = ([min.x, min.y, min.z], [max.x, max.y, max.z]);
     [
-        Face { corners: [v3(-x, y, z), v3(x, y, z), v3(x, -y, z), v3(-x, -y, z)], normal: v3(0.0, 0.0, 1.0) },
-        Face { corners: [v3(x, y, -z), v3(-x, y, -z), v3(-x, -y, -z), v3(x, -y, -z)], normal: v3(0.0, 0.0, -1.0) },
-        Face { corners: [v3(-x, y, -z), v3(-x, y, z), v3(-x, -y, z), v3(-x, -y, -z)], normal: v3(-1.0, 0.0, 0.0) },
-        Face { corners: [v3(x, y, z), v3(x, y, -z), v3(x, -y, -z), v3(x, -y, z)], normal: v3(1.0, 0.0, 0.0) },
-        Face { corners: [v3(-x, y, -z), v3(x, y, -z), v3(x, y, z), v3(-x, y, z)], normal: v3(0.0, 1.0, 0.0) },
-        Face { corners: [v3(-x, -y, z), v3(x, -y, z), v3(x, -y, -z), v3(-x, -y, -z)], normal: v3(0.0, -1.0, 0.0) },
+        Face { corners: [v3(x0, y1, z1), v3(x1, y1, z1), v3(x1, y0, z1), v3(x0, y0, z1)], normal: v3(0.0, 0.0, 1.0) },
+        Face { corners: [v3(x1, y1, z0), v3(x0, y1, z0), v3(x0, y0, z0), v3(x1, y0, z0)], normal: v3(0.0, 0.0, -1.0) },
+        Face { corners: [v3(x0, y1, z0), v3(x0, y1, z1), v3(x0, y0, z1), v3(x0, y0, z0)], normal: v3(-1.0, 0.0, 0.0) },
+        Face { corners: [v3(x1, y1, z1), v3(x1, y1, z0), v3(x1, y0, z0), v3(x1, y0, z1)], normal: v3(1.0, 0.0, 0.0) },
+        Face { corners: [v3(x0, y1, z0), v3(x1, y1, z0), v3(x1, y1, z1), v3(x0, y1, z1)], normal: v3(0.0, 1.0, 0.0) },
+        Face { corners: [v3(x0, y0, z1), v3(x1, y0, z1), v3(x1, y0, z0), v3(x0, y0, z0)], normal: v3(0.0, -1.0, 0.0) },
     ]
 }
 
@@ -173,8 +193,6 @@ pub fn paint(ui: &Ui, rect: Rect, size: [f32; 3], yaw: f32, art: &Art, shadow: V
     let shadow_points = hull.iter().map(|p| *p + shadow).collect();
     painter.add(Shape::convex_polygon(shadow_points, Color32::from_black_alpha(90), Stroke::NONE));
 
-    let camera = v3(0.0, 0.0, DISTANCE);
-    let light = v3(-0.15, 0.3, 0.94).normalized();
     let plain = Fill::Color(art.plain);
     let fills = [
         (&art.front, art.front_label.as_ref()),
@@ -185,11 +203,7 @@ pub fn paint(ui: &Ui, rect: Rect, size: [f32; 3], yaw: f32, art: &Art, shadow: V
         (&plain, None),
     ];
     for (face, (fill, label)) in faces(view.half).iter().zip(fills) {
-        let normal = view.rotate(face.normal);
-        if normal.dot(camera - view.rotate(face.center())) <= 0.0 {
-            continue;
-        }
-        let brightness = 0.55 + 0.45 * normal.dot(light).max(0.0);
+        let Some(brightness) = face.lit(&view) else { continue };
         paint_face(ui, &view, face, fill, brightness);
         if let Some(label) = label {
             paint_label(ui, &view, face, label, brightness);
@@ -200,7 +214,7 @@ pub fn paint(ui: &Ui, rect: Rect, size: [f32; 3], yaw: f32, art: &Art, shadow: V
     }
 }
 
-fn paint_face(ui: &Ui, view: &View, face: &Face, fill: &Fill, brightness: f32) {
+pub(crate) fn paint_face(ui: &Ui, view: &View, face: &Face, fill: &Fill, brightness: f32) {
     let size = vec2(face.width(), face.height());
     let whole = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
     let (path, fallback, placement, can_turn) = match fill {
@@ -268,7 +282,7 @@ pub fn place(image: Vec2, target: Vec2, placement: CoverPlacement) -> (Rect, Rec
     (shown, uv)
 }
 
-fn paint_label(ui: &Ui, view: &View, face: &Face, label: &Label, brightness: f32) {
+pub(crate) fn paint_label(ui: &Ui, view: &View, face: &Face, label: &Label, brightness: f32) {
     let [lt, rt, _, lb] = face.corners;
     let (along, across, long, short) = if label.down {
         ((lb - lt).normalized(), (lt - rt).normalized(), face.height(), face.width())
@@ -365,11 +379,7 @@ mod tests {
     #[test]
     fn resting_box_shows_front_spine_and_top() {
         let view = View::new(Rect::from_min_size(Pos2::ZERO, vec2(200.0, 200.0)), [135.0, 170.0, 14.0], REST_YAW);
-        let camera = v3(0.0, 0.0, DISTANCE);
-        let visible: Vec<bool> = faces(view.half)
-            .iter()
-            .map(|f| view.rotate(f.normal).dot(camera - view.rotate(f.center())) > 0.0)
-            .collect();
+        let visible: Vec<bool> = faces(view.half).iter().map(|f| f.lit(&view).is_some()).collect();
         assert_eq!(visible, [true, false, true, false, true, false]);
     }
 }

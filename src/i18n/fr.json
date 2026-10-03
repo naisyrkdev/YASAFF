@@ -716,5 +716,12 @@
   "Assign each a controller button above, then place it in the top or bottom bar": "Attribuez à chacun un bouton de manette ci-dessus, puis placez-le dans la barre du haut ou du bas",
   "Library tile": "Tuile de la bibliothèque",
   "Left/Right picks where it shows: a library tile, or the top or bottom bar": "Gauche/Droite choisit où il s'affiche : une tuile de la bibliothèque, ou la barre du haut ou du bas",
-  "Assign it a controller button above to place it in a bar": "Attribuez-lui un bouton de manette ci-dessus pour le placer dans une barre"
+  "Assign it a controller button above to place it in a bar": "Attribuez-lui un bouton de manette ci-dessus pour le placer dans une barre",
+  "3D opening cases": "Boîtiers 3D qui s’ouvrent",
+  "Select instruction booklet image": "Choisir l’image du livret",
+  "Inside the cover of a 3D opening case": "Dans la couverture d’un boîtier 3D qui s’ouvre",
+  "None; the booklet shows the cover": "Aucune ; le livret montre la jaquette",
+  "Instruction booklet image": "Image du livret",
+  "Remove instruction booklet image": "Retirer l’image du livret",
+  "Booklet image size and position · {name}": "Taille et position de l’image du livret · {name}"
 }

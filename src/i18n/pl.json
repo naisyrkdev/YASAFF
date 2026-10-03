@@ -726,5 +726,12 @@
   "Assign each a controller button above, then place it in the top or bottom bar": "Przypisz każdemu przycisk kontrolera powyżej, a potem umieść go na górnym lub dolnym pasku",
   "Library tile": "Kafelek w bibliotece",
   "Left/Right picks where it shows: a library tile, or the top or bottom bar": "Lewo/Prawo wybiera, gdzie się pojawia: kafelek w bibliotece albo górny lub dolny pasek",
-  "Assign it a controller button above to place it in a bar": "Przypisz mu przycisk kontrolera powyżej, aby umieścić go na pasku"
+  "Assign it a controller button above to place it in a bar": "Przypisz mu przycisk kontrolera powyżej, aby umieścić go na pasku",
+  "3D opening cases": "Otwierane pudełka 3D",
+  "Select instruction booklet image": "Wybierz obraz instrukcji",
+  "Inside the cover of a 3D opening case": "W okładce otwieranego pudełka 3D",
+  "None; the booklet shows the cover": "Brak; instrukcja pokazuje okładkę",
+  "Instruction booklet image": "Obraz instrukcji",
+  "Remove instruction booklet image": "Usuń obraz instrukcji",
+  "Booklet image size and position · {name}": "Rozmiar i położenie obrazu instrukcji · {name}"
 }
