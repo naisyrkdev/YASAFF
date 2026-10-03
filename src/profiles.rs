@@ -35,7 +35,7 @@ pub struct Imported {
     pub missing: Vec<String>,
 }
 
-fn root() -> PathBuf {
+pub(crate) fn root() -> PathBuf {
     directories::ProjectDirs::from("", "", "yasaff")
         .map(|d| d.data_dir().to_path_buf())
         .unwrap_or_else(|| PathBuf::from("yasaff-data"))
@@ -324,7 +324,7 @@ fn missing_in_game(game: &Game) -> Vec<String> {
     if let Some(dir) = game.save_dir.as_ref().filter(|d| !d.is_dir()) {
         out.push(tr!("{game}: save folder {path}", game = name, path = dir.display()));
     }
-    let assets = [&game.cover, &game.background, &game.spine, &game.top, &game.back, &game.side, &game.booklet, &game.model, &game.video];
+    let assets = [&game.cover, &game.background, &game.spine, &game.top, &game.back, &game.side, &game.bottom, &game.booklet, &game.model, &game.video];
     for path in assets.into_iter().flatten().filter(|p| !p.exists()) {
         out.push(tr!("{game}: image or video {path}", game = name, path = path.display()));
     }
@@ -337,8 +337,12 @@ fn looks_like_path(s: &str) -> bool {
     !crate::launcher::is_uri(s) && (Path::new(s).is_absolute() || s.starts_with('/') || drive)
 }
 
+pub fn exe() -> Option<PathBuf> {
+    std::env::var_os("APPIMAGE").map(PathBuf::from).or_else(|| std::env::current_exe().ok())
+}
+
 pub fn restart() -> ! {
-    let exe = std::env::var_os("APPIMAGE").map(PathBuf::from).or_else(|| std::env::current_exe().ok());
+    let exe = exe();
     let mut args = std::env::args().skip(1).peekable();
     let mut kept = Vec::new();
     while let Some(arg) = args.next() {

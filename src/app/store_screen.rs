@@ -348,6 +348,10 @@ impl App {
     }
 
     fn add_installed(&mut self, manifest: Manifest) -> usize {
+        self.add_to_library(manifest, true)
+    }
+
+    pub(super) fn add_to_library(&mut self, manifest: Manifest, announce: bool) -> usize {
         let id = manifest.id.clone();
         let dir = appstore::install_dir(&id);
         let run = manifest.run_entry().cloned().unwrap_or_default();
@@ -372,10 +376,10 @@ impl App {
         game.app_id = Some(id.clone());
         game.save_dir = Some(appstore::app_data_dir(&id));
         (game.target, game.args) = (target, run.args);
-        let assets = [(AssetKind::Cover, &manifest.icon, game.cover.is_none()), (AssetKind::Background, &manifest.background, game.background.is_none())];
-        for (kind, file, empty) in assets {
+        let assets = [(AssetKind::Cover, manifest.icon.as_ref()), (AssetKind::Background, manifest.background.as_ref())];
+        for (kind, file) in assets.into_iter().chain(manifest.artwork.assets()) {
             if let Some(file) = file
-                && empty
+                && self.library.games[i].asset(kind).is_none()
                 && let Err(e) = self.library.set_asset(i, kind, &dir.join(file))
             {
                 eprintln!("{id}: {e:#}");
@@ -383,11 +387,13 @@ impl App {
         }
         self.save();
         let (name, version) = (&manifest.name, &manifest.version);
-        self.notify(if updated {
-            tr!("Updated {name} {version}", name = name, version = version)
-        } else {
-            tr!("Installed {name} {version}", name = name, version = version)
-        });
+        if announce {
+            self.notify(if updated {
+                tr!("Updated {name} {version}", name = name, version = version)
+            } else {
+                tr!("Installed {name} {version}", name = name, version = version)
+            });
+        }
         self.store.installed.insert(id.clone(), manifest);
         self.library.games.iter().position(|g| g.app_id.as_deref() == Some(&id)).unwrap_or(i)
     }

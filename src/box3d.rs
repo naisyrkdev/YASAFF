@@ -7,7 +7,7 @@ use std::ops::{Add, Mul, Sub};
 use std::path::Path;
 
 pub const REST_YAW: f32 = 0.5;
-const PITCH: f32 = 0.25;
+pub const PITCH: f32 = 0.25;
 pub(crate) const DISTANCE: f32 = 4.0;
 const LIGHT: V3 = v3(-0.15, 0.3, 0.94);
 const SUBDIVISIONS: usize = 8;
@@ -34,6 +34,7 @@ pub struct Art<'a> {
     pub spine_label: Option<Label<'a>>,
     pub top: Fill<'a>,
     pub side: Fill<'a>,
+    pub bottom: Fill<'a>,
     pub plain: Color32,
 }
 
@@ -93,11 +94,17 @@ pub(crate) struct View {
 
 impl View {
     fn new(rect: Rect, size: [f32; 3], yaw: f32) -> Self {
+        Self::tilted(rect, size, yaw, PITCH)
+    }
+
+    fn tilted(rect: Rect, size: [f32; 3], yaw: f32, pitch: f32) -> Self {
         let [w, h, d] = size;
         let half = v3(w / h / 2.0, 0.5, d / h / 2.0);
         let turning_width = 2.0 * (half.x * half.x + half.z * half.z).sqrt();
         let scale = (rect.height() / 1.15).min(rect.width() / (turning_width * 1.12));
-        Self::placed(rect.center(), scale, half, yaw)
+        let mut view = Self::placed(rect.center(), scale, half, yaw);
+        view.pitch = pitch.sin_cos();
+        view
     }
 
     pub(crate) fn placed(center: Pos2, scale: f32, half: V3, yaw: f32) -> Self {
@@ -186,21 +193,20 @@ pub fn outline(rect: Rect, size: [f32; 3], yaw: f32) -> Vec<Pos2> {
     convex_hull(&View::new(rect, size, yaw).corners())
 }
 
-pub fn paint(ui: &Ui, rect: Rect, size: [f32; 3], yaw: f32, art: &Art, shadow: Vec2, stroke: Option<Stroke>) {
-    let view = View::new(rect, size, yaw);
+pub fn paint(ui: &Ui, rect: Rect, size: [f32; 3], (yaw, pitch): (f32, f32), art: &Art, shadow: Vec2, stroke: Option<Stroke>) {
+    let view = View::tilted(rect, size, yaw, pitch);
     let painter = ui.painter();
     let hull = convex_hull(&view.corners());
     let shadow_points = hull.iter().map(|p| *p + shadow).collect();
     painter.add(Shape::convex_polygon(shadow_points, Color32::from_black_alpha(90), Stroke::NONE));
 
-    let plain = Fill::Color(art.plain);
     let fills = [
         (&art.front, art.front_label.as_ref()),
         (&art.back, None),
         (&art.spine, art.spine_label.as_ref()),
         (&art.side, None),
         (&art.top, None),
-        (&plain, None),
+        (&art.bottom, None),
     ];
     for (face, (fill, label)) in faces(view.half).iter().zip(fills) {
         let Some(brightness) = face.lit(&view) else { continue };

@@ -792,5 +792,14 @@
   "{game}: working folder {path}": "{game}: folder roboczy {path}",
   "{name} ({index} of {count})": "{name} ({index} z {count})",
   "{store}: not installed": "{store}: nie zainstalowano",
-  "…and {count} more": "…i {count} więcej"
+  "…and {count} more": "…i {count} więcej",
+  "Bottom image": "Obraz spodu",
+  "Bottom image size and position · {name}": "Rozmiar i położenie obrazu spodu · {name}",
+  "It's a mocked game, you can delete it now": "To przykładowa gra, możesz ją teraz usunąć",
+  "Mocked game": "Przykładowa gra",
+  "Press B or Esc to close it. Delete it from its Options in YASAFF.": "Naciśnij B lub Esc, aby ją zamknąć. Usuń ją w jej Opcjach w YASAFF.",
+  "Remove bottom image": "Usuń obraz spodu",
+  "Select box bottom image": "Wybierz obraz spodu pudełka",
+  "Setting up initial stuff…": "Przygotowywanie początkowej zawartości…",
+  "Under the box; seen while editing it": "Pod pudełkiem; widoczny podczas edycji"
 }

@@ -1,0 +1,21 @@
+{
+  "yasaff": "app",
+  "formatVersion": 1,
+  "id": "super-army-3d",
+  "name": "Super Army 3D",
+  "version": "1.0.0",
+  "kind": "game",
+  "author": "YASAFF",
+  "summary": "Command a very small army in three whole dimensions.",
+  "description": "A mocked game that comes with YASAFF so the library isn't empty.\n\nIt only shows its logo. You can delete it now.",
+  "builtin": "mock-game",
+  "icon": "square_cover.png",
+  "artwork": {
+    "logo": "game_logo.png",
+    "booklet": "standard_cover.png",
+    "spine": "3d_box_spine.png",
+    "top": "3d_top_image.png",
+    "bottom": "3d_bottom_image.png",
+    "side": "3d_right_image.png"
+  }
+}

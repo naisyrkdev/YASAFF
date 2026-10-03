@@ -11,6 +11,7 @@ use crate::case3d;
 use crate::disc3d;
 use crate::fonts;
 use crate::i18n;
+use crate::initial;
 use crate::global_mouse::GlobalMouse;
 use crate::input::{Action, Control, GLOBAL_MOUSE_BUTTONS, Input, PadButton};
 use crate::launcher;
@@ -253,6 +254,8 @@ enum SettingRow {
     GameBackClear,
     GameSide,
     GameSideClear,
+    GameBottom,
+    GameBottomClear,
     GameBooklet,
     GameBookletClear,
     GameModel,
@@ -317,6 +320,8 @@ impl SettingRow {
             | R::GameBackClear
             | R::GameSide
             | R::GameSideClear
+            | R::GameBottom
+            | R::GameBottomClear
             | R::GameBooklet
             | R::GameBookletClear
             | R::GameModel
@@ -403,6 +408,12 @@ enum Mode {
     Store { cursor: usize, scroll: usize },
     StoreTheme { index: usize, image: usize },
     ProfileImported { name: String, missing: Vec<String>, switch: bool },
+}
+
+struct InitialSetup {
+    rx: mpsc::Receiver<initial::Step>,
+    total: usize,
+    done: usize,
 }
 
 enum ProfileJob {
@@ -654,6 +665,7 @@ pub struct App {
     profiles: Vec<String>,
     profile_pick: String,
     profile_job: Option<mpsc::Receiver<ProfileJob>>,
+    setup: Option<InitialSetup>,
 }
 
 impl App {
@@ -730,6 +742,7 @@ impl App {
             profiles: profiles::list(),
             profile_pick: profiles::active(),
             profile_job: None,
+            setup: None,
         };
         app.apply_fonts();
         if let Some(w) = warning {
@@ -755,6 +768,9 @@ impl App {
         }
         app.refresh_store();
         app.find_missing_save_dirs();
+        if initial::wanted(&app.library) {
+            app.setup = Some(InitialSetup { rx: initial::start(app.ctx.clone()), total: 0, done: 0 });
+        }
         app
     }
 
@@ -1512,6 +1528,7 @@ impl App {
                 (AssetKind::Top, R::GameTop, R::GameTopClear),
                 (AssetKind::Back, R::GameBack, R::GameBackClear),
                 (AssetKind::Side, R::GameSide, R::GameSideClear),
+                (AssetKind::Bottom, R::GameBottom, R::GameBottomClear),
                 (AssetKind::Booklet, R::GameBooklet, R::GameBookletClear),
             ] {
                 rows.push(pick);
@@ -1986,6 +2003,7 @@ impl App {
             SettingRow::GameTop => self.pick_asset(AssetKind::Top),
             SettingRow::GameBack => self.pick_asset(AssetKind::Back),
             SettingRow::GameSide => self.pick_asset(AssetKind::Side),
+            SettingRow::GameBottom => self.pick_asset(AssetKind::Bottom),
             SettingRow::GameBooklet => self.pick_asset(AssetKind::Booklet),
             SettingRow::GameModel => self.pick_asset(AssetKind::Model),
             SettingRow::GameVideo => self.pick_asset(AssetKind::Video),
@@ -1999,6 +2017,7 @@ impl App {
             | SettingRow::GameTopClear
             | SettingRow::GameBackClear
             | SettingRow::GameSideClear
+            | SettingRow::GameBottomClear
             | SettingRow::GameBookletClear
             | SettingRow::GameModelClear
             | SettingRow::GameVideoClear => {
@@ -2007,6 +2026,7 @@ impl App {
                     SettingRow::GameSpineClear => (AssetKind::Spine, SettingRow::GameSpine),
                     SettingRow::GameTopClear => (AssetKind::Top, SettingRow::GameTop),
                     SettingRow::GameSideClear => (AssetKind::Side, SettingRow::GameSide),
+                    SettingRow::GameBottomClear => (AssetKind::Bottom, SettingRow::GameBottom),
                     SettingRow::GameBookletClear => (AssetKind::Booklet, SettingRow::GameBooklet),
                     SettingRow::GameModelClear => (AssetKind::Model, SettingRow::GameModel),
                     _ => (AssetKind::Back, SettingRow::GameBack),
@@ -2697,6 +2717,52 @@ impl App {
         }
     }
 
+    fn poll_setup(&mut self) {
+        let Some(setup) = &mut self.setup else { return };
+        let mut installed = Vec::new();
+        let finished = loop {
+            match setup.rx.try_recv() {
+                Ok(initial::Step::Total(n)) => setup.total = n,
+                Ok(initial::Step::Installed(manifest)) => {
+                    setup.done += 1;
+                    installed.push(*manifest);
+                }
+                Ok(initial::Step::Failed(e)) => {
+                    setup.done += 1;
+                    eprintln!("initial games: {e}");
+                }
+                Err(mpsc::TryRecvError::Empty) => break false,
+                Err(mpsc::TryRecvError::Disconnected) => break true,
+            }
+        };
+        let selected = self.selected_game().map(|g| g.id.clone());
+        for manifest in installed {
+            self.add_to_library(manifest, false);
+        }
+        self.selected = selected.and_then(|id| self.library.position(&id)).unwrap_or(0);
+        if finished {
+            self.setup = None;
+            initial::mark_done();
+        }
+    }
+
+    fn draw_setup(&self, painter: &Painter, screen: Rect, s: f32) {
+        let Some(setup) = &self.setup else { return };
+        let panel = Rect::from_center_size(pos2(screen.center().x, screen.bottom() - 200.0 * s), vec2(420.0 * s, 86.0 * s));
+        painter.rect_filled(panel, (6.0 * s) as u8, Color32::from_black_alpha(220));
+        let left = panel.left() + 20.0 * s;
+        painter.text(pos2(left, panel.top() + 16.0 * s), Align2::LEFT_TOP, tr!("Setting up initial stuff…"), FontId::proportional(20.0 * s), Color32::WHITE);
+        let count = format!("{} / {}", setup.done, setup.total.max(setup.done));
+        painter.text(pos2(panel.right() - 20.0 * s, panel.top() + 18.0 * s), Align2::RIGHT_TOP, count, FontId::proportional(17.0 * s), Color32::from_gray(150));
+        let bar = Rect::from_min_size(pos2(left, panel.bottom() - 30.0 * s), vec2(panel.width() - 40.0 * s, 12.0 * s));
+        let radius = (6.0 * s) as u8;
+        painter.rect_filled(bar, radius, Color32::from_white_alpha(25));
+        let fraction = if setup.total == 0 { 0.0 } else { setup.done as f32 / setup.total as f32 };
+        if fraction > 0.0 {
+            painter.rect_filled(Rect::from_min_size(bar.min, vec2(bar.width() * fraction.min(1.0), bar.height())), radius, ACCENT);
+        }
+    }
+
     fn reset_profiles(&mut self, everything: bool) {
         let result = if everything {
             if self.autostart {
@@ -2781,6 +2847,7 @@ impl App {
             AssetKind::Top => tr!("Select box top image"),
             AssetKind::Back => tr!("Select back cover image"),
             AssetKind::Side => tr!("Select right side image (the edge opposite the spine)"),
+            AssetKind::Bottom => tr!("Select box bottom image"),
             AssetKind::Booklet => tr!("Select instruction booklet image"),
             AssetKind::Model | AssetKind::Video => unreachable!(),
         };
@@ -3603,16 +3670,17 @@ impl App {
     }
 
     fn paint_model(&self, ui: &Ui, i: usize, rect: Rect, s: f32, focus: f32) {
-        let yaw = match &self.mode {
+        let (yaw, pitch) = match &self.mode {
             Mode::CoverEditor(editor) if i == self.selected => match editor.kind {
-                AssetKind::Back => box3d::REST_YAW + std::f32::consts::PI,
-                AssetKind::Side => -box3d::REST_YAW,
-                _ => box3d::REST_YAW,
+                AssetKind::Back => (box3d::REST_YAW + std::f32::consts::PI, box3d::PITCH),
+                AssetKind::Side => (-box3d::REST_YAW, box3d::PITCH),
+                AssetKind::Bottom => (box3d::REST_YAW, -box3d::PITCH * 2.0),
+                _ => (box3d::REST_YAW, box3d::PITCH),
             },
-            _ => self.turn(i, box3d::REST_YAW),
+            _ => (self.turn(i, box3d::REST_YAW), box3d::PITCH),
         };
         let stroke = (i == self.selected).then(|| Stroke::new(3.0 * s, Color32::WHITE.gamma_multiply(focus.max(0.4))));
-        self.with_box_art(i, |art, look| box3d::paint(ui, rect, look.size_mm(), yaw, art, vec2(0.0, 8.0 * s), stroke));
+        self.with_box_art(i, |art, look| box3d::paint(ui, rect, look.size_mm(), (yaw, pitch), art, vec2(0.0, 8.0 * s), stroke));
     }
 
     fn with_box_art<R>(&self, i: usize, f: impl FnOnce(&box3d::Art, &crate::theme::BoxSettings) -> R) -> R {
@@ -3647,6 +3715,7 @@ impl App {
                 .then(|| Label { text: name, font: font.clone(), color: look.spine_text_color, size: 0.5, down: true }),
             top: image(AssetKind::Top, look.top_color),
             side: image(AssetKind::Side, look.top_color),
+            bottom: image(AssetKind::Bottom, look.top_color),
             plain: look.top_color,
         };
         f(&art, &look)
@@ -4292,6 +4361,7 @@ impl App {
             AssetKind::Top => tr!("Top image size and position · {name}", name = game.name),
             AssetKind::Back => tr!("Back cover size and position · {name}", name = game.name),
             AssetKind::Side => tr!("Side image size and position · {name}", name = game.name),
+            AssetKind::Bottom => tr!("Bottom image size and position · {name}", name = game.name),
             AssetKind::Booklet => tr!("Booklet image size and position · {name}", name = game.name),
             _ => tr!("Cover size and position · {name}", name = game.name),
         };
@@ -4829,6 +4899,11 @@ impl App {
                 (tr!("Right side image").into(), sub, Action(tr!("Choose…")))
             }
             SettingRow::GameSideClear => (tr!("Remove right side image").into(), "", Action(tr!("Remove"))),
+            SettingRow::GameBottom => {
+                let sub = if has(|g| g.bottom.is_some()) { tr!("Under the box; seen while editing it") } else { tr!("None; uses the top color") };
+                (tr!("Bottom image").into(), sub, Action(tr!("Choose…")))
+            }
+            SettingRow::GameBottomClear => (tr!("Remove bottom image").into(), "", Action(tr!("Remove"))),
             SettingRow::GameBooklet => {
                 let sub = if has(|g| g.booklet.is_some()) {
                     tr!("Inside the cover of a 3D opening case")
@@ -5614,6 +5689,7 @@ impl eframe::App for App {
         self.poll_save_dirs();
         self.poll_backup();
         self.poll_profile_job();
+        self.poll_setup();
         self.update_launching(&ctx);
         self.update_video(&ctx);
         self.guard_focus(&ctx);
@@ -5649,6 +5725,7 @@ impl eframe::App for App {
         self.draw_disc_not_found(ui, screen, s);
         self.draw_profile_imported(ui, screen, s);
         self.draw_burn(ui, screen, s);
+        self.draw_setup(&painter, screen, s);
         self.draw_toast(&painter, screen, s);
         self.draw_launching(ui, screen, s);
         self.draw_prompt(&ctx);

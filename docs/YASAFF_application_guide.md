@@ -108,14 +108,16 @@ How YASAFF unpacks it (`unpack` and `install_package_in` in `appstore.rs`):
 | `author`, `summary`, `description` | no | Shown in the catalog. `description` can contain `\n\n` paragraphs. |
 | `icon` | no | Path inside the package. Becomes the library **cover**, unless the user already set one. |
 | `background` | no | Path inside the package. Becomes the library **background**. 1920×1080 works well. |
-| `run` | yes | A map from platform (`linux`, `windows`, `macos`) to a run entry. The running platform **must** have an entry, or the package is refused ("can't run on linux"). |
+| `artwork` | no | More library images, each a path inside the package: `booklet` (portrait front of a 3D case), `spine`, `top`, `bottom`, `back`, `side` (right side of the 3D box), and `logo` (used only by `builtin`). Like `icon`, each is set only where the user has none. |
+| `builtin` | no | `"mock-game"`: the package has no program. YASAFF opens a window with `artwork.logo` and a note that the game can be deleted. `run` isn't needed. The games in [initial_content/](../initial_content/) use it. |
+| `run` | yes (unless `builtin`) | A map from platform (`linux`, `windows`, `macos`) to a run entry. The running platform **must** have an entry, or the package is refused ("can't run on linux"). |
 | `run.<p>.command` | yes | Relative path to the executable. It **must exist** in the package. |
 | `run.<p>.args` | no | List of extra command-line arguments. |
 | `run.<p>.workingDir` | no | Relative working directory. Defaults to the install folder. |
 | `install.executables` | no | Extra files that get `chmod +x` on Unix (helper binaries, scripts). |
 | `git` | no | Informational, but `git.commit` also feeds update detection: when the versions are equal and the commits differ, YASAFF offers an update. |
 
-All paths (`command`, `workingDir`, `icon`, `background`, `executables`) must be relative and stay inside the package. `..` and absolute paths are rejected.
+All paths (`command`, `workingDir`, `icon`, `background`, `artwork.*`, `executables`) must be relative and stay inside the package. `..` and absolute paths are rejected.
 
 ---
 

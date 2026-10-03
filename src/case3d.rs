@@ -205,8 +205,7 @@ pub fn paint(ui: &Ui, rect: Rect, size: [f32; 3], pose: Pose, art: &Art, shadow:
     }
 
     let case = &art.case;
-    let plain = Fill::Color(case.plain);
-    let tray_fills = [(&case.back, None), (&case.spine, case.spine_label.as_ref()), (&case.side, None), (&case.top, None), (&plain, None)];
+    let tray_fills = [(&case.back, None), (&case.spine, case.spine_label.as_ref()), (&case.side, None), (&case.top, None), (&case.bottom, None)];
     for (face, (fill, label)) in shape.tray().iter().zip(tray_fills) {
         let Some(brightness) = face.lit(&view) else { continue };
         box3d::paint_face(ui, &view, face, fill, brightness);

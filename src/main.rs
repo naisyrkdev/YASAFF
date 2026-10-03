@@ -10,12 +10,14 @@ mod box3d;
 mod case3d;
 mod disc3d;
 mod fonts;
+mod initial;
 mod global_mouse;
 mod apps;
 mod input;
 mod launcher;
 mod library;
 mod metadata;
+mod mock_game;
 mod object3d;
 mod physical;
 mod profiles;
@@ -31,6 +33,9 @@ fn main() -> eframe::Result {
     let settings = settings::Settings::load();
     i18n::set(settings.language);
     let args: Vec<String> = std::env::args().collect();
+    if let Some(dir) = args.iter().position(|a| a == mock_game::FLAG).and_then(|i| args.get(i + 1)) {
+        return mock_game::run(std::path::Path::new(dir));
+    }
     let fullscreen = settings.start_fullscreen || args.iter().any(|a| a == "--fullscreen");
     let disc = args.iter().position(|a| a == "--disc").and_then(|i| args.get(i + 1)).map(std::path::PathBuf::from);
     let options = eframe::NativeOptions {

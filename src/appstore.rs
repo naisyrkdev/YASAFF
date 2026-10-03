@@ -1,5 +1,5 @@
 
-use crate::library::Library;
+use crate::library::{AssetKind, Library};
 use anyhow::{Context as _, Result, bail, ensure};
 use egui::Context;
 use serde::{Deserialize, Serialize};
@@ -36,7 +36,40 @@ pub struct Manifest {
     pub install: InstallSteps,
     pub git: Option<GitInfo>,
     pub widget: Option<WidgetSpec>,
+    pub artwork: Artwork,
+    pub builtin: Option<String>,
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Artwork {
+    pub logo: Option<String>,
+    pub booklet: Option<String>,
+    pub spine: Option<String>,
+    pub top: Option<String>,
+    pub bottom: Option<String>,
+    pub back: Option<String>,
+    pub side: Option<String>,
+}
+
+impl Artwork {
+    pub fn assets(&self) -> [(AssetKind, Option<&String>); 6] {
+        [
+            (AssetKind::Booklet, self.booklet.as_ref()),
+            (AssetKind::Spine, self.spine.as_ref()),
+            (AssetKind::Top, self.top.as_ref()),
+            (AssetKind::Bottom, self.bottom.as_ref()),
+            (AssetKind::Back, self.back.as_ref()),
+            (AssetKind::Side, self.side.as_ref()),
+        ]
+    }
+
+    fn paths(&self) -> impl Iterator<Item = &String> {
+        self.assets().into_iter().filter_map(|(_, p)| p).chain(&self.logo)
+    }
+}
+
+pub const MOCK_GAME: &str = "mock-game";
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -97,12 +130,21 @@ impl Manifest {
         if self.is_addon() {
             ensure!(self.kind == BAR_WIDGET, "{MANIFEST}: addon kind \"{}\" is not supported; update YASAFF", self.kind);
         }
-        let run = self.run_entry().with_context(|| format!("{} can't run on {}", self.name, platform()))?;
-        let paths = [Some(&run.command), run.working_dir.as_ref(), self.icon.as_ref(), self.background.as_ref()];
-        for path in paths.into_iter().flatten().chain(&self.install.executables) {
+        if let Some(builtin) = &self.builtin {
+            ensure!(builtin == MOCK_GAME && !self.is_addon(), "{MANIFEST}: builtin \"{builtin}\" is not supported; update YASAFF");
+        }
+        let run = match self.builtin {
+            Some(_) => None,
+            None => Some(self.run_entry().with_context(|| format!("{} can't run on {}", self.name, platform()))?),
+        };
+        let run_paths = run.into_iter().flat_map(|r| [Some(&r.command), r.working_dir.as_ref()]).flatten();
+        let paths = [self.icon.as_ref(), self.background.as_ref()].into_iter().flatten().chain(run_paths).chain(self.artwork.paths());
+        for path in paths.chain(&self.install.executables) {
             ensure!(safe_relative(path), "{MANIFEST}: {path} is outside the package");
         }
-        ensure!(root.join(&run.command).is_file(), "{MANIFEST}: {} is not in the package", run.command);
+        if let Some(run) = run {
+            ensure!(root.join(&run.command).is_file(), "{MANIFEST}: {} is not in the package", run.command);
+        }
         Ok(())
     }
 
@@ -254,13 +296,22 @@ pub fn launch(ctx: &Context, id: &str, placement: Placement) -> Result<AppProces
 
     let dir = install_dir(id);
     let manifest = Manifest::read(&dir)?;
-    let run = manifest.run_entry().with_context(|| format!("{} can't run on {}", manifest.name, platform()))?;
     let data = app_data_dir(id);
     fs::create_dir_all(&data).with_context(|| format!("creating {}", data.display()))?;
-    let mut cmd = Command::new(dir.join(&run.command));
-    cmd.args(&run.args)
-        .current_dir(run.working_dir.as_ref().map_or(dir.clone(), |w| dir.join(w)))
-        .env("YASAFF", "1")
+    let mut cmd = match manifest.builtin {
+        Some(_) => {
+            let mut cmd = Command::new(crate::profiles::exe().context("YASAFF can't find its own program")?);
+            cmd.arg(crate::mock_game::FLAG).arg(&dir).current_dir(&dir);
+            cmd
+        }
+        None => {
+            let run = manifest.run_entry().with_context(|| format!("{} can't run on {}", manifest.name, platform()))?;
+            let mut cmd = Command::new(dir.join(&run.command));
+            cmd.args(&run.args).current_dir(run.working_dir.as_ref().map_or(dir.clone(), |w| dir.join(w)));
+            cmd
+        }
+    };
+    cmd.env("YASAFF", "1")
         .env("YASAFF_APP_ID", id)
         .env("YASAFF_APP_VERSION", &manifest.version)
         .env("YASAFF_APP_DATA", &data)
@@ -273,7 +324,7 @@ pub fn launch(ctx: &Context, id: &str, placement: Placement) -> Result<AppProces
         Placement::Window(_) => cmd.env("YASAFF_WINDOW", placement.words().trim_start_matches("window ")),
         Placement::Free => &mut cmd,
     };
-    let mut child = cmd.spawn().with_context(|| format!("starting {}", run.command))?;
+    let mut child = cmd.spawn().with_context(|| format!("starting {}", manifest.name))?;
 
     let (to_app, lines) = mpsc::channel::<String>();
     let mut stdin = child.stdin.take().expect("stdin is piped");
@@ -646,11 +697,11 @@ fn install(agent: &ureq::Agent, endpoint: &Endpoint, app: &RemoteApp, progress: 
     result
 }
 
-fn install_package(zip_path: &Path, busy: &[String]) -> Result<Manifest> {
+pub(crate) fn install_package(zip_path: &Path, busy: &[String]) -> Result<Manifest> {
     install_package_in(&Library::data_dir(), zip_path, busy)
 }
 
-fn install_package_in(root: &Path, zip_path: &Path, busy: &[String]) -> Result<Manifest> {
+pub(crate) fn install_package_in(root: &Path, zip_path: &Path, busy: &[String]) -> Result<Manifest> {
     fs::create_dir_all(root)?;
     let staging = root.join(format!(".staging-{}", uuid::Uuid::new_v4()));
     let result = (|| {
