@@ -137,7 +137,6 @@
   "Nothing new to import. Install a game, or press Menu / Tab to scan again.": "Nie ma nic nowego do zaimportowania. Zainstaluj grę lub naciśnij Menu / Tab, aby wyszukać ponownie.",
   "Found on: {path}": "Znaleziono w: {path}",
   "Fetch metadata": "Pobierz metadane",
-  "Import images found on drive associated with game.\nNot found any assets to fetch from current attached stores": "Importuj obrazy znalezione na dysku powiązane z grą.\nNie znaleziono zasobów do pobrania z obecnie podłączonych sklepów",
   "Uninstall \"{name}\"?": "Odinstalować „{name}”?",
   "Its files are deleted. Its saved data and settings are kept for a reinstall.": "Jej pliki zostaną usunięte. Zapisane dane i ustawienia zostaną zachowane na wypadek ponownej instalacji.",
   "Remove \"{name}\"?": "Usunąć „{name}”?",
@@ -801,5 +800,16 @@
   "Remove bottom image": "Usuń obraz spodu",
   "Select box bottom image": "Wybierz obraz spodu pudełka",
   "Setting up initial stuff…": "Przygotowywanie początkowej zawartości…",
-  "Under the box; seen while editing it": "Pod pudełkiem; widoczny podczas edycji"
+  "Under the box; seen while editing it": "Pod pudełkiem; widoczny podczas edycji",
+  "Cover": "Okładka",
+  "Looking for images on this computer…": "Szukanie obrazów na tym komputerze…",
+  "Looking for images…": "Szukanie obrazów…",
+  "No images found on this computer for the ticked games": "Nie znaleziono na tym komputerze obrazów dla zaznaczonych gier",
+  "Skip": "Pomiń",
+  "Use the images found on this computer for {n} ticked games": [
+    "Użyj obrazów znalezionych na tym komputerze dla {n} zaznaczonej gry",
+    "Użyj obrazów znalezionych na tym komputerze dla {n} zaznaczonych gier",
+    "Użyj obrazów znalezionych na tym komputerze dla {n} zaznaczonych gier"
+  ],
+  "Welcome! Pick the games to add": "Witaj! Wybierz gry do dodania"
 }

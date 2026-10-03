@@ -28,7 +28,7 @@ use crate::theme::{
     ImageFit, SpineLabel, Theme, ThemeKind, TileSettings, TileStyle, ViewKind,
 };
 use egui::{
-    Align2, Color32, Context, FontId, Id, Mesh, Painter, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, TextureOptions,
+    Align2, Color32, Context, FontId, Id, Mesh, Painter, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, TextureHandle, TextureOptions,
     TextureId, Ui, Vec2, ViewportCommand, pos2, vec2,
 };
 use std::cell::{Cell, RefCell};
@@ -576,24 +576,58 @@ impl Picker {
 }
 
 struct ScanState {
-    pending: Option<mpsc::Receiver<Vec<scan::Found>>>,
+    pending: Option<mpsc::Receiver<(Vec<scan::Found>, usize)>>,
     found: Vec<scan::Found>,
     checked: Vec<bool>,
     in_library: usize,
+    assets_rx: Option<mpsc::Receiver<(usize, scan::Assets)>>,
+    assets: Vec<Option<FoundAssets>>,
     fetch_artwork: bool,
+    first_run: bool,
     cursor: usize,
     scroll: usize,
 }
 
+struct FoundAssets {
+    cover: bool,
+    background: bool,
+    thumbnail: Option<TextureHandle>,
+}
+
 impl ScanState {
-    fn start(ctx: &Context, fetch_artwork: bool) -> Self {
-        let (tx, rx) = mpsc::channel();
+    fn start(ctx: &Context, known: scan::Known, fetch_artwork: bool, first_run: bool) -> Self {
+        let (tx, pending) = mpsc::channel();
+        let (assets_tx, assets_rx) = mpsc::channel();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(scan::scan());
+            let mut found = scan::scan();
+            let total = found.len();
+            found.retain(|f| !known.has(f));
+            let entries: Vec<AppEntry> = found.iter().map(|f| f.entry.clone()).collect();
+            let sent = tx.send((found, total)).is_ok();
             ctx.request_repaint();
+            if !sent {
+                return;
+            }
+            for (i, entry) in entries.iter().enumerate() {
+                if assets_tx.send((i, scan::assets(entry))).is_err() {
+                    return;
+                }
+                ctx.request_repaint();
+            }
         });
-        ScanState { pending: Some(rx), found: Vec::new(), checked: Vec::new(), in_library: 0, fetch_artwork, cursor: 0, scroll: 0 }
+        ScanState {
+            pending: Some(pending),
+            found: Vec::new(),
+            checked: Vec::new(),
+            in_library: 0,
+            assets_rx: Some(assets_rx),
+            assets: Vec::new(),
+            fetch_artwork,
+            first_run,
+            cursor: 0,
+            scroll: 0,
+        }
     }
 
     fn fetch_row(&self) -> usize {
@@ -770,6 +804,7 @@ impl App {
         app.find_missing_save_dirs();
         if initial::wanted(&app.library) {
             app.setup = Some(InitialSetup { rx: initial::start(app.ctx.clone()), total: 0, done: 0 });
+            app.mode = Mode::Scan(Box::new(ScanState::start(&app.ctx, scan::Known::of(&app.library), true, true)));
         }
         app
     }
@@ -1300,7 +1335,8 @@ impl App {
                     let all = sc.checked.iter().all(|c| *c);
                     sc.checked.fill(!all);
                 }
-                Action::Options => **sc = ScanState::start(ctx, sc.fetch_artwork),
+                Action::Options => **sc = ScanState::start(ctx, scan::Known::of(&self.library), sc.fetch_artwork, sc.first_run),
+                Action::Back if sc.first_run => self.mode = Mode::Home,
                 Action::Back => self.mode = Mode::AddMenu { cursor: add_menu_index(AddSource::Scan) },
                 _ => {}
             },
@@ -2401,7 +2437,7 @@ impl App {
     fn run_add_source(&mut self, source: AddSource) {
         match source {
             AddSource::Scan => {
-                self.mode = Mode::Scan(Box::new(ScanState::start(&self.ctx, true)));
+                self.mode = Mode::Scan(Box::new(ScanState::start(&self.ctx, scan::Known::of(&self.library), true, false)));
             }
             AddSource::Installed => self.mode = Mode::Picker(Box::new(Picker::new())),
             AddSource::Browse => {
@@ -2451,28 +2487,36 @@ impl App {
 
     fn poll_scan(&mut self) {
         let Mode::Scan(sc) = &mut self.mode else { return };
-        let Some(rx) = &sc.pending else { return };
-        let found = match rx.try_recv() {
-            Ok(found) => found,
-            Err(mpsc::TryRecvError::Empty) => return,
-            Err(mpsc::TryRecvError::Disconnected) => Vec::new(),
-        };
-        let known: Vec<_> = self.library.games.iter().flat_map(|g| g.external_ids()).collect();
-        let total = found.len();
-        sc.found = found
-            .into_iter()
-            .filter(|f| {
-                self.library.find(&f.entry.target, &f.entry.args).is_none()
-                    && !crate::physical::ids::from_command(&f.entry.target, &f.entry.args)
-                        .iter()
-                        .any(|id| known.iter().any(|k| k.matches(id)))
-            })
-            .collect();
-        sc.in_library = total - sc.found.len();
-        sc.checked = vec![true; sc.found.len()];
-        sc.pending = None;
-        sc.cursor = 0;
-        sc.scroll = 0;
+        if let Some(rx) = &sc.pending {
+            let (found, total) = match rx.try_recv() {
+                Ok(listed) => listed,
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => (Vec::new(), 0),
+            };
+            sc.in_library = total.saturating_sub(found.len());
+            sc.checked = vec![true; found.len()];
+            sc.assets = std::iter::repeat_with(|| None).take(found.len()).collect();
+            sc.found = found;
+            sc.pending = None;
+            sc.cursor = 0;
+            sc.scroll = 0;
+        }
+        let Some(rx) = &sc.assets_rx else { return };
+        loop {
+            match rx.try_recv() {
+                Ok((i, assets)) => {
+                    let thumbnail = assets.thumbnail.map(|image| self.ctx.load_texture(format!("scan-cover-{i}"), image, TextureOptions::LINEAR));
+                    if let Some(slot) = sc.assets.get_mut(i) {
+                        *slot = Some(FoundAssets { cover: assets.cover.is_some(), background: assets.background.is_some(), thumbnail });
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    sc.assets_rx = None;
+                    break;
+                }
+            }
+        }
     }
 
     fn import_scanned(&mut self) {
@@ -2748,6 +2792,9 @@ impl App {
 
     fn draw_setup(&self, painter: &Painter, screen: Rect, s: f32) {
         let Some(setup) = &self.setup else { return };
+        if matches!(self.mode, Mode::Scan(_)) {
+            return;
+        }
         let panel = Rect::from_center_size(pos2(screen.center().x, screen.bottom() - 200.0 * s), vec2(420.0 * s, 86.0 * s));
         painter.rect_filled(panel, (6.0 * s) as u8, Color32::from_black_alpha(220));
         let left = panel.left() + 20.0 * s;
@@ -3890,6 +3937,12 @@ impl App {
                 Hint(Action::Left, tr!("Category")),
                 Hint(Action::Back, tr!("Back")),
             ],
+            Mode::Scan(ref sc) if sc.first_run => &[
+                Hint(Action::Confirm, tr!("Select")),
+                Hint(Action::Add, tr!("All / none")),
+                Hint(Action::Options, tr!("Scan again")),
+                Hint(Action::Back, tr!("Skip")),
+            ],
             Mode::Scan(_) => &[
                 Hint(Action::Confirm, tr!("Select")),
                 Hint(Action::Add, tr!("All / none")),
@@ -4148,7 +4201,8 @@ impl App {
             vec2((1100.0 * s).min(screen.width() - 40.0), screen.height() - 150.0 * s),
         );
         painter.rect_filled(panel, (8.0 * s) as u8, Color32::from_rgb(14, 20, 36));
-        painter.text(panel.left_top() + vec2(40.0 * s, 36.0 * s), Align2::LEFT_TOP, tr!("Scan for games"), FontId::proportional(30.0 * s), Color32::WHITE);
+        let title = if sc.first_run { tr!("Welcome! Pick the games to add") } else { tr!("Scan for games") };
+        painter.text(panel.left_top() + vec2(40.0 * s, 36.0 * s), Align2::LEFT_TOP, title, FontId::proportional(30.0 * s), Color32::WHITE);
 
         let font = FontId::proportional(20.0 * s);
         let gray = Color32::from_gray(170);
@@ -4167,8 +4221,9 @@ impl App {
             painter.text(status_pos, Align2::LEFT_CENTER, text, font.clone(), gray);
         }
 
-        let row_h = 68.0 * s;
-        let footer_top = panel.bottom() - 24.0 * s - 2.0 * row_h;
+        let row_h = 92.0 * s;
+        let footer_h = 68.0 * s;
+        let footer_top = panel.bottom() - 24.0 * s - 2.0 * footer_h;
         let list_top = status_pos.y + 36.0 * s;
         let rows = (((footer_top - 12.0 * s - list_top) / row_h).floor() as usize).max(1);
         let wheel = wheel_lines(ui);
@@ -4193,22 +4248,25 @@ impl App {
             painter.rect_filled(r, (4.0 * s) as u8, Color32::from_white_alpha(22));
             painter.rect_filled(Rect::from_min_size(r.min, vec2(5.0 * s, r.height())), 0, ACCENT);
         };
-        let row_rect = |top: f32| Rect::from_min_size(pos2(panel.left() + 20.0 * s, top), vec2(panel.width() - 40.0 * s, row_h - 6.0 * s));
+        let row_rect = |top: f32, h: f32| Rect::from_min_size(pos2(panel.left() + 20.0 * s, top), vec2(panel.width() - 40.0 * s, h - 6.0 * s));
         let checkbox_rect = |r: Rect| Rect::from_center_size(pos2(r.left() + 36.0 * s, r.center().y), vec2(26.0 * s, 26.0 * s));
         let mut hovered = None;
         let mut clicked = None;
 
         for (row, found) in sc.found.iter().enumerate().skip(sc.scroll).take(rows) {
-            let r = row_rect(list_top + (row - sc.scroll) as f32 * row_h);
+            let r = row_rect(list_top + (row - sc.scroll) as f32 * row_h, row_h);
             if row == sc.cursor {
                 highlight(r);
             }
             let check = checkbox_rect(r);
             paint_checkbox(painter, check, sc.checked[row], s);
-            let icon = Rect::from_min_size(pos2(check.right() + 20.0 * s, r.top() + 6.0 * s), vec2(r.height() - 12.0 * s, r.height() - 12.0 * s));
-            match &found.entry.icon {
-                Some(path) => paint_image_cover(ui, path, icon, 1.0, (4.0 * s) as u8),
-                None => {
+            let cover_h = r.height() - 12.0 * s;
+            let icon = Rect::from_min_size(pos2(check.right() + 20.0 * s, r.top() + 6.0 * s), vec2(cover_h * 2.0 / 3.0, cover_h));
+            let assets = sc.assets.get(row).and_then(Option::as_ref);
+            match (assets.and_then(|a| a.thumbnail.as_ref()), &found.entry.icon) {
+                (Some(thumbnail), _) => paint_placed(ui, egui::Image::new(thumbnail), icon, 1.0, (4.0 * s) as u8, CoverPlacement::default()),
+                (None, Some(path)) => paint_image_cover(ui, path, icon, 1.0, (4.0 * s) as u8),
+                (None, None) => {
                     painter.rect_filled(icon, (4.0 * s) as u8, placeholder_color(&found.entry.name));
                     painter.text(icon.center(), Align2::CENTER_CENTER, initials(&found.entry.name), FontId::proportional(icon.height() * 0.35), Color32::WHITE);
                 }
@@ -4223,7 +4281,29 @@ impl App {
             let clip = painter.with_clip_rect(Rect::from_min_max(r.min, pos2(t.left() - 12.0 * s, r.bottom())));
             clip.text(pos2(text_x, r.top() + 8.0 * s), Align2::LEFT_TOP, &found.entry.name, FontId::proportional(22.0 * s), Color32::WHITE);
             let location = tr!("Found on: {path}", path = found.location.display());
-            clip.text(pos2(text_x, r.top() + 38.0 * s), Align2::LEFT_TOP, location, FontId::proportional(15.0 * s), Color32::from_gray(140));
+            clip.text(pos2(text_x, r.top() + 36.0 * s), Align2::LEFT_TOP, location, FontId::proportional(15.0 * s), Color32::from_gray(140));
+            let chip_font = FontId::proportional(14.0 * s);
+            let chip_top = r.top() + 60.0 * s;
+            match assets {
+                None => {
+                    clip.text(pos2(text_x, chip_top + 2.0 * s), Align2::LEFT_TOP, tr!("Looking for images…"), chip_font, Color32::from_gray(110));
+                }
+                Some(assets) => {
+                    let mut x = text_x;
+                    for (label, has, used) in [(tr!("Cover"), assets.cover, sc.fetch_artwork || found.entry.icon.is_some()), (tr!("Background"), assets.background, sc.fetch_artwork)] {
+                        let (mark, color) = match (has, used) {
+                            (true, true) => ("✔", PAD_A),
+                            (true, false) => ("✔", Color32::from_gray(120)),
+                            (false, _) => ("✘", Color32::from_gray(90)),
+                        };
+                        let chip = clip.layout_no_wrap(format!("{mark} {label}"), chip_font.clone(), color);
+                        let rect = Rect::from_min_size(pos2(x, chip_top), chip.size() + vec2(14.0 * s, 6.0 * s));
+                        clip.rect_stroke(rect, (rect.height() / 2.0) as u8, Stroke::new(1.0, color.gamma_multiply(0.6)), StrokeKind::Inside);
+                        clip.galley(rect.center() - chip.size() / 2.0, chip, color);
+                        x = rect.right() + 8.0 * s;
+                    }
+                }
+            }
 
             let resp = ui.interact(r, Id::new(("scan", row)), Sense::click());
             if resp.hovered() && ui.input(|i| i.pointer.delta() != egui::Vec2::ZERO) {
@@ -4235,7 +4315,7 @@ impl App {
         }
 
         painter.hline(panel.left() + 20.0 * s..=panel.right() - 20.0 * s, footer_top - 8.0 * s, Stroke::new(1.0, Color32::from_white_alpha(25)));
-        let fetch = row_rect(footer_top);
+        let fetch = row_rect(footer_top, footer_h);
         if sc.cursor == sc.fetch_row() {
             highlight(fetch);
         }
@@ -4243,10 +4323,22 @@ impl App {
         paint_checkbox(painter, check, sc.fetch_artwork, s);
         let x = check.right() + 20.0 * s;
         painter.text(pos2(x, fetch.center().y - 10.0 * s), Align2::LEFT_BOTTOM, tr!("Fetch metadata"), FontId::proportional(22.0 * s), Color32::WHITE);
-        let (note, color) = (tr!("Import images found on drive associated with game.\nNot found any assets to fetch from current attached stores"), Color32::from_gray(140));
-        painter.text(pos2(x, fetch.center().y - 6.0 * s), Align2::LEFT_TOP, note, FontId::proportional(15.0 * s), color);
+        let with_images = sc
+            .assets
+            .iter()
+            .zip(&sc.checked)
+            .filter(|(a, checked)| **checked && a.as_ref().is_some_and(|a| a.cover || a.background))
+            .count();
+        let note = if sc.assets_rx.is_some() {
+            tr!("Looking for images on this computer…").to_owned()
+        } else if with_images == 0 {
+            tr!("No images found on this computer for the ticked games").to_owned()
+        } else {
+            tr_n!(with_images, "Use the images found on this computer for {n} ticked game", "Use the images found on this computer for {n} ticked games")
+        };
+        painter.text(pos2(x, fetch.center().y - 6.0 * s), Align2::LEFT_TOP, note, FontId::proportional(15.0 * s), Color32::from_gray(140));
 
-        let import_row = row_rect(footer_top + row_h);
+        let import_row = row_rect(footer_top + footer_h, footer_h);
         let ticked = sc.ticked();
         let label = if sc.pending.is_some() {
             tr!("Import").to_owned()
@@ -6220,10 +6312,11 @@ fn paint_image_cover(ui: &Ui, path: &Path, rect: Rect, alpha: f32, radius: u8) {
 }
 
 fn paint_image_placed(ui: &Ui, path: &Path, rect: Rect, alpha: f32, radius: u8, placement: CoverPlacement) {
-    let image = egui::Image::new(file_uri(path))
-        .show_loading_spinner(false)
-        .tint(Color32::WHITE.gamma_multiply(alpha))
-        .corner_radius(radius);
+    paint_placed(ui, egui::Image::new(file_uri(path)), rect, alpha, radius, placement);
+}
+
+fn paint_placed(ui: &Ui, image: egui::Image, rect: Rect, alpha: f32, radius: u8, placement: CoverPlacement) {
+    let image = image.show_loading_spinner(false).tint(Color32::WHITE.gamma_multiply(alpha)).corner_radius(radius);
     let Some(size) = image.load_for_size(ui.ctx(), rect.size()).ok().and_then(|t| t.size()) else {
         return image.paint_at(ui, rect);
     };

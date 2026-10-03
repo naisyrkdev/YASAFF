@@ -137,7 +137,6 @@
   "Nothing new to import. Install a game, or press Menu / Tab to scan again.": "No hay nada nuevo que importar. Instala un juego o pulsa Menu / Tab para buscar de nuevo.",
   "Found on: {path}": "Encontrado en: {path}",
   "Fetch metadata": "Obtener metadatos",
-  "Import images found on drive associated with game.\nNot found any assets to fetch from current attached stores": "Importar imágenes encontradas en el disco asociadas al juego.\nNo se encontraron recursos para obtener de las tiendas conectadas actualmente",
   "Uninstall \"{name}\"?": "¿Desinstalar «{name}»?",
   "Its files are deleted. Its saved data and settings are kept for a reinstall.": "Sus archivos se eliminarán. Sus datos guardados y ajustes se conservan para una reinstalación.",
   "Remove \"{name}\"?": "¿Quitar «{name}»?",
@@ -791,5 +790,15 @@
   "Remove bottom image": "Quitar la imagen inferior",
   "Select box bottom image": "Elige la imagen inferior de la caja",
   "Setting up initial stuff…": "Preparando el contenido inicial…",
-  "Under the box; seen while editing it": "Bajo la caja; se ve al editarla"
+  "Under the box; seen while editing it": "Bajo la caja; se ve al editarla",
+  "Cover": "Portada",
+  "Looking for images on this computer…": "Buscando imágenes en este equipo…",
+  "Looking for images…": "Buscando imágenes…",
+  "No images found on this computer for the ticked games": "No se encontraron imágenes en este equipo para los juegos marcados",
+  "Skip": "Omitir",
+  "Use the images found on this computer for {n} ticked games": [
+    "Usar las imágenes encontradas en este equipo para {n} juego marcado",
+    "Usar las imágenes encontradas en este equipo para {n} juegos marcados"
+  ],
+  "Welcome! Pick the games to add": "¡Bienvenido! Elige los juegos que quieres añadir"
 }

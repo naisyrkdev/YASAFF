@@ -11,6 +11,48 @@ pub struct Found {
     pub location: PathBuf,
 }
 
+pub struct Known {
+    commands: Vec<(String, Vec<String>)>,
+    ids: Vec<ExternalId>,
+}
+
+impl Known {
+    pub fn of(library: &crate::library::Library) -> Self {
+        Known {
+            commands: library.games.iter().map(|g| (g.target.clone(), g.args.clone())).collect(),
+            ids: library.games.iter().flat_map(|g| g.external_ids()).collect(),
+        }
+    }
+
+    pub fn has(&self, found: &Found) -> bool {
+        let entry = &found.entry;
+        self.commands.iter().any(|(target, args)| *target == entry.target && *args == entry.args)
+            || ids::from_command(&entry.target, &entry.args).iter().any(|id| self.ids.iter().any(|k| k.matches(id)))
+    }
+}
+
+pub struct Assets {
+    pub cover: Option<PathBuf>,
+    pub background: Option<PathBuf>,
+    pub thumbnail: Option<egui::ColorImage>,
+}
+
+const THUMBNAIL: (u32, u32) = (120, 180);
+
+pub fn assets(entry: &AppEntry) -> Assets {
+    let local = crate::metadata::local(&ids::from_command(&entry.target, &entry.args));
+    let (cover, background) = local.map(|l| (l.cover, l.background)).unwrap_or_default();
+    let cover = cover.or_else(|| entry.icon.clone());
+    let thumbnail = cover.as_deref().and_then(thumbnail);
+    Assets { cover, background, thumbnail }
+}
+
+fn thumbnail(path: &Path) -> Option<egui::ColorImage> {
+    let image = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.decode().ok()?;
+    let small = image.thumbnail(THUMBNAIL.0, THUMBNAIL.1).into_rgba8();
+    Some(egui::ColorImage::from_rgba_unmultiplied([small.width() as usize, small.height() as usize], small.as_raw()))
+}
+
 pub fn scan() -> Vec<Found> {
     let mut found = steam_games();
     found.extend(heroic_games());

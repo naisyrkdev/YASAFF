@@ -125,15 +125,14 @@ fn spawn_worker(ctx: Context, updates: mpsc::Sender<Update>) -> mpsc::Sender<Req
     tx
 }
 
-struct Found {
-    cover: Option<PathBuf>,
-    background: Option<PathBuf>,
-    source: &'static str,
+pub struct Found {
+    pub cover: Option<PathBuf>,
+    pub background: Option<PathBuf>,
+    pub source: &'static str,
 }
 
-fn artwork(request: &Request) -> Result<Artwork> {
-    let found = request
-        .ids
+pub fn local(external: &[ExternalId]) -> Option<Found> {
+    external
         .iter()
         .filter_map(|id| match id.store.as_str() {
             ids::STEAM => Some(steam(&id.id)),
@@ -142,8 +141,11 @@ fn artwork(request: &Request) -> Result<Artwork> {
             ids::AMAZON => heroic(&id.id, "nile_library.json", "library"),
             _ => None,
         })
-        .find(|f| f.cover.is_some() || f.background.is_some());
-    let Some(found) = found else { bail!(tr!("none on this computer yet; open the game once in its launcher, or set it by hand")) };
+        .find(|f| f.cover.is_some() || f.background.is_some())
+}
+
+fn artwork(request: &Request) -> Result<Artwork> {
+    let Some(found) = local(&request.ids) else { bail!(tr!("none on this computer yet; open the game once in its launcher, or set it by hand")) };
 
     let dir = crate::library::Library::data_dir().join("downloads");
     let mut downloads = Vec::new();

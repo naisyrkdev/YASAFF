@@ -137,7 +137,6 @@
   "Nothing new to import. Install a game, or press Menu / Tab to scan again.": "Rien de nouveau à importer. Installez un jeu, ou appuyez sur Menu / Tab pour relancer la recherche.",
   "Found on: {path}": "Trouvé dans : {path}",
   "Fetch metadata": "Récupérer les métadonnées",
-  "Import images found on drive associated with game.\nNot found any assets to fetch from current attached stores": "Importer les images trouvées sur le disque associées au jeu.\nAucune ressource à récupérer depuis les boutiques actuellement connectées",
   "Uninstall \"{name}\"?": "Désinstaller « {name} » ?",
   "Its files are deleted. Its saved data and settings are kept for a reinstall.": "Ses fichiers seront supprimés. Ses sauvegardes et réglages sont conservés pour une réinstallation.",
   "Remove \"{name}\"?": "Retirer « {name} » ?",
@@ -791,5 +790,15 @@
   "Remove bottom image": "Retirer l'image du dessous",
   "Select box bottom image": "Choisir l'image du dessous de la boîte",
   "Setting up initial stuff…": "Préparation du contenu initial…",
-  "Under the box; seen while editing it": "Sous la boîte ; visible pendant sa modification"
+  "Under the box; seen while editing it": "Sous la boîte ; visible pendant sa modification",
+  "Cover": "Couverture",
+  "Looking for images on this computer…": "Recherche d'images sur cet ordinateur…",
+  "Looking for images…": "Recherche d'images…",
+  "No images found on this computer for the ticked games": "Aucune image trouvée sur cet ordinateur pour les jeux cochés",
+  "Skip": "Passer",
+  "Use the images found on this computer for {n} ticked games": [
+    "Utiliser les images trouvées sur cet ordinateur pour {n} jeu coché",
+    "Utiliser les images trouvées sur cet ordinateur pour {n} jeux cochés"
+  ],
+  "Welcome! Pick the games to add": "Bienvenue ! Choisissez les jeux à ajouter"
 }
