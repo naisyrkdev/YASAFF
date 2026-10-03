@@ -795,10 +795,17 @@
   "Looking for images on this computer…": "Recherche d'images sur cet ordinateur…",
   "Looking for images…": "Recherche d'images…",
   "No images found on this computer for the ticked games": "Aucune image trouvée sur cet ordinateur pour les jeux cochés",
-  "Skip": "Passer",
   "Use the images found on this computer for {n} ticked games": [
     "Utiliser les images trouvées sur cet ordinateur pour {n} jeu coché",
     "Utiliser les images trouvées sur cet ordinateur pour {n} jeux cochés"
   ],
-  "Welcome! Pick the games to add": "Bienvenue ! Choisissez les jeux à ajouter"
+  "Welcome! Pick the games to add": "Bienvenue ! Choisissez les jeux à ajouter",
+  "Import games": "Importer des jeux",
+  "Pick from the Steam, Heroic and shortcut games installed on this computer": "Choisissez parmi les jeux Steam, Heroic et les raccourcis de jeux installés sur cet ordinateur",
+  "Start blank": "Commencer à vide",
+  "An empty library; add games any time with Add game": "Une bibliothèque vide ; ajoutez des jeux à tout moment avec Ajouter un jeu",
+  "Start blank (with mock games)": "Commencer à vide (avec des jeux fictifs)",
+  "All customization images included": "Toutes les images de personnalisation incluses",
+  "Welcome!": "Bienvenue !",
+  "How would you like to start?": "Comment voulez-vous commencer ?"
 }

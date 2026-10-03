@@ -145,6 +145,19 @@ const ADD_MENU: [(AddSource, &str, &str); 5] = [
 ];
 
 #[derive(Clone, Copy, PartialEq)]
+enum Start {
+    Import,
+    Blank,
+    Demo,
+}
+
+const WELCOME: [(Start, &str, &str); 3] = [
+    (Start::Import, tr_key!("Import games"), tr_key!("Pick from the Steam, Heroic and shortcut games installed on this computer")),
+    (Start::Blank, tr_key!("Start blank"), tr_key!("An empty library; add games any time with Add game")),
+    (Start::Demo, tr_key!("Start blank (with mock games)"), tr_key!("All customization images included")),
+];
+
+#[derive(Clone, Copy, PartialEq)]
 enum PromptKind {
     Rename,
     AddCommand,
@@ -391,6 +404,7 @@ impl Drop for Launching {
 
 enum Mode {
     Home,
+    Welcome { cursor: usize },
     Options { cursor: usize },
     SwapBubble { from: usize, target: usize },
     AddMenu { cursor: usize },
@@ -803,8 +817,7 @@ impl App {
         app.refresh_store();
         app.find_missing_save_dirs();
         if initial::wanted(&app.library) {
-            app.setup = Some(InitialSetup { rx: initial::start(app.ctx.clone()), total: 0, done: 0 });
-            app.mode = Mode::Scan(Box::new(ScanState::start(&app.ctx, scan::Known::of(&app.library), true, true)));
+            app.mode = Mode::Welcome { cursor: 0 };
         }
         app
     }
@@ -1280,6 +1293,15 @@ impl App {
                 Action::Back => self.mode = Mode::Options { cursor: self.menu_index(MenuItem::SwapBubble) },
                 _ => {}
             },
+            Mode::Welcome { cursor } => match action {
+                Action::Up => *cursor = cursor.saturating_sub(1),
+                Action::Down => *cursor = (*cursor + 1).min(WELCOME.len() - 1),
+                Action::Confirm => {
+                    let start = WELCOME[*cursor].0;
+                    self.start_with(start);
+                }
+                _ => {}
+            },
             Mode::AddMenu { cursor } => match action {
                 Action::Up => *cursor = cursor.saturating_sub(1),
                 Action::Down => *cursor = (*cursor + 1).min(ADD_MENU.len() - 1),
@@ -1336,7 +1358,7 @@ impl App {
                     sc.checked.fill(!all);
                 }
                 Action::Options => **sc = ScanState::start(ctx, scan::Known::of(&self.library), sc.fetch_artwork, sc.first_run),
-                Action::Back if sc.first_run => self.mode = Mode::Home,
+                Action::Back if sc.first_run => self.mode = Mode::Welcome { cursor: 0 },
                 Action::Back => self.mode = Mode::AddMenu { cursor: add_menu_index(AddSource::Scan) },
                 _ => {}
             },
@@ -2431,6 +2453,25 @@ impl App {
             self.focus_guard_until = None;
         } else if !ctx.input(|i| i.focused) {
             ctx.send_viewport_cmd(ViewportCommand::Focus);
+        }
+    }
+
+    fn start_with(&mut self, start: Start) {
+        match start {
+            Start::Import => {
+                initial::mark_done();
+                self.mode = Mode::Scan(Box::new(ScanState::start(&self.ctx, scan::Known::of(&self.library), true, true)));
+            }
+            Start::Blank => {
+                initial::mark_done();
+                self.mode = Mode::Home;
+            }
+            Start::Demo => {
+                if self.setup.is_none() {
+                    self.setup = Some(InitialSetup { rx: initial::start(self.ctx.clone()), total: 0, done: 0 });
+                }
+                self.mode = Mode::Home;
+            }
         }
     }
 
@@ -3937,12 +3978,6 @@ impl App {
                 Hint(Action::Left, tr!("Category")),
                 Hint(Action::Back, tr!("Back")),
             ],
-            Mode::Scan(ref sc) if sc.first_run => &[
-                Hint(Action::Confirm, tr!("Select")),
-                Hint(Action::Add, tr!("All / none")),
-                Hint(Action::Options, tr!("Scan again")),
-                Hint(Action::Back, tr!("Skip")),
-            ],
             Mode::Scan(_) => &[
                 Hint(Action::Confirm, tr!("Select")),
                 Hint(Action::Add, tr!("All / none")),
@@ -3965,6 +4000,7 @@ impl App {
             ],
             Mode::DiscChooser { .. } => &[Hint(Action::Confirm, tr!("Start")), Hint(Action::Back, tr!("Cancel"))],
             Mode::DiscNotFound { .. } => &[Hint(Action::Confirm, tr!("OK"))],
+            Mode::Welcome { .. } => &[Hint(Action::Confirm, tr!("Select"))],
             Mode::ProfileImported { .. } => &[Hint(Action::Confirm, tr!("Select")), Hint(Action::Back, tr!("Back"))],
             Mode::Burn(_) => match &self.burning {
                 Some(Burning { result: Some(Err(_)), .. }) => &[Hint(Action::Confirm, tr!("Try again"))],
@@ -5529,6 +5565,50 @@ impl App {
         }
     }
 
+    fn draw_welcome(&mut self, ui: &Ui, screen: Rect, s: f32) {
+        let Mode::Welcome { cursor } = self.mode else { return };
+        let painter = ui.painter();
+        painter.rect_filled(screen, 0, Color32::from_black_alpha(170));
+        let button_h = 88.0 * s;
+        let gap = 14.0 * s;
+        let height = 170.0 * s + WELCOME.len() as f32 * (button_h + gap);
+        let dialog = Rect::from_center_size(screen.center(), vec2((760.0 * s).min(screen.width() - 40.0), height));
+        painter.rect_filled(dialog, (8.0 * s) as u8, Color32::from_rgb(14, 20, 36));
+        painter.text(dialog.center_top() + vec2(0.0, 44.0 * s), Align2::CENTER_TOP, tr!("Welcome!"), FontId::proportional(32.0 * s), Color32::WHITE);
+        let subtitle = tr!("How would you like to start?");
+        painter.text(dialog.center_top() + vec2(0.0, 92.0 * s), Align2::CENTER_TOP, subtitle, FontId::proportional(19.0 * s), Color32::from_gray(170));
+
+        let mut hovered = None;
+        let mut clicked = None;
+        for (i, (_, label, note)) in WELCOME.iter().enumerate() {
+            let top = dialog.top() + 146.0 * s + i as f32 * (button_h + gap);
+            let r = Rect::from_min_size(pos2(dialog.left() + 40.0 * s, top), vec2(dialog.width() - 80.0 * s, button_h));
+            let focused = i == cursor;
+            let (fill, text, sub) = if focused {
+                (Color32::WHITE, Color32::BLACK, Color32::from_gray(70))
+            } else {
+                (Color32::from_white_alpha(22), Color32::WHITE, Color32::from_gray(150))
+            };
+            painter.rect_filled(r, (6.0 * s) as u8, fill);
+            let x = r.left() + 28.0 * s;
+            painter.text(pos2(x, r.center().y - 4.0 * s), Align2::LEFT_BOTTOM, i18n::tr(label), FontId::proportional(24.0 * s), text);
+            painter.text(pos2(x, r.center().y + 2.0 * s), Align2::LEFT_TOP, i18n::tr(note), FontId::proportional(16.0 * s), sub);
+            let resp = ui.interact(r, Id::new(("welcome", i)), Sense::click());
+            if resp.hovered() && ui.input(|i| i.pointer.delta() != egui::Vec2::ZERO) {
+                hovered = Some(i);
+            }
+            if resp.clicked() {
+                clicked = Some(i);
+            }
+        }
+        if let Some(i) = hovered {
+            self.mode = Mode::Welcome { cursor: i };
+        }
+        if let Some(i) = clicked {
+            self.start_with(WELCOME[i].0);
+        }
+    }
+
     fn draw_disc_not_found(&mut self, ui: &Ui, screen: Rect, s: f32) {
         let Mode::DiscNotFound { name } = &self.mode else { return };
         let painter = ui.painter();
@@ -5804,6 +5884,7 @@ impl eframe::App for App {
         self.draw_add_menu(ui, screen, s);
         self.draw_picker(ui, screen, s);
         self.draw_scan(ui, screen, s);
+        self.draw_welcome(ui, screen, s);
         self.draw_store(ui, screen, s);
         self.draw_store_theme(ui, screen, s);
         self.draw_confirm_remove(ui, screen, s);
