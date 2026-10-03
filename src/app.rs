@@ -20,7 +20,7 @@ use crate::settings::{DiscAction, Language, MouseSettings, Settings};
 use crate::stores::Store;
 use crate::video::{self, VideoPlayer};
 use crate::theme::{
-    self, BackgroundKind, BarPosition, BarSlot, BarStyle, BoxCase, BubbleSettings, DiscKind, DiscSettings, DiscSpin, GradientDirection, GridAlign, GridSettings,
+    self, BackgroundKind, BarPosition, BarSlot, BarStyle, BoxCase, BubbleSettings, DiscKind, DiscSettings, DiscSpin, FaceButton, GradientDirection, GridAlign, GridSettings,
     ImageFit, SpineLabel, Theme, ThemeKind, TileSettings, TileStyle, ViewKind,
 };
 use egui::{
@@ -213,6 +213,7 @@ enum SettingRow {
     BackgroundImage,
     ImageFit,
     Bar(BarSlot, BarRow),
+    Button(FaceButton, ButtonRow),
     StoreEnabled(Store),
     StoreBackground(Store),
     StoreCommand(Store),
@@ -261,6 +262,14 @@ enum BarRow {
     ImageY,
     ImageRotation,
     ImageReset,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ButtonRow {
+    Color,
+    TextColor,
+    Icon,
+    IconClear,
 }
 
 const SOURCE_URL: &str = "https://github.com/naisyrkdev/YASAFF";
@@ -559,6 +568,7 @@ const PAD_X: Color32 = Color32::from_rgb(0x2f, 0x7f, 0xe0);
 const PAD_Y: Color32 = Color32::from_rgb(0xe8, 0xb9, 0x24);
 const PAD_MENU: Color32 = Color32::from_gray(90);
 const KEY_FILL: Color32 = Color32::from_rgba_premultiplied(40, 40, 40, 40);
+const BUTTON_PRESETS: &[Color32] = &[PAD_A, PAD_B, PAD_X, PAD_Y, PAD_MENU, Color32::WHITE, Color32::BLACK];
 const BUTTON_OPEN: char = '\u{E000}';
 const BUTTON_CLOSE: char = '\u{E001}';
 
@@ -852,6 +862,16 @@ impl App {
 
     fn theme(&self) -> &Theme {
         &self.themes[self.theme]
+    }
+
+    fn button_skin(&self, glyph: &str) -> ButtonSkin {
+        let Some(button) = FaceButton::from_glyph(glyph) else { return ButtonSkin::plain(glyph_color(glyph)) };
+        let look = self.theme().settings.buttons.get(button);
+        ButtonSkin {
+            fill: look.color.unwrap_or(glyph_color(glyph)),
+            text: look.text_color.unwrap_or(Color32::WHITE),
+            icon: self.theme().button_icon(button),
+        }
     }
 
     fn save_theme(&mut self) {
@@ -1448,6 +1468,13 @@ impl App {
             };
             rows.extend(kind_rows.iter().map(|&r| R::Bar(slot, r)));
         }
+        for button in FaceButton::ALL {
+            let button_rows: &[ButtonRow] = match self.theme().button_icon(button) {
+                Some(_) => &[ButtonRow::Icon, ButtonRow::IconClear],
+                None => &[ButtonRow::Color, ButtonRow::TextColor, ButtonRow::Icon],
+            };
+            rows.extend(button_rows.iter().map(|&r| R::Button(button, r)));
+        }
         rows.extend([R::Theme, R::ThemeRename, R::ThemeNew, R::ThemeExport, R::ThemeImport]);
         if theme::deletable(&self.themes, self.theme) {
             rows.push(R::ThemeDelete);
@@ -1558,6 +1585,16 @@ impl App {
         boxes.custom_size = boxes.size_mm();
         boxes.custom_size[i] = mm.round().clamp(min, max);
         self.save_theme();
+    }
+
+    fn button_color_slot(&mut self, row: SettingRow) -> Option<&mut Option<Color32>> {
+        let SettingRow::Button(button, field) = row else { return None };
+        let look = self.themes[self.theme].settings.buttons.get_mut(button);
+        match field {
+            ButtonRow::Color => Some(&mut look.color),
+            ButtonRow::TextColor => Some(&mut look.text_color),
+            _ => None,
+        }
     }
 
     fn game_color_slot(&mut self, row: SettingRow) -> Option<&mut Option<Color32>> {
@@ -1742,6 +1779,28 @@ impl App {
                 if let Err(e) = self.themes[self.theme].set_bar_image(slot, &path) {
                     self.notify(tr!("Could not set image: {error}", error = format!("{e:#}")));
                 }
+            }
+            SettingRow::Button(button, ButtonRow::Icon) => {
+                let Some(path) = rfd::FileDialog::new()
+                    .set_title(tr!("Select button icon"))
+                    .add_filter(tr!("Images"), IMAGE_EXTS)
+                    .pick_file()
+                else {
+                    return;
+                };
+                if let Err(e) = self.themes[self.theme].set_button_icon(button, &path) {
+                    self.notify(tr!("Could not set image: {error}", error = format!("{e:#}")));
+                }
+            }
+            SettingRow::Button(button, ButtonRow::IconClear) => {
+                if let Err(e) = self.themes[self.theme].clear_button_icon(button) {
+                    self.notify(tr!("Could not save theme: {error}", error = format!("{e:#}")));
+                }
+                self.mode = self.settings_at(SettingRow::Button(button, ButtonRow::Icon));
+            }
+            SettingRow::Button(_, ButtonRow::Color | ButtonRow::TextColor) => {
+                let buffer = self.button_color_slot(row).and_then(|c| *c).map(theme::to_hex).unwrap_or_default();
+                self.mode = Mode::Prompt { kind: PromptKind::Color(row), buffer };
             }
             SettingRow::Bar(slot, BarRow::ImageReset) => {
                 self.themes[self.theme].settings.bar_mut(slot).reset_image_placement();
@@ -1992,6 +2051,10 @@ impl App {
                     BarRow::ImageY => bar.image_y = snap(step(bar.image_y, 0.05 * d, BarStyle::OFFSET_RANGE)),
                     _ => bar.image_rotation = (bar.image_rotation + 5.0 * d + 180.0).rem_euclid(360.0) - 180.0,
                 }
+            }
+            SettingRow::Button(_, ButtonRow::Color | ButtonRow::TextColor) => {
+                let Some(slot) = self.button_color_slot(row) else { return };
+                *slot = cycle_or_default(BUTTON_PRESETS, *slot, delta);
             }
             SettingRow::Bar(_, BarRow::Color | BarRow::GradientFrom | BarRow::GradientTo)
             | SettingRow::BackgroundColor
@@ -2552,6 +2615,18 @@ impl App {
                             *slot = color;
                         }
                         self.save();
+                    }
+                    None => self.notify(tr!("\"{text}\" is not a color. Use hex, e.g. #0b2a66", text = text)),
+                }
+                self.mode = self.settings_at(row);
+            }
+            PromptKind::Color(row @ SettingRow::Button(..)) => {
+                match if text.is_empty() { Some(None) } else { theme::parse_hex(text).map(Some) } {
+                    Some(color) => {
+                        if let Some(slot) = self.button_color_slot(row) {
+                            *slot = color;
+                        }
+                        self.save_theme();
                     }
                     None => self.notify(tr!("\"{text}\" is not a color. Use hex, e.g. #0b2a66", text = text)),
                 }
@@ -3439,15 +3514,15 @@ impl App {
         let mut clicked = None;
         for (i, Hint(action, label)) in hints.iter().enumerate().rev() {
             let control = action.control();
-            let (glyph, fill, click) = match self.input.bindings().button_for(control).filter(|_| gamepad) {
+            let (glyph, skin, click) = match self.input.bindings().button_for(control).filter(|_| gamepad) {
                 _ if matches!(control, Control::Up | Control::Down | Control::Left | Control::Right) => {
-                    if gamepad { ("D-pad", PAD_MENU, None) } else { (tr!("Arrows"), KEY_FILL, None) }
+                    if gamepad { ("D-pad", ButtonSkin::plain(PAD_MENU), None) } else { (tr!("Arrows"), ButtonSkin::plain(KEY_FILL), None) }
                 }
-                Some(button) => (button.glyph(), glyph_color(button.glyph()), Some(*action)),
-                None => (keyboard_key(*action), KEY_FILL, Some(*action)),
+                Some(button) => (button.glyph(), self.button_skin(button.glyph()), Some(*action)),
+                None => (keyboard_key(*action), ButtonSkin::plain(KEY_FILL), Some(*action)),
             };
             let label = painter.layout_no_wrap((*label).to_owned(), font.clone(), Color32::from_gray(220));
-            let left = x - label.size().x - 10.0 * s - button_width(painter, glyph, &font, h, s);
+            let left = x - label.size().x - 10.0 * s - button_width(painter, glyph, &skin, &font, h, s);
             let area = Rect::from_min_max(pos2(left, y - h / 2.0), pos2(x, y + h / 2.0)).expand(6.0 * s);
             if let Some(action) = click {
                 let resp = ui.interact(area, Id::new(("hint", i)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -3458,7 +3533,7 @@ impl App {
                     clicked = Some(action);
                 }
             }
-            paint_button(painter, pos2(left, y), glyph, fill, font.clone(), h, s);
+            paint_button(painter, pos2(left, y), glyph, &skin, font.clone(), h, s);
             painter.galley(pos2(x - label.size().x, y - label.size().y / 2.0), label, Color32::from_gray(220));
             x = left - 28.0 * s;
         }
@@ -3946,6 +4021,8 @@ impl App {
                     SettingRow::GradientFrom | SettingRow::Bar(_, BarRow::GradientFrom) => tr!("Gradient start color"),
                     SettingRow::GradientTo | SettingRow::Bar(_, BarRow::GradientTo) => tr!("Gradient end color"),
                     SettingRow::Bar(..) => tr!("Bar color"),
+                    SettingRow::Button(_, ButtonRow::TextColor) => tr!("Button letter color"),
+                    SettingRow::Button(..) => tr!("Button color"),
                     SettingRow::BoxSpineColor | SettingRow::GameSpineColor => tr!("Spine color"),
                     SettingRow::BoxSpineText | SettingRow::GameSpineText => tr!("Spine text color"),
                     SettingRow::BoxTopColor | SettingRow::GameTopColor => tr!("Top color"),
@@ -3954,6 +4031,8 @@ impl App {
                 },
                 Some(if row.page() == Page::GameBox {
                     tr!("Hex color: #rrggbb, e.g. #0b2a66. Leave empty to use the theme's color.")
+                } else if matches!(row, SettingRow::Button(..)) {
+                    tr!("Hex color: #rrggbb, e.g. #5cb83c. Leave empty for the default. Left/Right in Settings steps through presets.")
                 } else if matches!(row, SettingRow::Bar(..)) {
                     tr!("Hex color: #rrggbb, or #rrggbbaa to see through it, e.g. #00000099. Left/Right in Settings steps through presets.")
                 } else {
@@ -4031,6 +4110,10 @@ impl App {
             }
             SettingRow::GameArt => Some((tr!("Background"), None)),
             SettingRow::Bar(slot, BarRow::Enabled) => Some((slot.label(), None)),
+            SettingRow::Button(FaceButton::A, ButtonRow::Color) => Some(self.buttons_heading()),
+            SettingRow::Button(FaceButton::A, ButtonRow::Icon) if self.theme().button_icon(FaceButton::A).is_some() => {
+                Some(self.buttons_heading())
+            }
             SettingRow::DiscKind => Some((tr!("Discs"), Some((tr!("Covers are printed on the label side").to_owned(), Color32::from_gray(140))))),
             SettingRow::ObjectColor => Some((
                 tr!("3D objects"),
@@ -4052,6 +4135,10 @@ impl App {
             }
             _ => None,
         }
+    }
+
+    fn buttons_heading(&self) -> (&'static str, Option<(String, Color32)>) {
+        (tr!("Buttons"), Some((tr!("How A, B, X and Y look in the button hints").to_owned(), Color32::from_gray(140))))
     }
 
     fn setting_sections(&self, rows: &[SettingRow]) -> Vec<SettingSection> {
@@ -4420,6 +4507,30 @@ impl App {
                     BarRow::ImageReset => (tr!("Reset image placement").into(), tr!("Back to 100 %, centered, not rotated"), Action(tr!("Reset"))),
                 }
             }
+            SettingRow::Button(button, field) => {
+                let look = theme.buttons.get(button);
+                let token = face_token(button);
+                let optional = |color: Option<Color32>, default: Color32| match color {
+                    Some(c) => RowValue::Color(c),
+                    None => RowValue::DefaultColor(default),
+                };
+                let color_sub = tr!("Enter to type a hex value; empty uses the default");
+                match field {
+                    ButtonRow::Color => {
+                        (tr!("{button} color", button = token), color_sub, optional(look.color, glyph_color(button.glyph())))
+                    }
+                    ButtonRow::TextColor => (tr!("{button} letter color", button = token), color_sub, optional(look.text_color, Color32::WHITE)),
+                    ButtonRow::Icon => {
+                        let sub = if self.theme().button_icon(button).is_some() {
+                            tr!("Copied into the theme's images folder")
+                        } else {
+                            tr!("A .png image drawn instead of the colored button")
+                        };
+                        (tr!("{button} icon", button = token), sub, Action(tr!("Choose…")))
+                    }
+                    ButtonRow::IconClear => (tr!("Remove {button} icon", button = token), tr!("Back to the colored button"), Action(tr!("Remove"))),
+                }
+            }
             SettingRow::AppStoreUrl => {
                 let url = self.settings.app_store().url.trim();
                 let value = if url.is_empty() { tr!("Not set").to_owned() } else { url.to_owned() };
@@ -4524,6 +4635,7 @@ impl App {
         let offset = view.top() - scroll;
         let painter = painter.with_clip_rect(view);
 
+        let skin = |glyph: &str| self.button_skin(glyph);
         let mut clicked = None;
         let mut adjusted = None;
         let mut hovered = None;
@@ -4543,9 +4655,9 @@ impl App {
             }
             let x = r.left() + 30.0 * s;
             if sub.is_empty() {
-                text_with_buttons(&painter, pos2(x, r.center().y), Align2::LEFT_CENTER, &label, FontId::proportional(21.0 * s), text_color, s);
+                text_with_buttons(&painter, pos2(x, r.center().y), Align2::LEFT_CENTER, &label, FontId::proportional(21.0 * s), text_color, s, &skin);
             } else {
-                text_with_buttons(&painter, pos2(x, r.center().y - 2.0 * s), Align2::LEFT_BOTTOM, &label, FontId::proportional(21.0 * s), text_color, s);
+                text_with_buttons(&painter, pos2(x, r.center().y - 2.0 * s), Align2::LEFT_BOTTOM, &label, FontId::proportional(21.0 * s), text_color, s, &skin);
                 painter.text(pos2(x, r.center().y + 2.0 * s), Align2::LEFT_TOP, sub, FontId::proportional(15.0 * s), Color32::from_gray(140));
             }
 
@@ -5643,16 +5755,43 @@ fn paint_image_fit(ui: &Ui, path: &Path, rect: Rect, fit: ImageFit) {
     image.uv(uv).paint_at(ui, target);
 }
 
-fn button_width(painter: &Painter, glyph: &str, font: &FontId, h: f32, s: f32) -> f32 {
-    (painter.layout_no_wrap(glyph.to_owned(), font.clone(), Color32::WHITE).size().x + 16.0 * s).max(h)
+struct ButtonSkin {
+    fill: Color32,
+    text: Color32,
+    icon: Option<PathBuf>,
 }
 
-fn paint_button(painter: &Painter, left_center: Pos2, glyph: &str, fill: Color32, font: FontId, h: f32, s: f32) -> Rect {
-    let galley = painter.layout_no_wrap(glyph.to_owned(), font, Color32::WHITE);
+impl ButtonSkin {
+    fn plain(fill: Color32) -> Self {
+        ButtonSkin { fill, text: Color32::WHITE, icon: None }
+    }
+}
+
+fn button_icon(painter: &Painter, skin: &ButtonSkin, h: f32) -> Option<(egui::TextureId, Vec2)> {
+    let image = egui::Image::new(file_uri(skin.icon.as_deref()?));
+    let Ok(egui::load::TexturePoll::Ready { texture }) = image.load_for_size(painter.ctx(), vec2(h, h)) else { return None };
+    let aspect = (texture.size.x / texture.size.y.max(1.0)).clamp(0.25, 4.0);
+    Some((texture.id, vec2(h * aspect, h)))
+}
+
+fn button_width(painter: &Painter, glyph: &str, skin: &ButtonSkin, font: &FontId, h: f32, s: f32) -> f32 {
+    if let Some((_, size)) = button_icon(painter, skin, h) {
+        return size.x;
+    }
+    (painter.layout_no_wrap(glyph.to_owned(), font.clone(), skin.text).size().x + 16.0 * s).max(h)
+}
+
+fn paint_button(painter: &Painter, left_center: Pos2, glyph: &str, skin: &ButtonSkin, font: FontId, h: f32, s: f32) -> Rect {
+    if let Some((texture, size)) = button_icon(painter, skin, h) {
+        let rect = Rect::from_min_size(pos2(left_center.x, left_center.y - h / 2.0), size);
+        painter.image(texture, rect, Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)), Color32::WHITE);
+        return rect;
+    }
+    let galley = painter.layout_no_wrap(glyph.to_owned(), font, skin.text);
     let w = (galley.size().x + 16.0 * s).max(h);
     let pill = Rect::from_min_size(pos2(left_center.x, left_center.y - h / 2.0), vec2(w, h));
-    painter.rect_filled(pill, (h / 2.0) as u8, fill);
-    painter.galley(pill.center() - galley.size() / 2.0, galley, Color32::WHITE);
+    painter.rect_filled(pill, (h / 2.0) as u8, skin.fill);
+    painter.galley(pill.center() - galley.size() / 2.0, galley, skin.text);
     pill
 }
 
@@ -5682,7 +5821,12 @@ fn button_token(button: PadButton) -> String {
     format!("{BUTTON_OPEN}{}{BUTTON_CLOSE}", button.glyph())
 }
 
-fn text_with_buttons(painter: &Painter, pos: Pos2, align: Align2, text: &str, font: FontId, color: Color32, s: f32) {
+fn face_token(button: FaceButton) -> String {
+    format!("{BUTTON_OPEN}{}{BUTTON_CLOSE}", button.glyph())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn text_with_buttons(painter: &Painter, pos: Pos2, align: Align2, text: &str, font: FontId, color: Color32, s: f32, skin: &dyn Fn(&str) -> ButtonSkin) {
     if !text.contains(BUTTON_OPEN) {
         painter.text(pos, align, text, font, color);
         return;
@@ -5700,7 +5844,7 @@ fn text_with_buttons(painter: &Painter, pos: Pos2, align: Align2, text: &str, fo
             _ => (None, part),
         };
         if let Some(glyph) = glyph {
-            x = paint_button(painter, pos2(x, y), glyph, glyph_color(glyph), font.clone(), h, s).right();
+            x = paint_button(painter, pos2(x, y), glyph, &skin(glyph), font.clone(), h, s).right();
         }
         if !rest.is_empty() {
             x = painter.text(pos2(x, y), Align2::LEFT_CENTER, rest, font.clone(), color).right();

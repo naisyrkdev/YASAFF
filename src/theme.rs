@@ -597,6 +597,80 @@ impl BarStyle {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+pub enum FaceButton {
+    A,
+    B,
+    X,
+    Y,
+}
+
+impl FaceButton {
+    pub const ALL: [Self; 4] = [Self::A, Self::B, Self::X, Self::Y];
+
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Self::A => "A",
+            Self::B => "B",
+            Self::X => "X",
+            Self::Y => "Y",
+        }
+    }
+
+    pub fn from_glyph(glyph: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|b| b.glyph() == glyph)
+    }
+
+    fn file_prefix(self) -> &'static str {
+        match self {
+            Self::A => "button-a",
+            Self::B => "button-b",
+            Self::X => "button-x",
+            Self::Y => "button-y",
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+#[serde(default)]
+pub struct ButtonLook {
+    #[serde(with = "hex_opt", skip_serializing_if = "Option::is_none")]
+    pub color: Option<Color32>,
+    #[serde(with = "hex_opt", skip_serializing_if = "Option::is_none")]
+    pub text_color: Option<Color32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+#[serde(default)]
+pub struct ButtonStyles {
+    pub a: ButtonLook,
+    pub b: ButtonLook,
+    pub x: ButtonLook,
+    pub y: ButtonLook,
+}
+
+impl ButtonStyles {
+    pub fn get(&self, button: FaceButton) -> &ButtonLook {
+        match button {
+            FaceButton::A => &self.a,
+            FaceButton::B => &self.b,
+            FaceButton::X => &self.x,
+            FaceButton::Y => &self.y,
+        }
+    }
+
+    pub fn get_mut(&mut self, button: FaceButton) -> &mut ButtonLook {
+        match button {
+            FaceButton::A => &mut self.a,
+            FaceButton::B => &mut self.b,
+            FaceButton::X => &mut self.x,
+            FaceButton::Y => &mut self.y,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct StoreOrigin {
     pub id: String,
@@ -622,6 +696,7 @@ pub struct ThemeSettings {
     pub background: Background,
     pub top_bar: BarStyle,
     pub bottom_bar: BarStyle,
+    pub buttons: ButtonStyles,
 }
 
 impl ThemeSettings {
@@ -686,6 +761,7 @@ impl Default for ThemeSettings {
             background: Background::default(),
             top_bar: BarStyle::default(),
             bottom_bar: BarStyle::default(),
+            buttons: ButtonStyles::default(),
         }
     }
 }
@@ -799,6 +875,33 @@ impl Theme {
         bar.kind = BackgroundKind::Image;
         bar.reset_image_placement();
         self.save()
+    }
+
+    pub fn button_icon(&self, button: FaceButton) -> Option<PathBuf> {
+        let name = self.settings.buttons.get(button).icon.as_deref()?;
+        is_plain_file_name(name).then(|| self.images_dir().join(name))
+    }
+
+    pub fn set_button_icon(&mut self, button: FaceButton, src: &Path) -> Result<()> {
+        let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("png").to_lowercase();
+        let name = format!("{}-{}.{ext}", button.file_prefix(), now_secs());
+        fs::create_dir_all(self.images_dir())?;
+        fs::copy(src, self.images_dir().join(&name)).with_context(|| format!("copying {}", src.display()))?;
+        self.remove_button_icon_file(button);
+        self.settings.buttons.get_mut(button).icon = Some(name);
+        self.save()
+    }
+
+    pub fn clear_button_icon(&mut self, button: FaceButton) -> Result<()> {
+        self.remove_button_icon_file(button);
+        self.settings.buttons.get_mut(button).icon = None;
+        self.save()
+    }
+
+    fn remove_button_icon_file(&self, button: FaceButton) {
+        if let Some(old) = self.button_icon(button) {
+            let _ = fs::remove_file(old);
+        }
     }
 
     pub fn duplicate(&self, name: String) -> Result<Theme> {
@@ -1112,6 +1215,20 @@ mod tests {
         assert!(!plain.contains("\"store\""));
         let s: ThemeSettings = serde_json::from_str(r#"{"name":"N","store":{"id":"neon-nights","version":2}}"#).unwrap();
         assert_eq!(s.store, Some(StoreOrigin { id: "neon-nights".into(), version: 2 }));
+    }
+
+    #[test]
+    fn button_styles_keep_only_what_was_changed() {
+        let s: ThemeSettings = serde_json::from_str(r##"{"buttons":{"b":{"color":"#102030","icon":"button-b-1.png"}}}"##).unwrap();
+        assert_eq!(s.buttons.a, ButtonLook::default());
+        assert_eq!(s.buttons.get(FaceButton::B).color, Some(Color32::from_rgb(0x10, 0x20, 0x30)));
+        assert_eq!(s.buttons.b.text_color, None);
+        assert_eq!(s.buttons.b.icon.as_deref(), Some("button-b-1.png"));
+        let json: serde_json::Value = serde_json::to_value(&s.buttons).unwrap();
+        assert_eq!(json["b"], serde_json::json!({"color": "#102030", "icon": "button-b-1.png"}));
+        assert_eq!(json["a"], serde_json::json!({}));
+        assert_eq!(FaceButton::from_glyph("Y"), Some(FaceButton::Y));
+        assert_eq!(FaceButton::from_glyph("LB"), None);
     }
 
     #[test]

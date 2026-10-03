@@ -677,5 +677,18 @@
   "Swap here": "Intercambiar aquí",
   "Pick a bubble to swap places with {name}": "Elige una burbuja para intercambiar el sitio con {name}",
   "Only games can swap places": "Solo los juegos pueden intercambiar su sitio",
-  "Move here": "Mover aquí"
+  "Move here": "Mover aquí",
+  "A .png image drawn instead of the colored button": "Una imagen .png que sustituye al botón de color",
+  "Back to the colored button": "Vuelve al botón de color",
+  "Button color": "Color del botón",
+  "Button letter color": "Color de la letra del botón",
+  "Buttons": "Botones",
+  "Enter to type a hex value; empty uses the default": "Intro para escribir un valor hexadecimal; vacío usa el predeterminado",
+  "Hex color: #rrggbb, e.g. #5cb83c. Leave empty for the default. Left/Right in Settings steps through presets.": "Color hexadecimal: #rrggbb, p. ej. #5cb83c. Déjalo vacío para el predeterminado. Izquierda/Derecha en Ajustes recorre los preajustes.",
+  "How A, B, X and Y look in the button hints": "Cómo se ven A, B, X e Y en las ayudas de botones",
+  "Remove {button} icon": "Quitar el icono de {button}",
+  "Select button icon": "Selecciona el icono del botón",
+  "{button} color": "Color de {button}",
+  "{button} icon": "Icono de {button}",
+  "{button} letter color": "Color de la letra de {button}"
 }
