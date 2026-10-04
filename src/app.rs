@@ -1,4 +1,5 @@
 mod active_game;
+mod addon_manager;
 mod add_games;
 mod buttons;
 mod cover_editor;
@@ -15,7 +16,8 @@ mod settings_ui;
 mod store_screen;
 mod tiles;
 
-use crate::addons::{self, AddonHost};
+use crate::addons::{self, AddonHost, Placement};
+use addon_manager::{AddonManager, AddonView};
 use crate::apps::{self, AppEntry};
 use crate::autostart;
 use crate::box3d;
@@ -134,6 +136,7 @@ enum Mode {
     DiscNotFound { name: String },
     CoverEditor(CoverEditor),
     FontManager { cursor: usize, armed: bool },
+    AddonManager(AddonManager),
     Burn(BurnDialog),
     Store { cursor: usize, scroll: usize },
     StoreTheme { index: usize, image: usize },
@@ -484,6 +487,7 @@ impl App {
             Mode::Store { .. } => self.handle_store(action),
             Mode::StoreTheme { .. } => self.handle_store_theme(action),
             Mode::FontManager { .. } => self.handle_font_manager(action),
+            Mode::AddonManager(_) => self.handle_addon_manager(action),
         }
     }
 }
@@ -584,6 +588,7 @@ impl eframe::App for App {
         }
         self.draw_settings(ui, screen, s);
         self.draw_font_manager(ui, screen, s);
+        self.draw_addon_manager(ui, screen, s);
         self.draw_disc_chooser(ui, screen, s);
         self.draw_disc_not_found(ui, screen, s);
         self.draw_profile_imported(ui, screen, s);

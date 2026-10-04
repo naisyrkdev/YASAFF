@@ -547,10 +547,10 @@ impl App {
                         self.mode = self.settings_at(SettingRow::AppStoreActive);
                     }
                     Removal::Addon(i) => {
-                        self.mode = self.settings_at(SettingRow::AddonImport);
                         if yes {
                             self.uninstall_addon(i);
                         }
+                        self.mode = self.addon_manager_after_uninstall(i, yes);
                     }
                     Removal::Profile | Removal::Everything => {
                         let row = if what == Removal::Profile { SettingRow::ProfileReset } else { SettingRow::AppReset };
@@ -567,7 +567,7 @@ impl App {
                     Removal::Game => Mode::Options { cursor: self.menu_index(MenuItem::Remove) },
                     Removal::Theme => self.settings_at(SettingRow::ThemeDelete),
                     Removal::AppStore => self.settings_at(SettingRow::AppStoreRemove),
-                    Removal::Addon(i) => self.settings_at(SettingRow::AddonRemove(i)),
+                    Removal::Addon(i) => self.addon_manager_after_uninstall(i, false),
                     Removal::Profile => self.settings_at(SettingRow::ProfileReset),
                     Removal::Everything => self.settings_at(SettingRow::AppReset),
                 }

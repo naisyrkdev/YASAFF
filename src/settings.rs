@@ -180,10 +180,31 @@ impl AppStoreSettings {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Default)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct AddonSettings {
     pub bar: Option<crate::theme::BarSlot>,
+    /// Drawn anywhere on the screen at (`x`, `y`) instead of in `bar`.
+    pub on_screen: bool,
+    /// The widget's center, as a fraction of the screen's width and height.
+    pub x: f32,
+    pub y: f32,
+    /// Percent of the widget's normal size.
+    pub size: u32,
+}
+
+impl AddonSettings {
+    pub const SIZE_RANGE: (u32, u32) = (50, 300);
+
+    pub fn scale(&self) -> f32 {
+        self.size.clamp(Self::SIZE_RANGE.0, Self::SIZE_RANGE.1) as f32 / 100.0
+    }
+}
+
+impl Default for AddonSettings {
+    fn default() -> Self {
+        AddonSettings { bar: None, on_screen: false, x: 0.5, y: 0.5, size: 100 }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]

@@ -338,12 +338,13 @@ The same `.zip` + `yasaffConfig.json` as an app, with three differences:
 | `yasaff` | `"addon"`. Older YASAFF versions refuse the package instead of installing it as an app. |
 | `kind` | `"bar-widget"` (the only addon kind so far). |
 | `widget.minHeight` | Optional. The bar height (at 1080p, 40–300) the widget needs. When the user's bar is lower, YASAFF raises it, and Settings shows *"Height · <addon> needs at least N px"*. |
+| `widget.images` | Optional. Images the user can replace: `[{"key": "face", "label": "Clock face"}, …]`. The addon's page in the Addons Manager shows a *Choose…* row for each and a *Use built-in images* row. The picked file is copied to `$YASAFF_APP_DATA/images/<key>.<png\|jpg\|jpeg\|webp>` and the widget is restarted, so read it at startup and fall back to your own image when it's missing. `key` uses the same characters as `id`. |
 
 `run`, `install`, `icon` and `git` work as for apps. `background` is not used. YASAFF installs addons into `<YASAFF data>/addons/<id>/`; they don't appear in the library.
 
 ### 9.2 Placing it
 
-Installing (Store → **Addons** tab, or **Settings → Addons → Import addon from file…**) doesn't show the widget yet. In **Settings → Addons**, Left/Right picks **Top bar**, **Bottom bar** or **Off**. Widgets are centered in their bar. The placement is saved in `userSettings.json` (`addons.<id>.bar`).
+Installing (Store → **Addons** tab, or **Settings → Addons → Addons Manager…** → *Import addon from file…*) doesn't show the widget yet. In the Addons Manager, *Installed addons* lists every addon; open one and use Left/Right on *Shown in* to pick **Top bar**, **Bottom bar**, **Anywhere on screen** or **Off**. *Size* (50–300 %) scales the whole widget; in a bar, `minHeight` grows with it. Anywhere on screen adds *Position on screen → Move…*: the arrows or a mouse drag move the widget, the mouse wheel resizes it, Confirm keeps the change and Back undoes it. That page also has the addon's replaceable images and *Uninstall*. After an import, YASAFF opens the new addon's page. Widgets are centered in their bar. The placement is saved in `userSettings.json` (`addons.<id>`: `bar`, `on_screen`, `x` and `y` as fractions of the screen for the widget's center, and `size` in percent). On the screen, a widget is as tall as its `minHeight` (110 px if it has none) times its size.
 
 ### 9.3 Runtime contract
 
@@ -354,9 +355,9 @@ While the widget is placed, YASAFF keeps its `run` command running in the backgr
 | `YASAFF` | `1` |
 | `YASAFF_ADDON_ID` | the addon's `id` |
 | `YASAFF_APP_DATA` | data folder, as for apps |
-| `YASAFF_WIDGET_BAR` | `top` or `bottom` |
+| `YASAFF_WIDGET_BAR` | `top`, `bottom` or `screen` (anywhere on screen) |
 
-- **stdout:** print `yasaff:widget {"items":[…]}` lines and flush. YASAFF shows the newest line. Each item is `{"label": "CPU", "value": "12 %", "level": 0.12, "color": "#5cb83c"}`, where `level` (0–1) and `color` are optional. With `level`, YASAFF draws a meter that is green, yellow or red unless `color` is set. Other lines are only logged.
+- **stdout:** print `yasaff:widget {"items":[…]}` lines and flush. YASAFF shows the newest line. Each item is `{"label": "CPU", "value": "12 %", "level": 0.12, "color": "#5cb83c"}`, where `level` (0–1) and `color` are optional. With `level`, YASAFF draws a meter that is green, yellow or red unless `color` is set. An item with `"layers": [{"image": "assets/face.png", "angle": 0}, …]` is drawn as a square **dial** instead: the images stacked in order, each fitted into the square and turned clockwise by `angle` degrees about its center. Relative image paths are relative to the addon's folder. [addons/ClockFace](addons/ClockFace/) uses it. Other lines are only logged.
 - **stdin:** YASAFF writes nothing. It **closes** stdin when the widget is turned off or YASAFF quits, so exit on EOF. YASAFF also kills the process.
 - **Crash:** if the program exits, the bar shows the error and YASAFF starts it again after 10 seconds.
 - Before an update is installed from the store, YASAFF stops the widget and starts the new version afterwards.

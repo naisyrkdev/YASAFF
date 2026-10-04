@@ -1,6 +1,5 @@
-//! The home screen: background, bars, and the row, grid and bubble views with their navigation.
-
 use super::*;
+use crate::appstore::Manifest;
 
 #[derive(Clone, Copy)]
 pub(super) enum Layout {
@@ -64,17 +63,46 @@ pub(super) fn navigate_free(centers: &[Pos2], selected: usize, action: Action) -
 pub(super) struct BubbleLayout {
     pub(super) diameters: Vec<f32>,
     pub(super) area: Rect,
+    pub(super) per_page: usize,
     pub(super) centers: Vec<Pos2>,
     pub(super) radii: Vec<f32>,
 }
 
-/// Lays out circles of the given diameters inside `area` without overlap, returning their centers
-/// and (possibly scaled-down) radii in the same order.
-///
-/// Circles start on a golden-angle spiral (stretched to the area's aspect ratio), then a simple
-/// relaxation pushes every overlapping pair apart while a weak pull toward the middle keeps the
-/// cluster compact; the last steps drop the pull so the separation settles. If some pair still
-/// overlaps by more than 5% of the smaller radius, everything is shrunk by 10% and laid out again.
+impl BubbleLayout {
+    pub(super) fn pages(&self) -> usize {
+        self.centers.len().div_ceil(self.per_page).max(1)
+    }
+}
+
+pub(super) fn bubble_capacity(size: f32, area: Rect, s: f32) -> usize {
+    let base = size.max(BubbleSettings::SIZE_RANGE.0) * s;
+    ((area.area() * 0.5 / (std::f32::consts::FRAC_PI_4 * base * base)) as usize).max(1)
+}
+
+pub(super) fn navigate_bubble_pages(centers: &[Pos2], per_page: usize, area: Rect, selected: usize, action: Action) -> usize {
+    let page = selected / per_page;
+    let here = page * per_page..((page + 1) * per_page).min(centers.len());
+    if !here.contains(&selected) {
+        return selected;
+    }
+    let to = here.start + navigate_free(&centers[here.clone()], selected - here.start, action);
+    if to != selected {
+        return to;
+    }
+    let page = match action {
+        Action::Left if page > 0 => page - 1,
+        Action::Right if here.end < centers.len() => page + 1,
+        _ => return selected,
+    };
+    bubble_page_entry(centers, per_page, area, selected, page).unwrap_or(selected)
+}
+
+pub(super) fn bubble_page_entry(centers: &[Pos2], per_page: usize, area: Rect, from: usize, page: usize) -> Option<usize> {
+    let edge = if page > from / per_page { area.left() } else { area.right() };
+    let aim = pos2(edge, centers.get(from)?.y);
+    (page * per_page..((page + 1) * per_page).min(centers.len())).min_by(|&a, &b| centers[a].distance(aim).total_cmp(&centers[b].distance(aim)))
+}
+
 pub(super) fn pack_bubbles(diameters: &[f32], area: Rect) -> (Vec<Pos2>, Vec<f32>) {
     let n = diameters.len();
     if n == 0 || !area.is_positive() {
@@ -187,44 +215,36 @@ impl App {
     }
 
     pub(super) fn draw_widgets(&self, painter: &Painter, screen: Rect, s: f32) {
-        const COLUMN: f32 = 130.0;
         const GAP: f32 = 36.0;
         for slot in BarSlot::ALL {
-            let widgets = self.addons.widgets(&self.settings, slot);
+            let widgets = self.addons.widgets(&self.settings, Placement::Bar(slot));
             if widgets.is_empty() {
                 continue;
             }
             let bar = self.bar_rect(slot, screen, s);
-            let columns: Vec<f32> = widgets
-                .iter()
-                .map(|(_, status)| match status {
-                    addons::Status::Showing(frame) => frame.items.len().max(1) as f32 * COLUMN,
-                    _ => 2.0 * COLUMN,
-                })
-                .collect();
-            let total = columns.iter().sum::<f32>() + GAP * (widgets.len() - 1) as f32;
+            let widths: Vec<f32> = widgets.iter().map(|(addon, status)| widget_columns(status) * WIDGET_COLUMN * AddonHost::scale(&self.settings, &addon.id)).collect();
+            let total = widths.iter().sum::<f32>() + GAP * (widgets.len() - 1) as f32;
             let mut x = bar.center().x - total * s / 2.0;
-            for ((addon, status), width) in widgets.iter().zip(columns) {
+            for ((addon, status), width) in widgets.iter().zip(widths) {
                 let area = Rect::from_min_size(pos2(x, bar.top()), vec2(width * s, bar.height()));
-                match status {
-                    addons::Status::Showing(frame) => {
-                        for (i, item) in frame.items.iter().enumerate() {
-                            let cell = Rect::from_min_size(pos2(area.left() + i as f32 * COLUMN * s, area.top()), vec2(COLUMN * s, area.height()));
-                            paint_widget_item(painter, item, cell, s);
-                        }
-                    }
-                    addons::Status::Starting => {
-                        shadow_text(painter, area.center(), Align2::CENTER_CENTER, &addon.name, 18.0 * s, Color32::from_gray(150));
-                    }
-                    addons::Status::Failed(error) => {
-                        let text = tr!("{name}: {error}", name = addon.name, error = error);
-                        let painter = painter.with_clip_rect(area.expand2(vec2(COLUMN * s, 0.0)));
-                        shadow_text(&painter, area.center(), Align2::CENTER_CENTER, &text, 16.0 * s, PAD_B);
-                    }
-                }
+                paint_widget(painter, addon, status, area, s * AddonHost::scale(&self.settings, &addon.id));
                 x += (width + GAP) * s;
             }
         }
+        for (addon, status) in self.addons.widgets(&self.settings, Placement::Screen) {
+            let area = self.screen_widget_rect(addon, &status, screen, s);
+            paint_widget(painter, addon, &status, area, s * AddonHost::scale(&self.settings, &addon.id));
+        }
+    }
+
+    pub(super) fn screen_widget_rect(&self, addon: &Manifest, status: &addons::Status, screen: Rect, s: f32) -> Rect {
+        let entry = self.settings.addons.get(&addon.id).cloned().unwrap_or_default();
+        let scale = entry.scale();
+        let size = vec2(widget_columns(status) * WIDGET_COLUMN, addon.min_height().unwrap_or(WIDGET_HEIGHT)) * scale * s;
+        let center = screen.min + vec2(entry.x.clamp(0.0, 1.0) * screen.width(), entry.y.clamp(0.0, 1.0) * screen.height());
+        let half = (size / 2.0).min(screen.size() / 2.0);
+        let center = pos2(center.x.clamp(screen.left() + half.x, screen.right() - half.x), center.y.clamp(screen.top() + half.y, screen.bottom() - half.y));
+        Rect::from_center_size(center, size)
     }
 
     pub(super) fn draw_top_bar(&self, painter: &Painter, screen: Rect, s: f32) {
@@ -383,27 +403,9 @@ impl App {
             }
         }
 
-        if pages > 1 {
-            let painter = ui.painter();
-            let arrow_y = origin.y + grid_size.y / 2.0;
-            for (dir, show, x, glyph) in [
-                (-1, page > 0, screen.left() + 55.0 * s, "‹"),
-                (1, page + 1 < pages, screen.right() - 55.0 * s, "›"),
-            ] {
-                if !show {
-                    continue;
-                }
-                let hit = Rect::from_center_size(pos2(x, arrow_y), vec2(80.0 * s, 160.0 * s));
-                shadow_text(painter, hit.center(), Align2::CENTER_CENTER, glyph, 64.0 * s, Color32::WHITE);
-                if interactive && ui.interact(hit, Id::new(("grid-page-arrow", dir)), Sense::click()).clicked() {
-                    let target = (page as isize + dir) as usize * per_page + self.selected % per_page;
-                    self.selected = target.min(count - 1);
-                    self.swap_sound();
-                }
-            }
-            let counter = tr!("Page {page} / {pages}", page = page + 1, pages = pages);
-            let pos = pos2(screen.left() + 110.0 * s, self.bar_rect(BarSlot::Bottom, screen, s).center().y);
-            shadow_text(painter, pos, Align2::LEFT_CENTER, &counter, 22.0 * s, Color32::from_gray(210));
+        if let Some(page) = self.draw_page_arrows(ui, screen, s, origin.y + grid_size.y / 2.0, (page, pages), interactive) {
+            self.selected = (page * per_page + self.selected % per_page).min(count - 1);
+            self.swap_sound();
         }
 
         self.draw_details(ui, pos2(screen.left() + 110.0 * s, screen.bottom() - 200.0 * s), s, false);
@@ -412,17 +414,40 @@ impl App {
         }
     }
 
+    fn draw_page_arrows(&self, ui: &Ui, screen: Rect, s: f32, arrow_y: f32, (page, pages): (usize, usize), interactive: bool) -> Option<usize> {
+        if pages <= 1 {
+            return None;
+        }
+        let painter = ui.painter();
+        let mut clicked = None;
+        for (target, show, x, glyph) in [
+            (page.wrapping_sub(1), page > 0, screen.left() + 55.0 * s, "‹"),
+            (page + 1, page + 1 < pages, screen.right() - 55.0 * s, "›"),
+        ] {
+            if !show {
+                continue;
+            }
+            let hit = Rect::from_center_size(pos2(x, arrow_y), vec2(80.0 * s, 160.0 * s));
+            shadow_text(painter, hit.center(), Align2::CENTER_CENTER, glyph, 64.0 * s, Color32::WHITE);
+            if interactive && ui.interact(hit, Id::new(("page-arrow", target > page)), Sense::click()).clicked() {
+                clicked = Some(target);
+            }
+        }
+        let counter = tr!("Page {page} / {pages}", page = page + 1, pages = pages);
+        let pos = pos2(screen.left() + 110.0 * s, self.bar_rect(BarSlot::Bottom, screen, s).center().y);
+        shadow_text(painter, pos, Align2::LEFT_CENTER, &counter, 22.0 * s, Color32::from_gray(210));
+        clicked
+    }
+
     pub(super) fn is_bubbles(&self) -> bool {
         self.theme().settings.kind == ThemeKind::Bubbles
     }
 
-    /// The tile sitting in a bubble slot; `None` for an empty bubble.
     pub(super) fn bubble_occupant(&self, slot: usize) -> Option<usize> {
         let specials = self.library.games.len()..self.tile_count();
         self.bubble_places().iter().position(|&p| p == slot).or_else(|| specials.contains(&slot).then_some(slot))
     }
 
-    /// The empty bubble the cursor rests on in Home, if it isn't on a tile.
     pub(super) fn empty_bubble(&self) -> Option<usize> {
         let slot = self.bubble_empty.filter(|_| self.is_bubbles() && matches!(self.mode, Mode::Home))?;
         let total = self.bubble_layout.as_ref().map_or(0, |l| l.centers.len());
@@ -432,23 +457,30 @@ impl App {
     pub(super) fn navigate_bubbles(&mut self, action: Action) {
         let from = self.empty_bubble().unwrap_or_else(|| self.bubble_places().get(self.selected).copied().unwrap_or(self.selected));
         let to = match self.bubble_layout.as_ref() {
-            Some(layout) if layout.centers.len() >= self.tile_count() => navigate_free(&layout.centers, from, action),
+            Some(l) if l.centers.len() >= self.tile_count() => navigate_bubble_pages(&l.centers, l.per_page, l.area, from, action),
             _ => return,
         };
         if to == from {
             return;
         }
-        match self.bubble_occupant(to) {
+        self.focus_bubble(to);
+        self.bubble_sound(to);
+    }
+
+    fn focus_bubble(&mut self, slot: usize) {
+        if let Mode::SwapBubble { target, .. } = &mut self.mode {
+            *target = slot;
+            return;
+        }
+        match self.bubble_occupant(slot) {
             Some(i) => {
                 self.selected = i;
                 self.bubble_empty = None;
             }
-            None => self.bubble_empty = Some(to),
+            None => self.bubble_empty = Some(slot),
         }
-        self.bubble_sound(to);
     }
 
-    /// Bigger bubbles sound lower.
     pub(super) fn bubble_sound(&mut self, slot: usize) {
         if !self.theme().settings.bubbles.sound || self.custom_swap_sound(true) {
             return;
@@ -530,17 +562,25 @@ impl App {
         let count = self.tile_count();
         let bubbles = self.theme().settings.bubbles.clone();
         let top = self.bar_rect(BarSlot::Top, screen, s).bottom() + 16.0 * s;
-        let area = Rect::from_min_max(pos2(screen.left() + 60.0 * s, top), pos2(screen.right() - 60.0 * s, screen.bottom() - 220.0 * s));
+        let mut area = Rect::from_min_max(pos2(screen.left() + 60.0 * s, top), pos2(screen.right() - 60.0 * s, screen.bottom() - 220.0 * s));
+        let per_page = bubble_capacity(bubbles.size, area, s);
+        let pages = count.div_ceil(per_page).max(1);
+        if pages > 1 {
+            area = area.shrink2(vec2(50.0 * s, 0.0));
+        }
         let mut keys: Vec<String> = (0..count).map(|i| self.bubble_key(i)).collect();
         if bubbles.fill_screen {
-            let base = bubbles.size.max(BubbleSettings::SIZE_RANGE.0) * s;
-            let fits = (area.area() * 0.5 / (std::f32::consts::FRAC_PI_4 * base * base)) as usize;
-            keys.extend((0..fits.saturating_sub(count)).map(|k| format!("empty-{k}")));
+            keys.extend((0..(pages * per_page).saturating_sub(count)).map(|k| format!("empty-{k}")));
         }
         let diameters: Vec<f32> = keys.iter().map(|key| bubbles.diameter(key) * s).collect();
-        if self.bubble_layout.as_ref().is_none_or(|c| c.diameters != diameters || c.area != area) {
-            let (centers, radii) = pack_bubbles(&diameters, area);
-            self.bubble_layout = Some(BubbleLayout { diameters, area, centers, radii });
+        if self.bubble_layout.as_ref().is_none_or(|c| c.diameters != diameters || c.area != area || c.per_page != per_page) {
+            let (mut centers, mut radii) = (Vec::new(), Vec::new());
+            for page in diameters.chunks(per_page) {
+                let (c, r) = pack_bubbles(page, area);
+                centers.extend(c);
+                radii.extend(r);
+            }
+            self.bubble_layout = Some(BubbleLayout { diameters, area, per_page, centers, radii });
         }
         let (centers, radii) = self.bubble_layout.as_ref().map(|l| (l.centers.clone(), l.radii.clone())).unwrap_or_default();
         if centers.len() < count {
@@ -568,6 +608,8 @@ impl App {
         let empty = self.empty_bubble();
         let focused = target.or(empty).unwrap_or(slot(selected));
         let moving = swapping.map(slot);
+        let page = focused / per_page;
+        let slide = ctx.animate_value_with_time(Id::new("bubble-page"), page as f32, 0.25);
         let mut clicked = None;
         let order = (0..centers.len())
             .filter(|&j| occupant[j].is_none() && j != focused && Some(j) != moving)
@@ -575,10 +617,15 @@ impl App {
             .chain(moving.filter(|&j| j != focused))
             .chain([focused]);
         for j in order {
+            let offset = (j / per_page) as f32 - slide;
+            if offset.abs() >= 1.0 {
+                continue;
+            }
             let tile = occupant[j];
             let focus = ctx.animate_bool_with_time(Id::new(("bubble-focus", j)), j == focused, 0.18);
             let phase = tile.unwrap_or(j) as f32 * 1.7;
-            let center = centers[j] + vec2((t * 0.5 + phase).cos() * 3.0 * s, (t * 0.7 + phase).sin() * 4.0 * s);
+            let wobble = vec2((t * 0.5 + phase).cos() * 3.0 * s, (t * 0.7 + phase).sin() * 4.0 * s);
+            let center = centers[j] + wobble + vec2(offset * screen.width(), 0.0);
             let r = radii[j] * (1.0 + 0.18 * focus);
             let game = tile.and_then(|i| self.library.games.get(i));
             let cover = game.and_then(|g| g.asset(AssetKind::Cover)).and_then(|path| {
@@ -600,12 +647,18 @@ impl App {
                 running: tile.is_some_and(|i| self.is_active(i)),
             };
             paint_bubble(ui.painter(), center, r, &look, t, focus, s);
-            if interactive {
+            if interactive && j / per_page == page {
                 let resp = ui.interact(Rect::from_center_size(center, Vec2::splat(r * 2.0)), Id::new(("bubble", j)), Sense::click());
                 if resp.clicked() && resp.interact_pointer_pos().is_some_and(|p| p.distance(center) <= r) {
                     clicked = Some(j);
                 }
             }
+        }
+
+        let arrows = self.draw_page_arrows(ui, screen, s, area.center().y, (page, pages), interactive);
+        if let Some(to) = arrows.and_then(|p| bubble_page_entry(&centers, per_page, area, focused, p)) {
+            self.focus_bubble(to);
+            self.bubble_sound(to);
         }
 
         let details = pos2(screen.left() + 110.0 * s, screen.bottom() - 200.0 * s);
@@ -788,7 +841,10 @@ impl App {
         match action {
             Action::Left | Action::Right | Action::Up | Action::Down => {
                 let from = *target;
-                let to = navigate_free(self.bubble_layout.as_ref().map_or(&[], |l| &l.centers), from, action);
+                let to = match self.bubble_layout.as_ref() {
+                    Some(l) => navigate_bubble_pages(&l.centers, l.per_page, l.area, from, action),
+                    None => from,
+                };
                 *target = to;
                 if to != from {
                     self.bubble_sound(to);
@@ -806,7 +862,7 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::{Action, Layout, navigate, navigate_free, pack_bubbles};
+    use super::{Action, Layout, navigate, navigate_bubble_pages, navigate_free, pack_bubbles};
     use egui::{Rect, pos2};
 
     #[test]
@@ -835,6 +891,19 @@ mod tests {
         assert_eq!(navigate_free(&centers, 0, Action::Up), 3);
         assert_eq!(navigate_free(&centers, 0, Action::Down), 0);
         assert_eq!(navigate_free(&centers, 4, Action::Right), 4);
+    }
+
+    #[test]
+    fn bubbles_cross_to_the_edge_of_the_next_page() {
+        let area = Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 600.0));
+        let page = [pos2(100.0, 200.0), pos2(500.0, 400.0), pos2(900.0, 200.0)];
+        let centers: Vec<_> = page.iter().chain(&page).copied().collect();
+        let nav = |from, action| navigate_bubble_pages(&centers, 3, area, from, action);
+        assert_eq!(nav(0, Action::Right), 1);
+        assert_eq!(nav(2, Action::Right), 3);
+        assert_eq!(nav(3, Action::Left), 2);
+        assert_eq!(nav(0, Action::Left), 0);
+        assert_eq!(nav(5, Action::Right), 5);
     }
 
     #[test]
@@ -876,5 +945,34 @@ mod tests {
         assert_eq!(navigate(grid, 48, 60, Action::Left), 7);
         assert_eq!(navigate(grid, 56, 60, Action::Left), 15);
         assert_eq!(navigate(grid, 47, 60, Action::Right), 59);
+    }
+}
+
+pub(super) const WIDGET_COLUMN: f32 = 130.0;
+const WIDGET_HEIGHT: f32 = 110.0;
+
+fn widget_columns(status: &addons::Status) -> f32 {
+    match status {
+        addons::Status::Showing(frame) => frame.items.len().max(1) as f32,
+        _ => 2.0,
+    }
+}
+
+fn paint_widget(painter: &Painter, addon: &Manifest, status: &addons::Status, area: Rect, s: f32) {
+    match status {
+        addons::Status::Showing(frame) => {
+            for (i, item) in frame.items.iter().enumerate() {
+                let cell = Rect::from_min_size(pos2(area.left() + i as f32 * WIDGET_COLUMN * s, area.top()), vec2(WIDGET_COLUMN * s, area.height()));
+                paint_widget_item(painter, item, cell, s);
+            }
+        }
+        addons::Status::Starting => {
+            shadow_text(painter, area.center(), Align2::CENTER_CENTER, &addon.name, 18.0 * s, Color32::from_gray(150));
+        }
+        addons::Status::Failed(error) => {
+            let text = tr!("{name}: {error}", name = addon.name, error = error);
+            let painter = painter.with_clip_rect(area.expand2(vec2(WIDGET_COLUMN * s, 0.0)));
+            shadow_text(&painter, area.center(), Align2::CENTER_CENTER, &text, 16.0 * s, PAD_B);
+        }
     }
 }

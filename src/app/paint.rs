@@ -163,6 +163,10 @@ pub(super) fn paint_theme_background(ui: &Ui, theme: &Theme, rect: Rect) {
 }
 
 pub(super) fn paint_widget_item(painter: &Painter, item: &addons::Item, cell: Rect, s: f32) {
+    if !item.layers.is_empty() {
+        let side = cell.width().min(cell.height()) - 10.0 * s;
+        return paint_dial(painter, &item.layers, Rect::from_center_size(cell.center(), vec2(side, side)));
+    }
     let x = cell.center().x;
     let mid = cell.center().y;
     let meter = item.level.map(|l| l.clamp(0.0, 1.0));
@@ -178,6 +182,27 @@ pub(super) fn paint_widget_item(painter: &Painter, item: &addons::Item, cell: Re
         });
         painter.rect_filled(track, (3.0 * s) as u8, Color32::from_white_alpha(30));
         painter.rect_filled(Rect::from_min_size(track.min, vec2(track.width() * level, track.height())), (3.0 * s) as u8, color);
+    }
+}
+
+/// Draws each layer fitted into `square` (keeping its aspect) and turned clockwise about the square's center.
+fn paint_dial(painter: &Painter, layers: &[addons::Layer], square: Rect) {
+    for layer in layers {
+        let Ok(egui::load::TexturePoll::Ready { texture }) = egui::Image::new(file_uri(&layer.image)).load_for_size(painter.ctx(), square.size()) else {
+            continue;
+        };
+        if texture.size.x <= 0.0 || texture.size.y <= 0.0 {
+            continue;
+        }
+        let half = texture.size * (square.width() / texture.size.x).min(square.height() / texture.size.y) / 2.0;
+        let turn = egui::emath::Rot2::from_angle(layer.angle.to_radians());
+        let mut mesh = Mesh::with_texture(texture.id);
+        for (corner, uv) in [(vec2(-1.0, -1.0), pos2(0.0, 0.0)), (vec2(1.0, -1.0), pos2(1.0, 0.0)), (vec2(1.0, 1.0), pos2(1.0, 1.0)), (vec2(-1.0, 1.0), pos2(0.0, 1.0))] {
+            mesh.vertices.push(egui::epaint::Vertex { pos: square.center() + turn * (corner * half), uv, color: Color32::WHITE });
+        }
+        mesh.add_triangle(0, 1, 2);
+        mesh.add_triangle(0, 2, 3);
+        painter.add(Shape::mesh(mesh));
     }
 }
 

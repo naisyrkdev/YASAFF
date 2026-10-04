@@ -76,6 +76,16 @@ pub const MOCK_GAME: &str = "mock-game";
 #[serde(rename_all = "camelCase", default)]
 pub struct WidgetSpec {
     pub min_height: Option<f32>,
+    /// Images the user can replace in Settings → Addons; see [`addon_image`].
+    pub images: Vec<WidgetImage>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WidgetImage {
+    /// File name (without extension) in `<app data>/images/`, the folder the addon reads it from.
+    pub key: String,
+    pub label: String,
 }
 
 pub const ADDON: &str = "addon";
@@ -124,12 +134,19 @@ impl Manifest {
         h.is_finite().then(|| h.clamp(crate::theme::BarStyle::HEIGHT_RANGE.0, crate::theme::BarStyle::HEIGHT_RANGE.1))
     }
 
+    pub fn widget_images(&self) -> &[WidgetImage] {
+        self.widget.as_ref().map_or(&[], |w| &w.images)
+    }
+
     fn validate(&self, root: &Path) -> Result<()> {
         ensure!(matches!(self.yasaff.as_str(), "app" | ADDON), "{MANIFEST}: \"yasaff\" must be \"app\" or \"addon\"");
         ensure!(self.format_version == 1, "{MANIFEST}: format version {} is not supported; update YASAFF", self.format_version);
         ensure!(valid_id(&self.id), "{MANIFEST}: \"{}\" is not a valid id", self.id);
         if self.is_addon() {
             ensure!(self.kind == BAR_WIDGET, "{MANIFEST}: addon kind \"{}\" is not supported; update YASAFF", self.kind);
+            for image in self.widget_images() {
+                ensure!(valid_id(&image.key), "{MANIFEST}: widget image key \"{}\" is not valid", image.key);
+            }
         }
         if let Some(builtin) = &self.builtin {
             ensure!(builtin == MOCK_GAME && !self.is_addon(), "{MANIFEST}: builtin \"{builtin}\" is not supported; update YASAFF");
@@ -215,6 +232,42 @@ pub fn uninstall_addon(id: &str) -> Result<()> {
 
 pub fn app_data_dir(id: &str) -> PathBuf {
     Library::data_dir().join("appdata").join(id)
+}
+
+pub const ADDON_IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp"];
+
+fn addon_images_dir(id: &str) -> PathBuf {
+    app_data_dir(id).join("images")
+}
+
+/// The image the user picked for `key` of addon `id`: `<app data>/images/<key>.<ext>`.
+pub fn addon_image(id: &str, key: &str) -> Option<PathBuf> {
+    ADDON_IMAGE_EXTS.iter().map(|ext| addon_images_dir(id).join(format!("{key}.{ext}"))).find(|p| p.is_file())
+}
+
+/// Copies `source` in as the addon's `key` image, replacing one of another type. Returns
+/// the files that were there before, so their cached textures can be dropped.
+pub fn set_addon_image(id: &str, key: &str, source: &Path) -> Result<Vec<PathBuf>> {
+    ensure!(valid_id(id) && valid_id(key), "invalid addon image {id}/{key}");
+    let ext = source.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    ensure!(ADDON_IMAGE_EXTS.contains(&ext.as_str()), "{} is not a PNG, JPEG or WebP image", source.display());
+    let old = clear_addon_image(id, key)?;
+    let dir = addon_images_dir(id);
+    fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    let dest = dir.join(format!("{key}.{ext}"));
+    fs::copy(source, &dest).with_context(|| format!("copying {} to {}", source.display(), dest.display()))?;
+    Ok(old)
+}
+
+/// Deletes the addon's `key` image so the addon falls back to its own; returns the deleted files.
+pub fn clear_addon_image(id: &str, key: &str) -> Result<Vec<PathBuf>> {
+    ensure!(valid_id(id) && valid_id(key), "invalid addon image {id}/{key}");
+    let mut removed = Vec::new();
+    while let Some(path) = addon_image(id, key) {
+        fs::remove_file(&path).with_context(|| format!("deleting {}", path.display()))?;
+        removed.push(path);
+    }
+    Ok(removed)
 }
 
 fn icon_cache_dir() -> PathBuf {
@@ -982,6 +1035,26 @@ mod tests {
         assert_eq!(installed.min_height(), Some(120.0));
         assert!(root.join("addons/demo-widget/bin/run.sh").is_file());
         assert!(!root.join("apps").exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reads_the_images_a_widget_lets_the_user_replace() {
+        let manifest = |key: &str| {
+            let json = format!(
+                r#"{{"yasaff":"addon","formatVersion":1,"id":"clock","name":"Clock","version":"1.0.0","kind":"bar-widget",
+                    "widget":{{"images":[{{"key":"{key}","label":"Clock face"}}]}},"run":{{"{}":{{"command":"run"}}}}}}"#,
+                platform()
+            );
+            serde_json::from_str::<Manifest>(&json).unwrap()
+        };
+        let dir = std::env::temp_dir().join(format!("yasaff-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("run"), "").unwrap();
+        let good = manifest("face");
+        assert_eq!(good.widget_images(), [WidgetImage { key: "face".into(), label: "Clock face".into() }]);
+        assert!(good.validate(&dir).is_ok());
+        assert!(manifest("../face").validate(&dir).is_err());
         fs::remove_dir_all(&dir).unwrap();
     }
 

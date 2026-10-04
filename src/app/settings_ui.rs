@@ -118,9 +118,7 @@ pub(super) enum SettingRow {
     GameSpineText,
     GameTopColor,
     GameTitleFont,
-    AddonBar(usize),
-    AddonRemove(usize),
-    AddonImport,
+    AddonManager,
     AboutApp,
     AboutSource,
     AboutServer,
@@ -451,10 +449,7 @@ impl App {
             rows.extend([R::StoreEnabled(store), R::StoreBackground(store), R::StoreCommand(store)]);
         }
         rows.extend([R::DiscOnInsert, R::DiscScanAtStart, R::DiscRemovable]);
-        for i in 0..self.addons.installed.len() {
-            rows.extend([R::AddonBar(i), R::AddonRemove(i)]);
-        }
-        rows.push(R::AddonImport);
+        rows.push(R::AddonManager);
         rows.extend([R::AboutApp, R::AboutSource, R::AboutServer, R::AppReset]);
         rows
     }
@@ -589,9 +584,7 @@ impl App {
                 }
             }
             SettingRow::AboutApp => {}
-            SettingRow::AddonBar(_) => self.adjust_setting(row, 1),
-            SettingRow::AddonRemove(i) => self.mode = Mode::ConfirmRemove { what: Removal::Addon(i), yes: false },
-            SettingRow::AddonImport => self.import_app_file(),
+            SettingRow::AddonManager => self.mode = AddonManager::open(AddonView::Menu, 0),
             SettingRow::AppStoreKey => self.mode = Mode::Prompt { kind: PromptKind::AppStoreKey, buffer: String::new() },
             SettingRow::AppStoreTest => self.test_store_connection(),
             SettingRow::StoreEnabled(store) => {
@@ -928,14 +921,6 @@ impl App {
                 self.settings.discs.on_insert = cycle(&DiscAction::ALL, self.settings.discs.on_insert, delta);
                 return self.save_settings();
             }
-            SettingRow::AddonBar(i) => {
-                let Some(id) = self.addons.installed.get(i).map(|m| m.id.clone()) else { return };
-                let places = [None, Some(BarSlot::Top), Some(BarSlot::Bottom)];
-                let entry = self.settings.addons.entry(id).or_default();
-                entry.bar = cycle(&places, entry.bar, delta);
-                self.addons.sync(&self.settings);
-                return self.save_settings();
-            }
             SettingRow::Language => {
                 self.settings.language = cycle(&Language::ALL, self.settings.language, delta);
                 i18n::set(self.settings.language);
@@ -1116,8 +1101,7 @@ impl App {
             SettingRow::AppReset => Some((tr!("Power options"), None)),
             SettingRow::AppStoreActive => Some((tr!("YASAFF Store"), Some(self.store_status()))),
             SettingRow::AboutApp => Some((tr!("About"), None)),
-            SettingRow::AddonBar(0) => Some(self.addons_heading()),
-            SettingRow::AddonImport if self.addons.installed.is_empty() => Some(self.addons_heading()),
+            SettingRow::AddonManager => Some(self.addons_heading()),
             SettingRow::VirtualMouse => Some((tr!("Mouse"), self.global_mouse_status())),
             SettingRow::ControllerSwap => Some((tr!("Controller"), Some(self.controller_warning()))),
             SettingRow::ControllerButton(PadButton::South) if self.settings.controls.is_custom() => {
@@ -1154,7 +1138,15 @@ impl App {
                 tr!("3D objects"),
                 Some((tr!("Games without a 3D model show their name in 3D letters").to_owned(), Color32::from_gray(140))),
             )),
-            SettingRow::BubbleSize => Some((tr!("Bubbles"), Some((tr!("Every game on one screen").to_owned(), Color32::from_gray(140))))),
+            SettingRow::BubbleSize => {
+                let per_page = self.bubble_layout.as_ref().map(|l| (l.per_page, l.pages()));
+                let sub = per_page.map(|(n, pages)| {
+                    let fits = tr_n!(n, "Up to {n} bubble per page", "Up to {n} bubbles per page");
+                    let text = if pages > 1 { tr!("{fits} · {pages} pages", fits = fits, pages = pages) } else { fits };
+                    (text, Color32::from_gray(140))
+                });
+                Some((tr!("Bubbles"), sub))
+            }
             SettingRow::GameVideo => Some((tr!("Bubble video"), Some((tr!("Plays in the selected bubble").to_owned(), Color32::from_gray(140))))),
             SettingRow::GameModel => Some((tr!("3D object"), Some((tr!("For the 3D objects tile style").to_owned(), Color32::from_gray(140))))),
             SettingRow::GameTitleFont => Some((tr!("Title"), None)),
@@ -1251,26 +1243,10 @@ impl App {
                 tr!("A console-style game launcher for PC, made to be used with a controller. Windows and Linux."),
                 RowValue::Summary(tr!("Version {version}", version = env!("CARGO_PKG_VERSION"))),
             ),
-            SettingRow::AddonBar(i) => {
-                let Some(addon) = self.addons.installed.get(i) else { return (String::new(), "", Action("")) };
-                let label = match addon.min_height() {
-                    Some(min) => tr!("{name} · needs a bar at least {px} px high", name = addon.name, px = format!("{min:.0}")),
-                    None => addon.name.clone(),
-                };
-                let place = match AddonHost::placement(&self.settings, &addon.id) {
-                    Some(slot) => slot.label(),
-                    None => tr!("Off"),
-                };
-                (label, tr!("Bar widget · Left/Right picks the bar it shows in"), Choice(place.into()))
-            }
-            SettingRow::AddonRemove(i) => {
-                let name = self.addons.installed.get(i).map_or("", |m| m.name.as_str());
-                (tr!("Uninstall {name}", name = name), tr!("Its files are deleted; its saved data is kept"), Action(tr!("Uninstall…")))
-            }
-            SettingRow::AddonImport => (
-                tr!("Import addon from file…").into(),
-                tr!("A .zip with yasaffConfig.json; the Store's Addons tab has more"),
-                Action(tr!("Choose…")),
+            SettingRow::AddonManager => (
+                tr!("Addons Manager…").into(),
+                tr!("Installed addons and importing new ones"),
+                RowValue::Summary(tr!("{count} installed", count = self.addons.installed.len())),
             ),
             SettingRow::AboutSource => (tr!("Source code").into(), "github.com/naisyrkdev/YASAFF", Action(tr!("Open"))),
             SettingRow::AboutServer => (
@@ -1378,7 +1354,7 @@ impl App {
             }
             SettingRow::BubbleSize => (
                 tr!("Bubble size").into(),
-                tr!("At 1080p; shrinks when needed to keep every game on screen"),
+                tr!("At 1080p; games that don't fit continue on the next page"),
                 px(theme.bubbles.size),
             ),
             SettingRow::BubbleVariance => (

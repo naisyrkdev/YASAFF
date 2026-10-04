@@ -243,8 +243,9 @@ impl App {
                     }
                 }
                 Event::Imported(_, Ok(manifest)) if manifest.is_addon() => {
-                    if let Some(i) = self.add_installed_addon(*manifest) {
-                        self.mode = self.settings_at(SettingRow::AddonBar(i));
+                    let id = manifest.id.clone();
+                    if self.add_installed_addon(*manifest).is_some() {
+                        self.mode = AddonManager::open(AddonView::Addon(id), 0);
                     }
                 }
                 Event::Imported(_, Ok(manifest)) => {
@@ -343,6 +344,42 @@ impl App {
         }
     }
 
+    pub(super) fn choose_addon_image(&mut self, i: usize, j: usize) {
+        let Some(addon) = self.addons.installed.get(i) else { return };
+        let Some(image) = addon.widget_images().get(j).cloned() else { return };
+        let id = addon.id.clone();
+        let title = tr!("Select {name} · {image}", name = addon.name, image = image.label);
+        let dialog = rfd::FileDialog::new().set_title(title).add_filter(tr!("Images"), appstore::ADDON_IMAGE_EXTS);
+        self.ask_path(dialog, super::Pick::File, move |app, path| {
+            let result = appstore::set_addon_image(&id, &image.key, &path);
+            app.addon_images_changed(&id, result.map(|old| old.into_iter().chain(appstore::addon_image(&id, &image.key)).collect()));
+        });
+    }
+
+    pub(super) fn reset_addon_images(&mut self, i: usize) {
+        let Some(addon) = self.addons.installed.get(i) else { return };
+        let id = addon.id.clone();
+        let result = addon.widget_images().iter().try_fold(Vec::new(), |mut all, image| {
+            all.extend(appstore::clear_addon_image(&id, &image.key)?);
+            anyhow::Ok(all)
+        });
+        self.addon_images_changed(&id, result);
+    }
+
+    /// Drops the cached textures of `changed` and restarts the addon so it picks up its new images.
+    fn addon_images_changed(&mut self, id: &str, changed: anyhow::Result<Vec<PathBuf>>) {
+        match changed {
+            Ok(paths) => {
+                for path in paths {
+                    self.ctx.forget_image(&file_uri(&path));
+                }
+                self.addons.reload(Some(id));
+                self.addons.sync(&self.settings);
+            }
+            Err(e) => self.notify(tr!("Could not change the image: {error}", error = format!("{e:#}"))),
+        }
+    }
+
     fn installed_package(&self, app: &RemoteApp) -> Option<&Manifest> {
         if app.is_addon() { self.addons.get(&app.id) } else { self.store.installed.get(&app.id) }
     }
@@ -404,8 +441,8 @@ impl App {
             return;
         }
         if app.is_addon() {
-            if let Some(i) = self.addons.installed.iter().position(|m| m.id == app.id && !app.latest.is_update_for(m)) {
-                self.mode = self.settings_at(SettingRow::AddonBar(i));
+            if self.addons.installed.iter().any(|m| m.id == app.id && !app.latest.is_update_for(m)) {
+                self.mode = AddonManager::open(AddonView::Addon(app.id.clone()), 0);
                 return;
             }
             let Some(endpoint) = self.store_endpoint() else { return };

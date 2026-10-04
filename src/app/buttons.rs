@@ -201,6 +201,12 @@ impl App {
                     _ => &[Hint(Action::Confirm, tr!("Burn")), Hint(Action::Back, tr!("Back"))],
                 },
             },
+            Mode::AddonManager(AddonManager { view: AddonView::Move { .. }, .. }) => &[Hint(Action::Confirm, tr!("Done")), Hint(Action::Back, tr!("Cancel"))],
+            Mode::AddonManager(_) => &[
+                Hint(Action::Confirm, tr!("Select")),
+                Hint(Action::Add, tr!("Import")),
+                Hint(Action::Back, tr!("Back")),
+            ],
             Mode::FontManager { armed: true, .. } => &[Hint(Action::Confirm, tr!("Delete")), Hint(Action::Back, tr!("Keep"))],
             Mode::FontManager { .. } => &[
                 Hint(Action::Confirm, tr!("Select")),
