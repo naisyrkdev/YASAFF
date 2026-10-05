@@ -48,6 +48,7 @@ pub(super) enum PromptKind {
     AppStoreKey,
     Color(SettingRow),
     BoxSize(SettingRow),
+    CrtSize(SettingRow),
     ProfileName,
     ProfileNew,
 }
@@ -217,6 +218,19 @@ impl App {
                 }
                 self.mode = self.settings_at(row);
             }
+            PromptKind::CrtSize(row) => {
+                let (min, max) = CrtSettings::SIZE_RANGE;
+                match text.trim_end_matches("px").trim().replace(',', ".").parse::<f32>() {
+                    Ok(px) if px.is_finite() => {
+                        if !(min..=max).contains(&px) {
+                            self.notify(tr!("Screen sizes go from {min} to {max} px", min = format!("{min:.0}"), max = format!("{max:.0}")));
+                        }
+                        self.set_crt_size(row, px);
+                    }
+                    _ => self.notify(tr!("\"{text}\" is not a number of pixels", text = text)),
+                }
+                self.mode = self.settings_at(row);
+            }
             PromptKind::BoxSize(row) => {
                 let Some((_, (min, max), _)) = Self::box_size_slot(row) else { return };
                 match text.trim_end_matches("mm").trim().replace(',', ".").parse::<f32>() {
@@ -275,7 +289,7 @@ impl App {
             Mode::Prompt { kind: PromptKind::ProfileNew, .. } => self.settings_at(SettingRow::ProfileNew),
             Mode::Prompt { kind: PromptKind::AppStoreUrl, .. } => self.settings_at(SettingRow::AppStoreUrl),
             Mode::Prompt { kind: PromptKind::AppStoreKey, .. } => self.settings_at(SettingRow::AppStoreKey),
-            Mode::Prompt { kind: PromptKind::Color(row) | PromptKind::BoxSize(row), .. } => self.settings_at(*row),
+            Mode::Prompt { kind: PromptKind::Color(row) | PromptKind::BoxSize(row) | PromptKind::CrtSize(row), .. } => self.settings_at(*row),
             _ => Mode::Home,
         };
     }
@@ -379,6 +393,10 @@ impl App {
             PromptKind::AppStoreKey => (
                 tr!("YASAFF Store API key"),
                 Some(tr!("Paste a key from the store's API keys page. Save it empty to disconnect.")),
+            ),
+            PromptKind::CrtSize(row) => (
+                if *row == SettingRow::CrtWidth { tr!("Screen width (px)") } else { tr!("Screen height (px)") },
+                Some(tr!("Pixels at 1080p, from 80 to 600. Scales with the window.")),
             ),
             PromptKind::BoxSize(row) => (
                 match row {

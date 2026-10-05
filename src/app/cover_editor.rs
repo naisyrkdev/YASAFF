@@ -116,7 +116,7 @@ impl App {
 
         let settings = &self.theme().settings;
         let tile_h = 330.0 * s;
-        let tile = vec2(tile_h * settings.tile_style.aspect(settings.boxes.size_mm()), tile_h);
+        let tile = vec2(tile_h * settings.tile_aspect(), tile_h);
         let changed = draft != before;
         for (n, (label, placement)) in [(tr!("Before"), before), (tr!("After"), draft)].into_iter().enumerate() {
             let center_x = dialog.center().x + (n as f32 - 0.5) * dialog.width() / 2.0;
@@ -199,8 +199,9 @@ impl App {
         if let AssetKind::Model = kind {
             return self.pick_model();
         }
-        if let AssetKind::Video = kind {
-            let dialog = rfd::FileDialog::new().set_title(tr!("Select preview video")).add_filter(tr!("Videos"), video::EXTS);
+        if let AssetKind::Video | AssetKind::IdleVideo = kind {
+            let title = if kind == AssetKind::Video { tr!("Select preview video") } else { tr!("Select idle video") };
+            let dialog = rfd::FileDialog::new().set_title(title).add_filter(tr!("Videos"), video::EXTS);
             let game_id = self.selected_game().map(|g| g.id.clone()).unwrap_or_default();
             return self.ask_path(dialog, Pick::File, move |app, path| {
                 let Some(i) = app.library.position(&game_id) else { return };
@@ -219,7 +220,7 @@ impl App {
             AssetKind::Side => tr!("Select right side image (the edge opposite the spine)"),
             AssetKind::Bottom => tr!("Select box bottom image"),
             AssetKind::Booklet => tr!("Select instruction booklet image"),
-            AssetKind::Model | AssetKind::Video => unreachable!(),
+            AssetKind::Model | AssetKind::Video | AssetKind::IdleVideo => unreachable!(),
         };
         let dialog = rfd::FileDialog::new().set_title(title).add_filter(tr!("Images"), IMAGE_EXTS);
         let game_id = self.selected_game().map(|g| g.id.clone()).unwrap_or_default();

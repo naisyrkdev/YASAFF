@@ -76,6 +76,11 @@ pub(super) enum SettingRow {
     DiscSpin,
     DiscSpinDirection,
     DiscSpinSpeed,
+    CrtWidth,
+    CrtHeight,
+    CrtVideo,
+    CrtIdleVideo,
+    CrtFilter,
     GameArt,
     BackgroundKind,
     BackgroundColor,
@@ -112,6 +117,8 @@ pub(super) enum SettingRow {
     GameModelClear,
     GameVideo,
     GameVideoClear,
+    GameIdleVideo,
+    GameIdleVideoClear,
     GameObjectColor,
     GameSpineLabel,
     GameSpineColor,
@@ -177,6 +184,8 @@ impl SettingRow {
             | R::GameModelClear
             | R::GameVideo
             | R::GameVideoClear
+            | R::GameIdleVideo
+            | R::GameIdleVideoClear
             | R::GameObjectColor
             | R::GameSpineLabel
             | R::GameSpineColor
@@ -320,6 +329,10 @@ impl App {
             if game.is_some_and(|g| g.asset(AssetKind::Video).is_some()) {
                 rows.push(R::GameVideoClear);
             }
+            rows.push(R::GameIdleVideo);
+            if game.is_some_and(|g| g.asset(AssetKind::IdleVideo).is_some()) {
+                rows.push(R::GameIdleVideoClear);
+            }
             rows.push(R::GameObjectColor);
             rows.extend([R::GameSpineLabel, R::GameSpineColor, R::GameSpineText, R::GameTopColor, R::GameTitleFont]);
             return rows;
@@ -340,7 +353,11 @@ impl App {
         } else {
             match theme.view {
             ViewKind::Row => {
-                rows.extend([R::TileRows, R::TileSize, R::TileSpacing, R::EnlargeSelected]);
+                rows.push(R::TileRows);
+                if theme.tile_style != TileStyle::Crt {
+                    rows.push(R::TileSize);
+                }
+                rows.extend([R::TileSpacing, R::EnlargeSelected]);
                 if theme.tiles.enlarge_selected {
                     rows.push(R::SelectedScale);
                 }
@@ -421,6 +438,8 @@ impl App {
             if theme.discs.spin {
                 rows.extend([R::DiscSpinDirection, R::DiscSpinSpeed]);
             }
+        } else if tiles_used && theme.tile_style == TileStyle::Crt {
+            rows.extend([R::CrtWidth, R::CrtHeight, R::CrtVideo, R::CrtIdleVideo, R::CrtFilter]);
         }
         rows.extend([R::AppStoreActive, R::AppStoreUrl, R::AppStoreKey, R::AppStoreTest, R::AppStoreAdd]);
         if self.settings.app_stores.len() > 1 || !self.settings.app_store().is_empty() {
@@ -510,6 +529,15 @@ impl App {
         let boxes = &mut self.themes[self.theme].settings.boxes;
         boxes.custom_size = boxes.size_mm();
         boxes.custom_size[i] = mm.round().clamp(min, max);
+        self.save_theme();
+    }
+
+    pub(super) fn set_crt_size(&mut self, row: SettingRow, px: f32) {
+        let crt = &mut self.themes[self.theme].settings.crt;
+        let [w, h] = crt.size();
+        let (min, max) = CrtSettings::SIZE_RANGE;
+        let px = px.round().clamp(min, max);
+        (crt.width, crt.height) = if row == SettingRow::CrtWidth { (px, h) } else { (w, px) };
         self.save_theme();
     }
 
@@ -763,6 +791,11 @@ impl App {
                 let buffer = self.game_color_slot(row).and_then(|c| *c).map(theme::to_hex).unwrap_or_default();
                 self.mode = Mode::Prompt { kind: PromptKind::Color(row), buffer };
             }
+            SettingRow::CrtWidth | SettingRow::CrtHeight => {
+                let [w, h] = self.theme().settings.crt.size();
+                let buffer = format!("{:.0}", if row == SettingRow::CrtWidth { w } else { h });
+                self.mode = Mode::Prompt { kind: PromptKind::CrtSize(row), buffer };
+            }
             SettingRow::BoxWidth | SettingRow::BoxHeight | SettingRow::BoxDepth => {
                 let Some((i, ..)) = Self::box_size_slot(row) else { return };
                 let buffer = format!("{:.0}", self.theme().settings.boxes.size_mm()[i]);
@@ -786,6 +819,7 @@ impl App {
             SettingRow::GameBooklet => self.pick_asset(AssetKind::Booklet),
             SettingRow::GameModel => self.pick_asset(AssetKind::Model),
             SettingRow::GameVideo => self.pick_asset(AssetKind::Video),
+            SettingRow::GameIdleVideo => self.pick_asset(AssetKind::IdleVideo),
             SettingRow::BubbleShuffle => {
                 let bubbles = &mut self.themes[self.theme].settings.bubbles;
                 let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
@@ -799,9 +833,11 @@ impl App {
             | SettingRow::GameBottomClear
             | SettingRow::GameBookletClear
             | SettingRow::GameModelClear
-            | SettingRow::GameVideoClear => {
+            | SettingRow::GameVideoClear
+            | SettingRow::GameIdleVideoClear => {
                 let (kind, next) = match row {
                     SettingRow::GameVideoClear => (AssetKind::Video, SettingRow::GameVideo),
+                    SettingRow::GameIdleVideoClear => (AssetKind::IdleVideo, SettingRow::GameIdleVideo),
                     SettingRow::GameSpineClear => (AssetKind::Spine, SettingRow::GameSpine),
                     SettingRow::GameTopClear => (AssetKind::Top, SettingRow::GameTop),
                     SettingRow::GameSideClear => (AssetKind::Side, SettingRow::GameSide),
@@ -852,6 +888,9 @@ impl App {
             | SettingRow::BubbleVariance
             | SettingRow::BubbleFill
             | SettingRow::BubbleVideo
+            | SettingRow::CrtVideo
+            | SettingRow::CrtIdleVideo
+            | SettingRow::CrtFilter
             | SettingRow::BubbleSound
             | SettingRow::BubbleCustomSound
             | SettingRow::SwapSound
@@ -963,6 +1002,14 @@ impl App {
                 b.size_variance = step(b.size_variance, 5.0 * d, BubbleSettings::VARIANCE_RANGE);
             }
             SettingRow::BubbleVideo => settings.bubbles.play_video ^= true,
+            SettingRow::CrtWidth | SettingRow::CrtHeight => {
+                let [w, h] = settings.crt.size();
+                let px = if row == SettingRow::CrtWidth { w } else { h } + 10.0 * d;
+                return self.set_crt_size(row, px);
+            }
+            SettingRow::CrtVideo => settings.crt.play_video ^= true,
+            SettingRow::CrtIdleVideo => settings.crt.idle_video ^= true,
+            SettingRow::CrtFilter => settings.crt.filter ^= true,
             SettingRow::BubbleSound => settings.bubbles.sound ^= true,
             SettingRow::BubbleCustomSound => settings.bubbles.custom_sound ^= true,
             SettingRow::SwapSound => settings.swap.sound ^= true,
@@ -1147,7 +1194,8 @@ impl App {
                 });
                 Some((tr!("Bubbles"), sub))
             }
-            SettingRow::GameVideo => Some((tr!("Bubble video"), Some((tr!("Plays in the selected bubble").to_owned(), Color32::from_gray(140))))),
+            SettingRow::GameVideo => Some((tr!("Videos"), Some((tr!("For bubbles and CRT screens; needs ffmpeg installed").to_owned(), Color32::from_gray(140))))),
+            SettingRow::CrtWidth => Some((tr!("CRT screens"), Some((tr!("Videos are set in each game's Options").to_owned(), Color32::from_gray(140))))),
             SettingRow::GameModel => Some((tr!("3D object"), Some((tr!("For the 3D objects tile style").to_owned(), Color32::from_gray(140))))),
             SettingRow::GameTitleFont => Some((tr!("Title"), None)),
             SettingRow::StoreEnabled(store) => {
@@ -1493,6 +1541,15 @@ impl App {
                 (tr!("Preview video").into(), sub, Action(tr!("Choose…")))
             }
             SettingRow::GameVideoClear => (tr!("Remove preview video").into(), "", Action(tr!("Remove"))),
+            SettingRow::GameIdleVideo => {
+                let sub = if has(|g| g.asset(AssetKind::IdleVideo).is_some()) {
+                    tr!("Plays on the CRT screen while the game is not selected")
+                } else {
+                    tr!("None; the cover is shown")
+                };
+                (tr!("Idle video").into(), sub, Action(tr!("Choose…")))
+            }
+            SettingRow::GameIdleVideoClear => (tr!("Remove idle video").into(), "", Action(tr!("Remove"))),
             SettingRow::GameObjectColor => (
                 tr!("Object color").into(),
                 tr!("For the letters and models without colors; empty uses the theme's"),
@@ -1522,6 +1579,19 @@ impl App {
                 tr!("Turns per minute"),
                 Choice(format!("{:.0}", theme.discs.spin_speed)),
             ),
+            SettingRow::CrtWidth => (tr!("Screen width").into(), tr!("At 1080p; Left/Right steps, Enter to type a value"), px(theme.crt.size()[0])),
+            SettingRow::CrtHeight => (tr!("Screen height").into(), tr!("At 1080p; Left/Right steps, Enter to type a value"), px(theme.crt.size()[1])),
+            SettingRow::CrtVideo => (
+                tr!("Play video on selected game").into(),
+                tr!("The game's preview video, on the selected screen"),
+                Toggle(theme.crt.play_video),
+            ),
+            SettingRow::CrtIdleVideo => (
+                tr!("Play idle videos").into(),
+                tr!("The game's idle video, on the other screens"),
+                Toggle(theme.crt.idle_video),
+            ),
+            SettingRow::CrtFilter => (tr!("CRT filter").into(), tr!("Scanlines, flicker and a darker edge"), Toggle(theme.crt.filter)),
             SettingRow::ObjectColor => (
                 tr!("Object color").into(),
                 tr!("For the letters and models without colors; Enter to type a hex value"),

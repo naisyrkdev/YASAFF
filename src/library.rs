@@ -100,6 +100,8 @@ struct AssetFields {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     video: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    idle_video: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     background: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
     cover_placement: CoverPlacement,
@@ -130,6 +132,7 @@ impl AssetFields {
             AssetKind::Booklet => &mut self.booklet,
             AssetKind::Model => &mut self.model,
             AssetKind::Video => &mut self.video,
+            AssetKind::IdleVideo => &mut self.idle_video,
         }
     }
 
@@ -209,10 +212,11 @@ pub enum AssetKind {
     Booklet,
     Model,
     Video,
+    IdleVideo,
 }
 
 impl AssetKind {
-    pub const ALL: [AssetKind; 10] = [
+    pub const ALL: [AssetKind; 11] = [
         AssetKind::Cover,
         AssetKind::Background,
         AssetKind::Spine,
@@ -223,6 +227,7 @@ impl AssetKind {
         AssetKind::Booklet,
         AssetKind::Model,
         AssetKind::Video,
+        AssetKind::IdleVideo,
     ];
 
     /// The surface whose placement this asset uses: the box faces have their own, everything
@@ -246,6 +251,7 @@ impl AssetKind {
             AssetKind::Booklet => "booklet",
             AssetKind::Model => "model",
             AssetKind::Video => "video",
+            AssetKind::IdleVideo => "idle-video",
         }
     }
 }

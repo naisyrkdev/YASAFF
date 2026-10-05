@@ -199,6 +199,7 @@ impl App {
             TileStyle::Object => self.paint_object(ui, i, rect, s, focus),
             TileStyle::Disc => self.paint_disc(ui, i, rect, s, focus),
             TileStyle::Case => self.paint_case(ui, i, rect, s, focus),
+            TileStyle::Crt => self.paint_crt(ui, i, rect, s, focus),
         }
     }
 
@@ -451,5 +452,68 @@ impl App {
             label: cover.is_none().then(|| disc3d::Label { text: &text, font, color: Color32::WHITE, size: 0.2 }),
         };
         f(&art)
+    }
+
+    pub(super) fn crt_video<'a>(&self, game: &'a Game, selected: bool) -> Option<(&'a Path, video::Format)> {
+        let crt = &self.theme().settings.crt;
+        match game.asset(AssetKind::Video) {
+            Some(path) if selected && crt.play_video => Some((path, video::Format::CRT)),
+            _ => game.asset(AssetKind::IdleVideo).filter(|_| crt.idle_video).map(|path| (path, video::Format::CRT_IDLE)),
+        }
+    }
+
+    pub(super) fn paint_crt(&self, ui: &Ui, i: usize, rect: Rect, s: f32, focus: f32) {
+        const POWER_ON: f32 = 0.55;
+        const POP: f32 = 0.45;
+        const POP_BACK: f32 = 0.25;
+        const STATIC: f32 = 0.35;
+        let ctx = ui.ctx();
+        let selected = i == self.selected && !matches!(self.mode, Mode::CoverEditor(_));
+        let now = ctx.input(|input| input.time);
+        let id = Id::new(("crt-switch", i));
+        let since = match ctx.data(|d| d.get_temp::<(bool, f64)>(id)) {
+            Some((was, at)) if was == selected => (now - at) as f32,
+            Some(_) => {
+                ctx.data_mut(|d| d.insert_temp(id, (selected, now)));
+                0.0
+            }
+            None => {
+                ctx.data_mut(|d| d.insert_temp(id, (selected, now - 60.0)));
+                60.0
+            }
+        };
+        let (pop, state) = if selected {
+            let x = (since / POP).min(1.0) - 1.0;
+            let back = 1.0 + 2.7 * x.powi(3) + 1.7 * x.powi(2);
+            (back, crt::State { power: (since / POWER_ON).min(1.0), noise: 0.0, time: now as f32 })
+        } else {
+            let fade = (1.0 - since / POP_BACK).max(0.0);
+            let noise = (1.0 - since / STATIC).max(0.0).powf(0.7) * 0.9;
+            (fade * fade, crt::State { power: 1.0, noise, time: now as f32 })
+        };
+        let lift = rect.height() * 0.05 * pop;
+        let rect = Rect::from_center_size(rect.center() - vec2(0.0, lift), rect.size() * (1.0 + 0.07 * pop));
+
+        let game = self.library.games.get(i);
+        let video = game.and_then(|g| self.crt_video(g, selected)).and_then(|(path, _)| self.videos.borrow_mut().frame(ctx, path));
+        let cover = game.and_then(|g| g.asset(AssetKind::Cover)).and_then(|path| {
+            match egui::Image::new(file_uri(path)).load_for_size(ctx, rect.size()) {
+                Ok(egui::load::TexturePoll::Ready { texture }) => Some((texture.id, texture.size)),
+                _ => None,
+            }
+        });
+        let picture = match video.or(cover) {
+            Some((id, size)) => crt::Picture::Texture(id, size),
+            None => crt::Picture::Color(game.map_or(Color32::from_rgb(0x1c, 0x22, 0x2c), |g| placeholder_color(&g.name))),
+        };
+        let label = match (&picture, game) {
+            (crt::Picture::Texture(..), _) => None,
+            (_, Some(g)) => Some((initials(&g.name), self.game_font(g))),
+            (_, None) => Some((self.special(i).map_or("", Special::glyph).to_owned(), egui::FontFamily::Proportional)),
+        };
+        let crt_look = &self.theme().settings.crt;
+        let art = crt::Art { picture, label, filter: crt_look.filter };
+        let stroke = (i == self.selected).then(|| Stroke::new(3.0 * s, Color32::WHITE.gamma_multiply(focus.max(0.4))));
+        crt::paint(ui, rect, &art, state, vec2(0.0, 8.0 * s + lift * 0.6), stroke);
     }
 }

@@ -274,7 +274,7 @@ impl App {
     pub(super) fn draw_row(&mut self, ui: &Ui, screen: Rect, s: f32) {
         let tiles = &self.theme().settings.tiles;
         let rows = tiles.rows.max(1) as usize;
-        let mut small = tiles.size * s;
+        let mut small = self.crt_height().unwrap_or(tiles.size) * s;
         let mut big = if tiles.enlarge_selected { small * tiles.selected_scale } else { small };
         let gap = tiles.spacing * s;
         let left = screen.left() + 110.0 * s;
@@ -292,13 +292,14 @@ impl App {
         }
         .max(screen.top() + 90.0 * s);
         let radius = (6.0 * s) as u8;
-        let aspect = self.theme().settings.tile_style.aspect(self.theme().settings.boxes.size_mm());
+        let aspect = self.theme().settings.tile_aspect();
 
         let ctx = ui.ctx();
         let scroll_x = ctx.animate_value_with_time(Id::new("row-scroll"), (self.selected / rows) as f32, 0.18);
         let scroll_y = ctx.animate_value_with_time(Id::new("row-scroll-y"), (self.selected % rows) as f32, 0.18);
         let interactive = matches!(self.mode, Mode::Home);
         let mut clicked = None;
+        let mut shown = Vec::new();
 
         for i in 0..self.tile_count() {
             let px = (i / rows) as f32 - scroll_x;
@@ -311,18 +312,25 @@ impl App {
             if rect.right() < screen.left() || rect.left() > screen.right() {
                 continue;
             }
+            shown.push(i);
             self.paint_tile(ui, i, rect, radius, s, focus);
             if interactive && ui.interact(rect, Id::new(("tile", i)), Sense::click()).clicked() {
                 clicked = Some(i);
             }
         }
 
+        self.crt_visible = shown;
         if self.draw_details(ui, pos2(left, top + tiles_h + 34.0 * s), s, true) {
             clicked = Some(self.selected);
         }
         if let Some(i) = clicked {
             self.click_tile(i);
         }
+    }
+
+    fn crt_height(&self) -> Option<f32> {
+        let theme = &self.theme().settings;
+        (theme.tile_style == TileStyle::Crt).then(|| theme.crt.size()[1])
     }
 
     pub(super) fn draw_grid(&mut self, ui: &Ui, screen: Rect, s: f32) {
@@ -341,9 +349,10 @@ impl App {
             pos2(screen.left() + 110.0 * s, screen.top() + 100.0 * s),
             pos2(screen.right() - 110.0 * s, screen.bottom() - 250.0 * s),
         );
-        let aspect = style.aspect(size);
+        let aspect = self.theme().settings.tile_aspect();
         let cell_h = ((area.width() - (columns - 1) as f32 * gap) / columns as f32 / aspect)
             .min((area.height() - (rows - 1) as f32 * gap) / rows as f32)
+            .min(self.crt_height().map_or(f32::INFINITY, |h| h * s))
             .max(8.0 * s);
         let cell = vec2(cell_h * aspect, cell_h);
         let grid_size = vec2(columns as f32 * (cell.x + gap) - gap, rows as f32 * (cell.y + gap) - gap);
@@ -377,6 +386,7 @@ impl App {
                     TileStyle::Model => box3d::outline(rect, size, box3d::REST_YAW),
                     TileStyle::Case => case3d::outline(rect, size, case3d::Pose::CLOSED),
                     TileStyle::Disc => disc3d::outline(rect, self.disc_pose(usize::MAX)),
+                    TileStyle::Crt => crt::outline(rect),
                     TileStyle::Object => {
                         let (floor, radius) = object_floor(rect);
                         ui.painter().add(Shape::ellipse_filled(floor, radius, fill));
@@ -389,11 +399,13 @@ impl App {
         }
 
         let order = (0..count).filter(|&i| i != self.selected).chain([self.selected.min(count - 1)]);
+        let mut shown = Vec::new();
         for i in order {
             let offset = (i / per_page) as f32 - slide;
             if offset.abs() >= 1.0 {
                 continue;
             }
+            shown.push(i);
             let focus = ctx.animate_bool_with_time(Id::new(("grid-focus", i)), i == self.selected, 0.15);
             let grow = if enlarge { cell_h * 0.08 * focus } else { 0.0 };
             let rect = Rect::from_min_size(cell_pos(i, offset), cell).expand(grow);
@@ -403,6 +415,7 @@ impl App {
             }
         }
 
+        self.crt_visible = shown;
         if let Some(page) = self.draw_page_arrows(ui, screen, s, origin.y + grid_size.y / 2.0, (page, pages), interactive) {
             self.selected = (page * per_page + self.selected % per_page).min(count - 1);
             self.swap_sound();
@@ -525,36 +538,31 @@ impl App {
         }
     }
 
-    pub(super) fn update_video(&mut self, ctx: &Context) {
+    pub(super) fn update_videos(&mut self, ctx: &Context) {
+        const MAX_IDLE: usize = 12;
         let theme = &self.theme().settings;
-        let wanted = (theme.kind == ThemeKind::Bubbles
-            && theme.bubbles.play_video
-            && matches!(self.mode, Mode::Home)
-            && self.empty_bubble().is_none()
-            && ctx.input(|i| i.focused))
-        .then(|| self.selected_game().and_then(|g| g.asset(AssetKind::Video).map(Path::to_path_buf)))
-        .flatten();
-        if wanted != self.video_wanted.0 {
-            self.video_wanted = (wanted.clone(), Instant::now());
-        }
-        if self.video.as_ref().map(VideoPlayer::path) != wanted.as_deref() {
-            self.video = None;
-        }
-        let Some(path) = wanted else { return };
-        if self.video.is_some() || self.video_failed {
-            return;
-        }
-        let waited = self.video_wanted.1.elapsed();
-        if waited < VIDEO_DELAY {
-            ctx.request_repaint_after(VIDEO_DELAY - waited);
-            return;
-        }
-        match VideoPlayer::start(ctx, &path) {
-            Ok(player) => self.video = Some(player),
-            Err(e) => {
-                self.video_failed = true;
-                self.notify(tr!("Videos need ffmpeg installed: {error}", error = format!("{e:#}")));
+        let showing = matches!(self.mode, Mode::Home) && ctx.input(|i| i.focused);
+        let mut wanted = Vec::new();
+        if showing && theme.kind == ThemeKind::Bubbles && theme.bubbles.play_video && self.empty_bubble().is_none() {
+            wanted.extend(self.selected_game().and_then(|g| g.asset(AssetKind::Video)).map(|p| (p.to_path_buf(), video::Format::BUBBLE)));
+        } else if showing && theme.kind == ThemeKind::Standard && theme.tile_style == TileStyle::Crt {
+            let mut visible = self.crt_visible.clone();
+            visible.sort_by_key(|&i| i.abs_diff(self.selected));
+            let mut idle = 0;
+            for i in visible {
+                let Some(game) = self.library.games.get(i) else { continue };
+                match self.crt_video(game, i == self.selected) {
+                    Some((_, video::Format::CRT_IDLE)) if idle >= MAX_IDLE => {}
+                    Some((path, format)) => {
+                        idle += usize::from(format == video::Format::CRT_IDLE);
+                        wanted.push((path.to_path_buf(), format));
+                    }
+                    None => {}
+                }
             }
+        }
+        if let Some(e) = self.videos.get_mut().sync(ctx, &wanted, VIDEO_DELAY) {
+            self.notify(tr!("Videos need ffmpeg installed: {error}", error = format!("{e:#}")));
         }
     }
 
@@ -594,8 +602,8 @@ impl App {
         }
 
         let ctx = ui.ctx().clone();
-        let video = match &mut self.video {
-            Some(player) if bubbles.play_video => player.texture(&ctx).map(|t| (t.id(), t.size_vec2())),
+        let video = match self.selected_game().and_then(|g| g.asset(AssetKind::Video)) {
+            Some(path) if bubbles.play_video => self.videos.borrow_mut().frame(&ctx, path),
             _ => None,
         };
         let t = ctx.input(|i| i.time) as f32;

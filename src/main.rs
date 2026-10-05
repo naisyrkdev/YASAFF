@@ -8,6 +8,7 @@ mod appstore;
 mod autostart;
 mod box3d;
 mod case3d;
+mod crt;
 mod disc3d;
 mod fonts;
 mod fsutil;

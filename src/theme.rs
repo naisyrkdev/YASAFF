@@ -59,10 +59,11 @@ pub enum TileStyle {
     Object,
     Disc,
     Case,
+    Crt,
 }
 
 impl TileStyle {
-    pub const ALL: [Self; 7] = [Self::Flat, Self::Cover, Self::FlatBox, Self::Model, Self::Case, Self::Object, Self::Disc];
+    pub const ALL: [Self; 8] = [Self::Flat, Self::Cover, Self::FlatBox, Self::Model, Self::Case, Self::Object, Self::Disc, Self::Crt];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -73,6 +74,7 @@ impl TileStyle {
             Self::Object => tr!("3D objects"),
             Self::Disc => tr!("3D discs"),
             Self::Case => tr!("3D opening cases"),
+            Self::Crt => tr!("CRT screens"),
         }
     }
 
@@ -195,6 +197,31 @@ pub struct ObjectSettings {
 impl Default for ObjectSettings {
     fn default() -> Self {
         Self { color: Color32::from_rgb(0xd4, 0xda, 0xe6) }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(default)]
+pub struct CrtSettings {
+    pub width: f32,
+    pub height: f32,
+    pub play_video: bool,
+    pub idle_video: bool,
+    pub filter: bool,
+}
+
+impl Default for CrtSettings {
+    fn default() -> Self {
+        Self { width: 320.0, height: 240.0, play_video: true, idle_video: true, filter: true }
+    }
+}
+
+impl CrtSettings {
+    pub const SIZE_RANGE: (f32, f32) = (80.0, 600.0);
+
+    pub fn size(&self) -> [f32; 2] {
+        let (min, max) = Self::SIZE_RANGE;
+        [self.width, self.height].map(|v| if v.is_finite() { v.clamp(min, max) } else { min })
     }
 }
 
@@ -720,6 +747,7 @@ pub struct ThemeSettings {
     pub boxes: BoxSettings,
     pub objects: ObjectSettings,
     pub discs: DiscSettings,
+    pub crt: CrtSettings,
     pub bubbles: BubbleSettings,
     pub swap: SwapSound,
     pub background: Background,
@@ -745,7 +773,7 @@ impl ThemeSettings {
 
     pub fn disabled_options(&self) -> &'static [&'static str] {
         match self.kind {
-            ThemeKind::Bubbles => &["view", "tiles", "grid", "tile_style", "boxes", "objects", "discs", "swap"],
+            ThemeKind::Bubbles => &["view", "tiles", "grid", "tile_style", "boxes", "objects", "discs", "crt", "swap"],
             ThemeKind::Standard => &["bubbles"],
         }
     }
@@ -756,6 +784,16 @@ impl ThemeSettings {
             map.insert("disabled_options".to_owned(), serde_json::json!(self.disabled_options()));
         }
         Ok(serde_json::to_string_pretty(&value)?)
+    }
+
+    pub fn tile_aspect(&self) -> f32 {
+        match self.tile_style {
+            TileStyle::Crt => {
+                let [w, h] = self.crt.size();
+                w / h
+            }
+            style => style.aspect(self.boxes.size_mm()),
+        }
     }
 
     pub fn bar(&self, slot: BarSlot) -> &BarStyle {
@@ -786,6 +824,7 @@ impl Default for ThemeSettings {
             boxes: BoxSettings::default(),
             objects: ObjectSettings::default(),
             discs: DiscSettings::default(),
+            crt: CrtSettings::default(),
             bubbles: BubbleSettings::default(),
             swap: SwapSound::default(),
             background: Background::default(),

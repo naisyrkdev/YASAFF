@@ -22,6 +22,7 @@ use crate::apps::{self, AppEntry};
 use crate::autostart;
 use crate::box3d;
 use crate::case3d;
+use crate::crt;
 use crate::disc3d;
 use crate::fonts;
 use crate::i18n;
@@ -37,10 +38,10 @@ use crate::scan;
 use crate::sound::Sounds;
 use crate::settings::{DiscAction, Language, MouseSettings, Settings};
 use crate::stores::Store;
-use crate::video::{self, VideoPlayer};
+use crate::video::{self, Videos};
 use crate::theme::{
     self, BackgroundKind, BarPosition, BarSlot, BarStyle, BoxCase, BubbleSettings, DiscKind, DiscSettings, DiscSpin, FaceButton, GradientDirection, GridAlign, GridSettings,
-    ImageFit, SpineLabel, Theme, ThemeKind, TileSettings, TileStyle, ViewKind,
+    CrtSettings, ImageFit, SpineLabel, Theme, ThemeKind, TileSettings, TileStyle, ViewKind,
 };
 use egui::{
     Align2, Color32, Context, FontId, Id, Mesh, Painter, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, TextureHandle, TextureOptions,
@@ -170,9 +171,8 @@ pub struct App {
     bubble_layout: Option<BubbleLayout>,
     bubble_empty: Option<usize>,
     sounds: Sounds,
-    video: Option<VideoPlayer>,
-    video_wanted: (Option<PathBuf>, Instant),
-    video_failed: bool,
+    videos: RefCell<Videos>,
+    crt_visible: Vec<usize>,
     fullscreen: bool,
     autostart: bool,
     bg_current: Option<PathBuf>,
@@ -254,9 +254,8 @@ impl App {
             bubble_layout: None,
             bubble_empty: None,
             sounds: Sounds::default(),
-            video: None,
-            video_wanted: (None, Instant::now()),
-            video_failed: false,
+            videos: RefCell::default(),
+            crt_visible: Vec::new(),
             fullscreen,
             autostart: autostart::is_enabled(),
             bg_current: None,
@@ -554,7 +553,7 @@ impl eframe::App for App {
         if !matches!(self.mode, Mode::Home) {
             self.bubble_empty = None;
         }
-        self.update_video(&ctx);
+        self.update_videos(&ctx);
         self.guard_focus(&ctx);
         if self.spin.0 != self.selected {
             self.spin = (self.selected, Instant::now());
