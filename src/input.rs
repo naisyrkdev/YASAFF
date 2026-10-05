@@ -1,6 +1,6 @@
 
 use egui::{Context, Event, Key, Modifiers, PointerButton, Pos2, RawInput, Rect};
-use gilrs::{Axis, Button, EventType, Gilrs};
+use gilrs::{Axis, Button, EventType, Gamepad, GamepadId, Gilrs};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
@@ -85,25 +85,66 @@ impl PadButton {
         Self::DPadRight,
     ];
 
-    pub fn glyph(self) -> &'static str {
+    /// A stable name for the button: in theme files, image file names and the button tokens in texts.
+    pub fn key(self) -> &'static str {
         match self {
-            Self::South => "A",
-            Self::East => "B",
-            Self::West => "X",
-            Self::North => "Y",
-            Self::LeftBumper => "LB",
-            Self::RightBumper => "RB",
-            Self::LeftTrigger => "LT",
-            Self::RightTrigger => "RT",
-            Self::LeftStick => "LS",
-            Self::RightStick => "RS",
-            Self::View => "View",
-            Self::Menu => "Menu",
-            Self::Guide => "Guide",
-            Self::DPadUp => "D-pad ↑",
-            Self::DPadDown => "D-pad ↓",
-            Self::DPadLeft => "D-pad ←",
-            Self::DPadRight => "D-pad →",
+            Self::South => "a",
+            Self::East => "b",
+            Self::West => "x",
+            Self::North => "y",
+            Self::LeftBumper => "lb",
+            Self::RightBumper => "rb",
+            Self::LeftTrigger => "lt",
+            Self::RightTrigger => "rt",
+            Self::LeftStick => "ls",
+            Self::RightStick => "rs",
+            Self::View => "view",
+            Self::Menu => "menu",
+            Self::Guide => "guide",
+            Self::DPadUp => "dpad_up",
+            Self::DPadDown => "dpad_down",
+            Self::DPadLeft => "dpad_left",
+            Self::DPadRight => "dpad_right",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|b| b.key() == key)
+    }
+
+    /// The text printed on the button of that controller family.
+    pub fn glyph(self, family: PadFamily) -> &'static str {
+        match (family, self) {
+            (PadFamily::Xbox, Self::South) => "A",
+            (PadFamily::Xbox, Self::East) => "B",
+            (PadFamily::Xbox, Self::West) => "X",
+            (PadFamily::Xbox, Self::North) => "Y",
+            (PadFamily::Xbox, Self::LeftBumper) => "LB",
+            (PadFamily::Xbox, Self::RightBumper) => "RB",
+            (PadFamily::Xbox, Self::LeftTrigger) => "LT",
+            (PadFamily::Xbox, Self::RightTrigger) => "RT",
+            (PadFamily::Xbox, Self::LeftStick) => "LS",
+            (PadFamily::Xbox, Self::RightStick) => "RS",
+            (PadFamily::Xbox, Self::View) => "View",
+            (PadFamily::Xbox, Self::Menu) => "Menu",
+            (PadFamily::Xbox, Self::Guide) => "Guide",
+            (PadFamily::PlayStation, Self::South) => "✕",
+            (PadFamily::PlayStation, Self::East) => "○",
+            (PadFamily::PlayStation, Self::West) => "□",
+            (PadFamily::PlayStation, Self::North) => "△",
+            (PadFamily::PlayStation, Self::LeftBumper) => "L1",
+            (PadFamily::PlayStation, Self::RightBumper) => "R1",
+            (PadFamily::PlayStation, Self::LeftTrigger) => "L2",
+            (PadFamily::PlayStation, Self::RightTrigger) => "R2",
+            (PadFamily::PlayStation, Self::LeftStick) => "L3",
+            (PadFamily::PlayStation, Self::RightStick) => "R3",
+            (PadFamily::PlayStation, Self::View) => "Share",
+            (PadFamily::PlayStation, Self::Menu) => "Options",
+            (PadFamily::PlayStation, Self::Guide) => "PS",
+            (_, Self::DPadUp) => "D-pad ↑",
+            (_, Self::DPadDown) => "D-pad ↓",
+            (_, Self::DPadLeft) => "D-pad ←",
+            (_, Self::DPadRight) => "D-pad →",
         }
     }
 
@@ -169,6 +210,29 @@ impl PadButton {
             Self::LeftTrigger => Control::RightClick,
             Self::LeftBumper | Self::RightBumper | Self::LeftStick => Control::Nothing,
         }
+    }
+}
+
+/// Which controller's buttons the hints show.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PadFamily {
+    Xbox,
+    PlayStation,
+}
+
+impl PadFamily {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Xbox => "Xbox",
+            Self::PlayStation => "PlayStation",
+        }
+    }
+
+    fn of(pad: &Gamepad) -> Self {
+        const SONY: u16 = 0x054c;
+        let name = pad.name().to_lowercase();
+        let sony_name = ["playstation", "dualshock", "dualsense", "ps4", "ps5", "sony"].iter().any(|n| name.contains(n));
+        if pad.vendor_id() == Some(SONY) || sony_name { Self::PlayStation } else { Self::Xbox }
     }
 }
 
@@ -302,6 +366,8 @@ pub struct Input {
     mouse_enabled: bool,
     global_mouse: bool,
     bindings: Bindings,
+    /// The controller pressed last, whose buttons the hints show.
+    last_pad: Option<GamepadId>,
 }
 
 impl Input {
@@ -314,7 +380,7 @@ impl Input {
             }
         };
         let mouse = VirtualMouse { pos: None, screen: Rect::NOTHING, last_tick: Instant::now(), last_used: None, buttons: Vec::new() };
-        Self { gilrs, held: None, mouse, mouse_enabled: false, global_mouse: false, bindings: Bindings::default() }
+        Self { gilrs, held: None, mouse, mouse_enabled: false, global_mouse: false, bindings: Bindings::default(), last_pad: None }
     }
 
     pub fn set_bindings(&mut self, bindings: Bindings) {
@@ -374,6 +440,7 @@ impl Input {
         }
         let stick = gilrs
             .gamepads()
+            .filter(|(_, pad)| is_controller(pad))
             .map(|(_, pad)| egui::vec2(pad.value(Axis::RightStickX), -pad.value(Axis::RightStickY)))
             .find(|v| v.length() > MOUSE_DEADZONE);
         if let Some(v) = stick {
@@ -401,6 +468,9 @@ impl Input {
         let Some(gilrs) = &mut self.gilrs else { return Vec::new() };
         let mut actions = Vec::new();
         while let Some(ev) = gilrs.next_event() {
+            if !gilrs.connected_gamepad(ev.id).is_some_and(|pad| is_controller(&pad)) {
+                continue;
+            }
             if let EventType::ButtonPressed(b, _) = ev.event
                 && PadButton::from_gilrs(b).is_some_and(|b| !left_to_global_mouse(global_mouse, b) && self.bindings.get(b) == Control::Guide)
             {
@@ -417,6 +487,12 @@ impl Input {
 
         if let Some(gilrs) = &mut self.gilrs {
             while let Some(ev) = gilrs.next_event() {
+                if !gilrs.connected_gamepad(ev.id).is_some_and(|pad| is_controller(&pad)) {
+                    continue;
+                }
+                if matches!(ev.event, EventType::ButtonPressed(..)) {
+                    self.last_pad = Some(ev.id);
+                }
                 let (button, pressed) = match ev.event {
                     EventType::ButtonPressed(b, _) => (b, true),
                     EventType::ButtonReleased(b, _) => (b, false),
@@ -496,7 +572,15 @@ impl Input {
     }
 
     pub fn has_gamepad(&self) -> bool {
-        self.gilrs.as_ref().is_some_and(|g| g.gamepads().next().is_some())
+        self.gilrs.as_ref().is_some_and(|g| g.gamepads().any(|(_, pad)| is_controller(&pad)))
+    }
+
+    /// The family of the controller used last, or of the first one connected.
+    pub fn pad_family(&self) -> Option<PadFamily> {
+        let gilrs = self.gilrs.as_ref()?;
+        let last = self.last_pad.and_then(|id| gilrs.connected_gamepad(id));
+        let pad = last.or_else(|| gilrs.gamepads().map(|(_, pad)| pad).find(is_controller))?;
+        Some(PadFamily::of(&pad))
     }
 }
 
@@ -504,8 +588,15 @@ fn left_to_global_mouse(global_mouse: bool, button: PadButton) -> bool {
     global_mouse && GLOBAL_MOUSE_BUTTONS.contains(&button)
 }
 
+/// PlayStation 4/5 controllers on Linux also show up as separate touchpad and motion sensor
+/// devices. Those report axes too: a finger on the touchpad would steer like a stick.
+fn is_controller(pad: &Gamepad) -> bool {
+    let name = pad.name().to_lowercase();
+    !["touchpad", "motion sensor"].iter().any(|n| name.contains(n))
+}
+
 fn held_direction(gilrs: &Gilrs, bindings: &Bindings, global_mouse: bool) -> Option<Action> {
-    for (_, pad) in gilrs.gamepads() {
+    for (_, pad) in gilrs.gamepads().filter(|(_, pad)| is_controller(pad)) {
         let x = pad.value(Axis::LeftStickX);
         let y = pad.value(Axis::LeftStickY);
         let held = |control: Control| {

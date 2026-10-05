@@ -28,7 +28,7 @@ use crate::fonts;
 use crate::i18n;
 use crate::initial;
 use crate::global_mouse::GlobalMouse;
-use crate::input::{Action, Control, GLOBAL_MOUSE_BUTTONS, Input, PadButton};
+use crate::input::{Action, Control, GLOBAL_MOUSE_BUTTONS, Input, PadButton, PadFamily};
 use crate::launcher;
 use crate::library::{AssetKind, CoverPlacement, Game, Library};
 use crate::metadata::{self, Fetcher};
@@ -40,7 +40,7 @@ use crate::settings::{DiscAction, Language, MouseSettings, Settings};
 use crate::stores::Store;
 use crate::video::{self, Videos};
 use crate::theme::{
-    self, BackgroundKind, BarPosition, BarSlot, BarStyle, BoxCase, BubbleSettings, DiscKind, DiscSettings, DiscSpin, FaceButton, GradientDirection, GridAlign, GridSettings,
+    self, BackgroundKind, BarPosition, BarSlot, BarStyle, BoxCase, BubbleSettings, ButtonShape, ButtonStyle, DiscKind, DiscSettings, DiscSpin, GradientDirection, GridAlign, GridSettings,
     CrtSettings, ImageFit, SpineLabel, Theme, ThemeKind, TileSettings, TileStyle, ViewKind,
 };
 use egui::{
@@ -207,6 +207,8 @@ pub struct App {
     /// Set once a restart was requested: the window is closing and nothing may touch the profile.
     restarting: bool,
     dialog: Option<dialogs::PendingDialog>,
+    /// The button the theme's button rows in Settings change.
+    button_edit: PadButton,
 }
 
 impl App {
@@ -286,6 +288,7 @@ impl App {
             setup: None,
             restarting: false,
             dialog: None,
+            button_edit: PadButton::South,
         };
         app.apply_fonts();
         if let Some(w) = warning {

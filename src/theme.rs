@@ -1,8 +1,10 @@
 
+use crate::input::PadButton;
 use crate::library::Library;
 use anyhow::{Context, Result, bail};
 use egui::Color32;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -652,36 +654,40 @@ impl BarStyle {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
-pub enum FaceButton {
-    A,
-    B,
-    X,
-    Y,
+/// How the controller buttons in the hints are shown.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ButtonStyle {
+    /// The built-in pictures of the controller's buttons.
+    Images,
+    /// Colored buttons drawn with the button's letter.
+    Drawn,
 }
 
-impl FaceButton {
-    pub const ALL: [Self; 4] = [Self::A, Self::B, Self::X, Self::Y];
+impl ButtonStyle {
+    pub const ALL: [Self; 2] = [Self::Images, Self::Drawn];
 
-    pub fn glyph(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
-            Self::A => "A",
-            Self::B => "B",
-            Self::X => "X",
-            Self::Y => "Y",
+            Self::Images => tr!("Controller images"),
+            Self::Drawn => tr!("Drawn"),
         }
     }
+}
 
-    pub fn from_glyph(glyph: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|b| b.glyph() == glyph)
-    }
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ButtonShape {
+    #[default]
+    Circle,
+    Square,
+}
 
-    fn file_prefix(self) -> &'static str {
+impl ButtonShape {
+    pub const ALL: [Self; 2] = [Self::Circle, Self::Square];
+
+    pub fn label(self) -> &'static str {
         match self {
-            Self::A => "button-a",
-            Self::B => "button-b",
-            Self::X => "button-x",
-            Self::Y => "button-y",
+            Self::Circle => tr!("Circle"),
+            Self::Square => tr!("Square"),
         }
     }
 }
@@ -694,35 +700,47 @@ pub struct ButtonLook {
     #[serde(with = "hex_opt", skip_serializing_if = "Option::is_none")]
     pub text_color: Option<Color32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub shape: Option<ButtonShape>,
+    /// An image drawn instead of the button, whatever the style.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
 }
 
+impl ButtonLook {
+    const DEFAULT: Self = ButtonLook { color: None, text_color: None, shape: None, icon: None };
+
+    fn is_drawn_custom(&self) -> bool {
+        self.color.is_some() || self.text_color.is_some() || self.shape.is_some()
+    }
+}
+
+/// Button looks keyed by [`PadButton::key`]; themes made before there were button images only have "a", "b", "x" and "y".
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
 #[serde(default)]
 pub struct ButtonStyles {
-    pub a: ButtonLook,
-    pub b: ButtonLook,
-    pub x: ButtonLook,
-    pub y: ButtonLook,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    style: Option<ButtonStyle>,
+    #[serde(flatten)]
+    looks: BTreeMap<String, ButtonLook>,
 }
 
 impl ButtonStyles {
-    pub fn get(&self, button: FaceButton) -> &ButtonLook {
-        match button {
-            FaceButton::A => &self.a,
-            FaceButton::B => &self.b,
-            FaceButton::X => &self.x,
-            FaceButton::Y => &self.y,
-        }
+    /// Themes from before button images that recolored a button keep their drawn buttons.
+    pub fn style(&self) -> ButtonStyle {
+        self.style.unwrap_or(if self.looks.values().any(ButtonLook::is_drawn_custom) { ButtonStyle::Drawn } else { ButtonStyle::Images })
     }
 
-    pub fn get_mut(&mut self, button: FaceButton) -> &mut ButtonLook {
-        match button {
-            FaceButton::A => &mut self.a,
-            FaceButton::B => &mut self.b,
-            FaceButton::X => &mut self.x,
-            FaceButton::Y => &mut self.y,
-        }
+    pub fn set_style(&mut self, style: ButtonStyle) {
+        self.style = Some(style);
+    }
+
+    pub fn get(&self, button: PadButton) -> &ButtonLook {
+        self.looks.get(button.key()).unwrap_or(&ButtonLook::DEFAULT)
+    }
+
+    pub fn get_mut(&mut self, button: PadButton) -> &mut ButtonLook {
+        self.style = Some(self.style());
+        self.looks.entry(button.key().to_owned()).or_default()
     }
 }
 
@@ -967,14 +985,14 @@ impl Theme {
         self.save()
     }
 
-    pub fn button_icon(&self, button: FaceButton) -> Option<PathBuf> {
+    pub fn button_icon(&self, button: PadButton) -> Option<PathBuf> {
         let name = self.settings.buttons.get(button).icon.as_deref()?;
         is_plain_file_name(name).then(|| self.images_dir().join(name))
     }
 
-    pub fn set_button_icon(&mut self, button: FaceButton, src: &Path) -> Result<()> {
+    pub fn set_button_icon(&mut self, button: PadButton, src: &Path) -> Result<()> {
         let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("png").to_lowercase();
-        let name = format!("{}-{}.{ext}", button.file_prefix(), now_secs());
+        let name = format!("button-{}-{}.{ext}", button.key(), now_secs());
         fs::create_dir_all(self.images_dir())?;
         fs::copy(src, self.images_dir().join(&name)).with_context(|| format!("copying {}", src.display()))?;
         self.remove_button_icon_file(button);
@@ -982,13 +1000,13 @@ impl Theme {
         self.save()
     }
 
-    pub fn clear_button_icon(&mut self, button: FaceButton) -> Result<()> {
+    pub fn clear_button_icon(&mut self, button: PadButton) -> Result<()> {
         self.remove_button_icon_file(button);
         self.settings.buttons.get_mut(button).icon = None;
         self.save()
     }
 
-    fn remove_button_icon_file(&self, button: FaceButton) {
+    fn remove_button_icon_file(&self, button: PadButton) {
         if let Some(old) = self.button_icon(button) {
             let _ = fs::remove_file(old);
         }
@@ -1309,16 +1327,33 @@ mod tests {
 
     #[test]
     fn button_styles_keep_only_what_was_changed() {
-        let s: ThemeSettings = serde_json::from_str(r##"{"buttons":{"b":{"color":"#102030","icon":"button-b-1.png"}}}"##).unwrap();
-        assert_eq!(s.buttons.a, ButtonLook::default());
-        assert_eq!(s.buttons.get(FaceButton::B).color, Some(Color32::from_rgb(0x10, 0x20, 0x30)));
-        assert_eq!(s.buttons.b.text_color, None);
-        assert_eq!(s.buttons.b.icon.as_deref(), Some("button-b-1.png"));
+        let s: ThemeSettings = serde_json::from_str(r##"{"buttons":{"a":{},"b":{"color":"#102030","icon":"button-b-1.png"}}}"##).unwrap();
+        assert_eq!(s.buttons.get(PadButton::South), &ButtonLook::default());
+        assert_eq!(s.buttons.get(PadButton::East).color, Some(Color32::from_rgb(0x10, 0x20, 0x30)));
+        assert_eq!(s.buttons.get(PadButton::East).text_color, None);
+        assert_eq!(s.buttons.get(PadButton::East).icon.as_deref(), Some("button-b-1.png"));
+        assert_eq!(s.buttons.get(PadButton::Guide), &ButtonLook::default());
         let json: serde_json::Value = serde_json::to_value(&s.buttons).unwrap();
         assert_eq!(json["b"], serde_json::json!({"color": "#102030", "icon": "button-b-1.png"}));
-        assert_eq!(json["a"], serde_json::json!({}));
-        assert_eq!(FaceButton::from_glyph("Y"), Some(FaceButton::Y));
-        assert_eq!(FaceButton::from_glyph("LB"), None);
+        assert!(json.get("style").is_none());
+    }
+
+    #[test]
+    fn button_images_are_the_default_unless_an_older_theme_recolored_a_button() {
+        assert_eq!(ButtonStyles::default().style(), ButtonStyle::Images);
+        let icon_only: ButtonStyles = serde_json::from_str(r#"{"a":{"icon":"button-a-1.png"}}"#).unwrap();
+        assert_eq!(icon_only.style(), ButtonStyle::Images);
+        let mut recolored: ButtonStyles = serde_json::from_str(r##"{"y":{"color":"#102030"}}"##).unwrap();
+        assert_eq!(recolored.style(), ButtonStyle::Drawn);
+        recolored.set_style(ButtonStyle::Images);
+        recolored.get_mut(PadButton::North).shape = Some(ButtonShape::Square);
+        assert_eq!(recolored.style(), ButtonStyle::Images);
+        let mut fresh = ButtonStyles::default();
+        fresh.get_mut(PadButton::LeftBumper).color = Some(Color32::BLACK);
+        assert_eq!(fresh.style(), ButtonStyle::Images, "changing a color keeps the chosen style");
+        let json = serde_json::to_value(&fresh).unwrap();
+        assert_eq!(json["style"], "Images");
+        assert_eq!(serde_json::from_value::<ButtonStyles>(json).unwrap(), fresh);
     }
 
     #[test]

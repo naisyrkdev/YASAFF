@@ -1,5 +1,5 @@
 
-use crate::input::{Bindings, Control, PadButton};
+use crate::input::{Bindings, Control, PadButton, PadFamily};
 use crate::library::Library;
 use crate::stores::Store;
 use anyhow::Result;
@@ -82,6 +82,9 @@ impl Default for MouseSettings {
 pub struct ControlSettings {
     pub remap: BTreeMap<PadButton, Control>,
     pub swap_ab: bool,
+    /// Which controller's buttons the hints show; `None` follows the connected controller.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<PadFamily>,
 }
 
 impl ControlSettings {

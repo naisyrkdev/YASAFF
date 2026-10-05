@@ -25,6 +25,7 @@ pub(super) enum SettingRow {
     MouseCursor,
     MouseCursorClear,
     MouseCursorSize,
+    ControllerPrompts,
     ControllerSwap,
     ControllerButton(PadButton),
     ControllerReset,
@@ -90,7 +91,9 @@ pub(super) enum SettingRow {
     BackgroundImage,
     ImageFit,
     Bar(BarSlot, BarRow),
-    Button(FaceButton, ButtonRow),
+    ButtonStyle,
+    ButtonPick,
+    Button(PadButton, ButtonRow),
     StoreEnabled(Store),
     StoreBackground(Store),
     StoreCommand(Store),
@@ -150,10 +153,11 @@ pub(super) enum BarRow {
 
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum ButtonRow {
-    Color,
-    TextColor,
     Icon,
     IconClear,
+    Shape,
+    Color,
+    TextColor,
 }
 
 pub(super) const SOURCE_URL: &str = "https://github.com/naisyrkdev/YASAFF";
@@ -405,13 +409,14 @@ impl App {
             };
             rows.extend(kind_rows.iter().map(|&r| R::Bar(slot, r)));
         }
-        for button in FaceButton::ALL {
-            let button_rows: &[ButtonRow] = match self.theme().button_icon(button) {
-                Some(_) => &[ButtonRow::Icon, ButtonRow::IconClear],
-                None => &[ButtonRow::Color, ButtonRow::TextColor, ButtonRow::Icon],
-            };
-            rows.extend(button_rows.iter().map(|&r| R::Button(button, r)));
-        }
+        rows.extend([R::ButtonStyle, R::ButtonPick]);
+        let button = self.button_edit;
+        let button_rows: &[ButtonRow] = match (self.theme().button_icon(button), theme.buttons.style()) {
+            (Some(_), _) => &[ButtonRow::Icon, ButtonRow::IconClear],
+            (None, ButtonStyle::Images) => &[ButtonRow::Icon],
+            (None, ButtonStyle::Drawn) => &[ButtonRow::Icon, ButtonRow::Shape, ButtonRow::Color, ButtonRow::TextColor],
+        };
+        rows.extend(button_rows.iter().map(|&r| R::Button(button, r)));
         rows.extend([R::Theme, R::ThemeRename, R::ThemeNew, R::ThemeExport, R::ThemeImport]);
         if theme::deletable(&self.themes, self.theme) {
             rows.push(R::ThemeDelete);
@@ -454,6 +459,7 @@ impl App {
             rows.push(R::MouseCursorClear);
         }
         rows.push(R::MouseCursorSize);
+        rows.push(R::ControllerPrompts);
         let custom = self.settings.controls.is_custom();
         if !custom {
             rows.push(R::ControllerSwap);
@@ -631,7 +637,12 @@ impl App {
                 self.settings.controls.swap_ab ^= true;
                 self.controls_changed();
             }
-            SettingRow::ControllerButton(_) | SettingRow::SpecialPlace(_) => self.adjust_setting(row, 1),
+            SettingRow::ControllerPrompts
+            | SettingRow::ControllerButton(_)
+            | SettingRow::SpecialPlace(_)
+            | SettingRow::ButtonStyle
+            | SettingRow::ButtonPick
+            | SettingRow::Button(_, ButtonRow::Shape) => self.adjust_setting(row, 1),
             SettingRow::ControllerReset => {
                 self.settings.controls.reset();
                 self.controls_changed();
@@ -908,6 +919,15 @@ impl App {
         }
         match row {
             SettingRow::ControllerSwap => return self.activate_setting(row),
+            SettingRow::ControllerPrompts => {
+                let choices = [None, Some(PadFamily::Xbox), Some(PadFamily::PlayStation)];
+                self.settings.controls.prompts = cycle(&choices, self.settings.controls.prompts, delta);
+                return self.save_settings();
+            }
+            SettingRow::ButtonPick => {
+                self.button_edit = cycle(&PadButton::ALL, self.button_edit, delta);
+                return;
+            }
             SettingRow::ControllerButton(button) => {
                 let was_custom = self.settings.controls.is_custom();
                 let control = cycle(&Control::ALL, self.input.bindings().get(button), delta);
@@ -1073,6 +1093,14 @@ impl App {
                     _ => bar.image_rotation = (bar.image_rotation + 5.0 * d + 180.0).rem_euclid(360.0) - 180.0,
                 }
             }
+            SettingRow::ButtonStyle => {
+                let buttons = &mut settings.buttons;
+                buttons.set_style(cycle(&ButtonStyle::ALL, buttons.style(), delta));
+            }
+            SettingRow::Button(button, ButtonRow::Shape) => {
+                let look = settings.buttons.get_mut(button);
+                look.shape = Some(cycle(&ButtonShape::ALL, look.shape.unwrap_or_default(), delta));
+            }
             SettingRow::Button(_, ButtonRow::Color | ButtonRow::TextColor) => {
                 let Some(slot) = self.button_color_slot(row) else { return };
                 *slot = cycle_or_default(BUTTON_PRESETS, *slot, delta);
@@ -1150,10 +1178,7 @@ impl App {
             SettingRow::AboutApp => Some((tr!("About"), None)),
             SettingRow::AddonManager => Some(self.addons_heading()),
             SettingRow::VirtualMouse => Some((tr!("Mouse"), self.global_mouse_status())),
-            SettingRow::ControllerSwap => Some((tr!("Controller"), Some(self.controller_warning()))),
-            SettingRow::ControllerButton(PadButton::South) if self.settings.controls.is_custom() => {
-                Some((tr!("Controller"), Some(self.controller_warning())))
-            }
+            SettingRow::ControllerPrompts => Some((tr!("Controller"), Some(self.controller_warning()))),
             SettingRow::SpecialPlace(Special::Store) => Some((
                 tr!("Store and Add game"),
                 Some((tr!("Assign each a controller button above, then place it in the top or bottom bar").to_owned(), Color32::from_gray(140))),
@@ -1176,10 +1201,7 @@ impl App {
             }
             SettingRow::GameArt => Some((tr!("Background"), None)),
             SettingRow::Bar(slot, BarRow::Enabled) => Some((slot.label(), None)),
-            SettingRow::Button(FaceButton::A, ButtonRow::Color) => Some(self.buttons_heading()),
-            SettingRow::Button(FaceButton::A, ButtonRow::Icon) if self.theme().button_icon(FaceButton::A).is_some() => {
-                Some(self.buttons_heading())
-            }
+            SettingRow::ButtonStyle => Some(self.buttons_heading()),
             SettingRow::DiscKind => Some((tr!("Discs"), Some((tr!("Covers are printed on the label side").to_owned(), Color32::from_gray(140))))),
             SettingRow::ObjectColor => Some((
                 tr!("3D objects"),
@@ -1217,7 +1239,7 @@ impl App {
     }
 
     pub(super) fn buttons_heading(&self) -> (&'static str, Option<(String, Color32)>) {
-        (tr!("Buttons"), Some((tr!("How A, B, X and Y look in the button hints").to_owned(), Color32::from_gray(140))))
+        (tr!("Buttons"), Some((tr!("How controller buttons look in the button hints").to_owned(), Color32::from_gray(140))))
     }
 
     pub(super) fn setting_sections(&self, rows: &[SettingRow]) -> Vec<SettingSection> {
@@ -1312,6 +1334,13 @@ impl App {
                 tr!("Right stick moves the cursor; RT or R3 clicks, LT right-clicks"),
                 Toggle(self.settings.mouse.virtual_mouse),
             ),
+            SettingRow::ControllerPrompts => {
+                let value = match self.settings.controls.prompts {
+                    Some(family) => family.name().to_owned(),
+                    None => tr!("Automatic · {controller}", controller = self.pad_family().name()),
+                };
+                (tr!("Button hints for").into(), tr!("Automatic follows the controller you use"), Choice(value))
+            }
             SettingRow::ControllerSwap => (
                 tr!("Swap {a} with {b} action", a = button_token(PadButton::South), b = button_token(PadButton::East)),
                 tr!("For those used to Nintendo Switch buttons; hidden while buttons are remapped"),
@@ -1692,28 +1721,37 @@ impl App {
                     BarRow::ImageReset => (tr!("Reset image placement").into(), tr!("Back to 100 %, centered, not rotated"), Action(tr!("Reset"))),
                 }
             }
+            SettingRow::ButtonStyle => (
+                tr!("Button look").into(),
+                tr!("Controller images follow the controller; drawn buttons take the colors below"),
+                Choice(theme.buttons.style().label().into()),
+            ),
+            SettingRow::ButtonPick => (
+                tr!("Button {button}", button = button_token(self.button_edit)),
+                tr!("Left/Right picks the button the rows below change"),
+                Choice(self.button_edit.glyph(self.pad_family()).into()),
+            ),
             SettingRow::Button(button, field) => {
                 let look = theme.buttons.get(button);
-                let token = face_token(button);
+                let (_, default_fill, default_text) = drawn_default(self.pad_family(), button);
                 let optional = |color: Option<Color32>, default: Color32| match color {
                     Some(c) => RowValue::Color(c),
                     None => RowValue::DefaultColor(default),
                 };
                 let color_sub = tr!("Enter to type a hex value; empty uses the default");
                 match field {
-                    ButtonRow::Color => {
-                        (tr!("{button} color", button = token), color_sub, optional(look.color, glyph_color(button.glyph())))
-                    }
-                    ButtonRow::TextColor => (tr!("{button} letter color", button = token), color_sub, optional(look.text_color, Color32::WHITE)),
                     ButtonRow::Icon => {
                         let sub = if self.theme().button_icon(button).is_some() {
                             tr!("Copied into the theme's images folder")
                         } else {
-                            tr!("A .png image drawn instead of the colored button")
+                            tr!("Your own image, drawn instead of the button")
                         };
-                        (tr!("{button} icon", button = token), sub, Action(tr!("Choose…")))
+                        (tr!("Image").into(), sub, Action(tr!("Choose…")))
                     }
-                    ButtonRow::IconClear => (tr!("Remove {button} icon", button = token), tr!("Back to the colored button"), Action(tr!("Remove"))),
+                    ButtonRow::IconClear => (tr!("Remove image").into(), tr!("Back to the button look above"), Action(tr!("Remove"))),
+                    ButtonRow::Shape => (tr!("Shape").into(), "", Choice(look.shape.unwrap_or_default().label().into())),
+                    ButtonRow::Color => (tr!("Color").into(), color_sub, optional(look.color, default_fill)),
+                    ButtonRow::TextColor => (tr!("Letter color").into(), color_sub, optional(look.text_color, default_text)),
                 }
             }
             SettingRow::AppStoreUrl => {
@@ -1820,7 +1858,7 @@ impl App {
         let offset = view.top() - scroll;
         let painter = painter.with_clip_rect(view);
 
-        let skin = |glyph: &str| self.button_skin(glyph);
+        let skin = |key: &str| self.token_skin(key);
         let mut clicked = None;
         let mut adjusted = None;
         let mut hovered = None;
