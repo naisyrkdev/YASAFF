@@ -297,7 +297,7 @@ impl App {
         let ctx = ui.ctx();
         let scroll_x = ctx.animate_value_with_time(Id::new("row-scroll"), (self.selected / rows) as f32, 0.18);
         let scroll_y = ctx.animate_value_with_time(Id::new("row-scroll-y"), (self.selected % rows) as f32, 0.18);
-        let interactive = matches!(self.mode, Mode::Home);
+        let interactive = matches!(self.mode, Mode::Home | Mode::SwapTile { .. });
         let mut clicked = None;
         let mut shown = Vec::new();
 
@@ -364,7 +364,7 @@ impl App {
 
         let ctx = ui.ctx().clone();
         let slide = ctx.animate_value_with_time(Id::new("grid-page"), page as f32, 0.25);
-        let interactive = matches!(self.mode, Mode::Home);
+        let interactive = matches!(self.mode, Mode::Home | Mode::SwapTile { .. });
         let mut clicked = None;
         let cell_pos = |i: usize, offset: f32| {
             let (col, row) = (i % per_page % columns, i % per_page / columns);
@@ -651,6 +651,7 @@ impl App {
                     (None, Some(i)) => self.special(i).map_or("", Special::glyph).to_owned(),
                     (None, None) => String::new(),
                 },
+                icon: tile.filter(|_| game.is_none()).and_then(|i| self.special(i)).and_then(|s| self.special_icon(s)),
                 swapping: Some(j) == moving,
                 running: tile.is_some_and(|i| self.is_active(i)),
             };
@@ -775,12 +776,23 @@ impl App {
                     Some(status) => format!("{sub}  ·  {}", status.describe()),
                     None => sub,
                 };
-                let sub = if self.is_active(self.selected) {
+                let sub = if let Mode::SwapTile { from } = self.mode {
+                    let name = self.library.games.get(from).map_or("", |g| g.name.as_str());
+                    let text = tr!("Pick a game to swap places with {name}", name = name);
+                    shadow_text(painter, pos2(x, y + 62.0 * s), Align2::LEFT_TOP, &text, 22.0 * s, SWAP_GLOW);
+                    return false;
+                } else if self.is_active(self.selected) {
                     tr!("Running  ·  A switches to it, Guide comes back here").to_owned()
                 } else if let Some(update) = self.game_update(game) {
                     tr!("{status}  ·  Update to {version} in Options", status = sub, version = update.latest.version)
                 } else {
                     sub
+                };
+                let sub = match game.fixed_slot {
+                    Some(_) if !self.is_bubbles() && !self.settings.order.static_order => {
+                        tr!("{status}  ·  Static position: slot {slot}", status = sub, slot = self.selected + 1)
+                    }
+                    _ => sub,
                 };
                 shadow_text(painter, pos2(x, y + 62.0 * s), Align2::LEFT_TOP, &sub, 22.0 * s, Color32::from_gray(190));
                 if start_button {
@@ -807,6 +819,9 @@ impl App {
     }
 
     pub(super) fn click_tile(&mut self, i: usize) {
+        if let Mode::SwapTile { from } = self.mode {
+            return self.finish_swap(from, i);
+        }
         if i == self.selected {
             self.activate_selected();
         } else {
@@ -842,6 +857,40 @@ impl App {
             Action::OpenStore => self.open_store(),
             _ => {}
         }
+    }
+
+    pub(super) fn handle_swap_tile(&mut self, action: Action) {
+        let Mode::SwapTile { from } = self.mode else { return };
+        match action {
+            Action::Left | Action::Right | Action::Up | Action::Down => {
+                let before = self.selected;
+                self.selected = navigate(self.home_layout(), self.selected, self.library.games.len(), action);
+                if self.selected != before {
+                    self.swap_sound();
+                }
+            }
+            Action::Confirm => self.finish_swap(from, self.selected),
+            Action::Back => {
+                self.selected = from;
+                self.mode = Mode::Options { cursor: self.menu_index(MenuItem::SwapTile) };
+            }
+            _ => {}
+        }
+    }
+
+    /// Swaps the games at `from` and `to` and leaves the moved game selected in its new slot.
+    pub(super) fn finish_swap(&mut self, from: usize, to: usize) {
+        let games = self.library.games.len();
+        if to >= games {
+            self.notify(tr!("Only games can swap places"));
+            return;
+        }
+        self.mode = Mode::Home;
+        if from < games && from != to {
+            self.library.swap(from, to);
+            self.save();
+        }
+        self.selected = to;
     }
 
     pub(super) fn handle_swap_bubble(&mut self, action: Action) {

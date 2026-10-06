@@ -272,7 +272,7 @@ impl App {
                 Hint(Action::Options, tr!("Options")),
             ],
             Mode::Home if self.special(self.selected) == Some(Special::Add) => &[Hint(Action::Confirm, tr!("Add game"))],
-            Mode::Home if self.special(self.selected) == Some(Special::Store) => &[Hint(Action::Confirm, tr!("Open Store"))],
+            Mode::Home if self.special(self.selected) == Some(Special::Store) => &[Hint(Action::Confirm, tr!("Open Discover"))],
             Mode::Store { .. } if self.store_on_themes() => &[
                 Hint(Action::Confirm, tr!("Open")),
                 Hint(Action::Options, tr!("Apps")),
@@ -304,7 +304,7 @@ impl App {
             Mode::SwapBubble { target, .. } if !self.bubble_places().contains(&target) && target >= self.tile_count() => {
                 &[Hint(Action::Confirm, tr!("Move here")), Hint(Action::Back, tr!("Cancel"))]
             }
-            Mode::SwapBubble { .. } => &[Hint(Action::Confirm, tr!("Swap here")), Hint(Action::Back, tr!("Cancel"))],
+            Mode::SwapBubble { .. } | Mode::SwapTile { .. } => &[Hint(Action::Confirm, tr!("Swap here")), Hint(Action::Back, tr!("Cancel"))],
             Mode::Options { .. } | Mode::AddMenu { .. } | Mode::ConfirmRemove { .. } => {
                 &[Hint(Action::Confirm, tr!("Select")), Hint(Action::Back, tr!("Back"))]
             }

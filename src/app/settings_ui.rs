@@ -7,6 +7,8 @@ pub(super) enum SettingRow {
     Fullscreen,
     Autostart,
     Language,
+    OrderLastPlayed,
+    OrderStatic,
     ProfileActive,
     ProfileRename,
     ProfileNew,
@@ -94,6 +96,8 @@ pub(super) enum SettingRow {
     ButtonStyle,
     ButtonPick,
     Button(PadButton, ButtonRow),
+    TileIcon(Special),
+    TileIconClear(Special),
     StoreEnabled(Store),
     StoreBackground(Store),
     StoreCommand(Store),
@@ -342,7 +346,7 @@ impl App {
             return rows;
         }
         let theme = &self.theme().settings;
-        let mut rows = vec![R::Fullscreen, R::Autostart, R::Language];
+        let mut rows = vec![R::Fullscreen, R::Autostart, R::Language, R::OrderLastPlayed, R::OrderStatic];
         rows.extend([R::ProfileActive, R::ProfileRename, R::ProfileNew, R::ProfileExport, R::ProfileImport, R::ProfileReset]);
         rows.extend([R::ViewKind, R::TileStyle]);
         let bubbles = theme.kind == ThemeKind::Bubbles;
@@ -417,6 +421,12 @@ impl App {
             (None, ButtonStyle::Drawn) => &[ButtonRow::Icon, ButtonRow::Shape, ButtonRow::Color, ButtonRow::TextColor],
         };
         rows.extend(button_rows.iter().map(|&r| R::Button(button, r)));
+        for special in Special::ALL {
+            rows.push(R::TileIcon(special));
+            if self.theme().tile_icon(special.key()).is_some() {
+                rows.push(R::TileIconClear(special));
+            }
+        }
         rows.extend([R::Theme, R::ThemeRename, R::ThemeNew, R::ThemeExport, R::ThemeImport]);
         if theme::deletable(&self.themes, self.theme) {
             rows.push(R::ThemeDelete);
@@ -484,6 +494,7 @@ impl App {
             SettingRow::TileBar => self.theme().settings.tiles.rows <= 1,
             SettingRow::ViewKind | SettingRow::TileStyle => !self.is_bubbles(),
             SettingRow::DiscAngle => !self.theme().settings.discs.lying_flat(),
+            SettingRow::OrderLastPlayed => !self.settings.order.static_order,
             SettingRow::SpecialPlace(special) => self.special_button(special).is_some(),
             _ => true,
         }
@@ -576,6 +587,20 @@ impl App {
             SettingRow::Fullscreen => {
                 self.settings.start_fullscreen ^= true;
                 self.save_settings();
+            }
+            SettingRow::OrderLastPlayed => {
+                if self.setting_enabled(row) {
+                    self.settings.order.last_played_first ^= true;
+                    self.save_settings();
+                }
+            }
+            SettingRow::OrderStatic if !self.settings.order.static_order => {
+                self.mode = Mode::ConfirmRemove { what: Removal::StaticOrder, yes: false };
+            }
+            SettingRow::OrderStatic => {
+                self.settings.order.static_order = false;
+                self.save_settings();
+                self.notify(tr!("Static order is off; games keep their places until something moves them"));
             }
             SettingRow::Autostart => match autostart::set(!self.autostart) {
                 Ok(()) => self.autostart = autostart::is_enabled(),
@@ -772,6 +797,22 @@ impl App {
                     }
                 });
             }
+            SettingRow::TileIcon(special) => {
+                let dialog = rfd::FileDialog::new()
+                    .set_title(tr!("Select an icon for {tile}", tile = special.name()))
+                    .add_filter(tr!("Icons"), &["svg", "png", "jpg", "jpeg", "webp"]);
+                self.ask_path(dialog, Pick::File, move |app, path| {
+                    if let Err(e) = app.themes[app.theme].set_tile_icon(special.key(), &path) {
+                        app.notify(tr!("Could not set image: {error}", error = format!("{e:#}")));
+                    }
+                });
+            }
+            SettingRow::TileIconClear(special) => {
+                if let Err(e) = self.themes[self.theme].clear_tile_icon(special.key()) {
+                    self.notify(tr!("Could not save theme: {error}", error = format!("{e:#}")));
+                }
+                self.mode = self.settings_at(SettingRow::TileIcon(special));
+            }
             SettingRow::Button(button, ButtonRow::IconClear) => {
                 if let Err(e) = self.themes[self.theme].clear_button_icon(button) {
                     self.notify(tr!("Could not save theme: {error}", error = format!("{e:#}")));
@@ -818,10 +859,7 @@ impl App {
                 self.save();
                 self.mode = self.settings_at(SettingRow::GameAdjust(kind));
             }
-            SettingRow::GameAdjust(kind) => {
-                let draft = self.library.games[self.selected].placement(kind);
-                self.mode = Mode::CoverEditor(CoverEditor { kind, draft, cursor: 0, button: EditorButton::Accept });
-            }
+            SettingRow::GameAdjust(kind) => self.open_cover_editor(kind, false),
             SettingRow::GameSpine => self.pick_asset(AssetKind::Spine),
             SettingRow::GameTop => self.pick_asset(AssetKind::Top),
             SettingRow::GameBack => self.pick_asset(AssetKind::Back),
@@ -918,7 +956,7 @@ impl App {
             return self.adjust_game_setting(row, delta);
         }
         match row {
-            SettingRow::ControllerSwap => return self.activate_setting(row),
+            SettingRow::ControllerSwap | SettingRow::OrderLastPlayed | SettingRow::OrderStatic => return self.activate_setting(row),
             SettingRow::ControllerPrompts => {
                 let choices = [None, Some(PadFamily::Xbox), Some(PadFamily::PlayStation)];
                 self.settings.controls.prompts = cycle(&choices, self.settings.controls.prompts, delta);
@@ -1169,6 +1207,10 @@ impl App {
     pub(super) fn setting_heading(&self, row: SettingRow) -> Option<(&'static str, Option<(String, Color32)>)> {
         match row {
             SettingRow::Fullscreen => Some((tr!("General"), None)),
+            SettingRow::OrderLastPlayed => Some((
+                tr!("Game order"),
+                Some((tr!("Row and grid views · Options on a game swaps it or marks its position as static").to_owned(), Color32::from_gray(140))),
+            )),
             SettingRow::ProfileActive => Some((
                 tr!("Profiles"),
                 Some((tr!("Profile: {name}", name = profiles::active()), Color32::from_gray(140))),
@@ -1180,7 +1222,7 @@ impl App {
             SettingRow::VirtualMouse => Some((tr!("Mouse"), self.global_mouse_status())),
             SettingRow::ControllerPrompts => Some((tr!("Controller"), Some(self.controller_warning()))),
             SettingRow::SpecialPlace(Special::Store) => Some((
-                tr!("Store and Add game"),
+                tr!("Discover and Add game"),
                 Some((tr!("Assign each a controller button above, then place it in the top or bottom bar").to_owned(), Color32::from_gray(140))),
             )),
             SettingRow::FontTitle => Some((tr!("Fonts"), Some((tr!("{count} imported", count = self.fonts.len()), Color32::from_gray(140))))),
@@ -1202,6 +1244,10 @@ impl App {
             SettingRow::GameArt => Some((tr!("Background"), None)),
             SettingRow::Bar(slot, BarRow::Enabled) => Some((slot.label(), None)),
             SettingRow::ButtonStyle => Some(self.buttons_heading()),
+            SettingRow::TileIcon(special) if special == Special::ALL[0] => Some((
+                tr!("Tile icons"),
+                Some((tr!("SVG icons for the Discover, Add game and Settings tiles; saved and exported with the theme").to_owned(), Color32::from_gray(140))),
+            )),
             SettingRow::DiscKind => Some((tr!("Discs"), Some((tr!("Covers are printed on the label side").to_owned(), Color32::from_gray(140))))),
             SettingRow::ObjectColor => Some((
                 tr!("3D objects"),
@@ -1279,12 +1325,26 @@ impl App {
                 };
                 (label, tr!("Left/Right switches between languages"), Choice(self.settings.language.label().into()))
             }
+            SettingRow::OrderLastPlayed => {
+                let order = &self.settings.order;
+                let sub = if order.static_order {
+                    tr!("Off while static order is on")
+                } else {
+                    tr!("Starting a game moves it to the first slot that isn't static")
+                };
+                (tr!("Last played games first").into(), sub, Toggle(order.moves_played()))
+            }
+            SettingRow::OrderStatic => (
+                tr!("Static order").into(),
+                tr!("Every game stays in its slot; only swapping moves it. Turns off the options above"),
+                Toggle(self.settings.order.static_order),
+            ),
             SettingRow::AppStoreActive => {
                 let stores = &self.settings.app_stores;
                 let (sub, value) = match stores.len() {
                     0 | 1 => (tr!("Add another store below to switch between stores"), self.settings.app_store().title()),
                     n => (
-                        tr!("Left/Right switches the store the Store tile shows"),
+                        tr!("Left/Right switches the store the Discover tile shows"),
                         tr!("{store} ({index} of {count})", store = self.settings.app_store().title(), index = self.settings.active_app_store.min(n - 1) + 1, count = n),
                     ),
                 };
@@ -1731,6 +1791,17 @@ impl App {
                 tr!("Left/Right picks the button the rows below change"),
                 Choice(self.button_edit.glyph(self.pad_family()).into()),
             ),
+            SettingRow::TileIcon(special) => {
+                let sub = if self.theme().tile_icon(special.key()).is_some() {
+                    tr!("Copied into the theme's images folder")
+                } else {
+                    tr!("Your own SVG icon, drawn white on the tile")
+                };
+                (special.name().into(), sub, Action(tr!("Choose…")))
+            }
+            SettingRow::TileIconClear(special) => {
+                (tr!("Remove {tile} icon", tile = special.name()), tr!("Back to the built-in icon"), Action(tr!("Remove")))
+            }
             SettingRow::Button(button, field) => {
                 let look = theme.buttons.get(button);
                 let (_, default_fill, default_text) = drawn_default(self.pad_family(), button);
@@ -1760,7 +1831,7 @@ impl App {
                 (tr!("Store address").into(), tr!("From the store's API keys page, e.g. https://store.example.com/api/v1"), RowValue::Summary(value))
             }
             SettingRow::AppStoreKey => (tr!("API key").into(), tr!("Paste a key created on the store's API keys page"), RowValue::Summary(self.masked_api_key())),
-            SettingRow::AppStoreTest => (tr!("Test connection").into(), tr!("The Store tile lists the store's apps once this works"), Action(tr!("Test"))),
+            SettingRow::AppStoreTest => (tr!("Test connection").into(), tr!("The Discover tile lists the store's apps once this works"), Action(tr!("Test"))),
             SettingRow::StoreEnabled(st) => (
                 tr!("Launch {store} games through {store}", store = st.short_name()),
                 tr!("Its window stays hidden; games start straight from YASAFF"),

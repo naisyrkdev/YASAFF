@@ -117,7 +117,7 @@ impl App {
         let (name, cover, font, game_id) = (game.name.clone(), game.asset(AssetKind::Cover).map(Path::to_path_buf), self.game_font(game), game.id.clone());
         match launcher::launch(game, &self.settings) {
             Ok(launcher::Launched { via, pid }) => {
-                self.selected = self.library.mark_played(self.selected);
+                self.selected = self.library.mark_played(self.selected, self.settings.order.moves_played());
                 self.save();
                 let watch = GameWatch::start(self.ctx.clone(), pid);
                 self.set_running_game(RunningGame { game_id, name: name.clone(), watch: watch.clone() });

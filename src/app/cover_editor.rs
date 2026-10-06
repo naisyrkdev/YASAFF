@@ -7,6 +7,8 @@ pub(super) struct CoverEditor {
     pub(super) draft: CoverPlacement,
     pub(super) cursor: usize,
     pub(super) button: EditorButton,
+    /// Opened from the game's Options menu rather than its box appearance page; closing returns there.
+    pub(super) from_menu: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -84,20 +86,30 @@ impl CoverSlider {
 }
 
 impl App {
+    pub(super) fn open_cover_editor(&mut self, kind: AssetKind, from_menu: bool) {
+        let Some(game) = self.selected_game() else { return };
+        let draft = game.placement(kind);
+        self.mode = Mode::CoverEditor(CoverEditor { kind, draft, cursor: 0, button: EditorButton::Accept, from_menu });
+    }
+
     pub(super) fn close_cover_editor(&mut self, accept: bool) {
         let Mode::CoverEditor(editor) = &self.mode else { return };
-        let kind = editor.kind;
+        let (kind, from_menu) = (editor.kind, editor.from_menu);
         if accept && let Some(game) = self.library.games.get_mut(self.selected) {
             *game.placement_mut(kind) = editor.draft;
             self.save();
         }
-        self.mode = self.settings_at(SettingRow::GameAdjust(kind));
+        self.mode = if from_menu {
+            Mode::Options { cursor: self.menu_index(MenuItem::AdjustCover) }
+        } else {
+            self.settings_at(SettingRow::GameAdjust(kind))
+        };
     }
 
     pub(super) fn draw_cover_editor(&mut self, ui: &Ui, screen: Rect, s: f32) {
         let Mode::CoverEditor(editor) = &self.mode else { return };
         let Some(game) = self.selected_game() else { return };
-        let (kind, mut draft, mut cursor, mut button) = (editor.kind, editor.draft, editor.cursor, editor.button);
+        let (kind, mut draft, mut cursor, mut button, from_menu) = (editor.kind, editor.draft, editor.cursor, editor.button, editor.from_menu);
         let before = game.placement(kind);
         let painter = ui.painter();
         painter.rect_filled(screen, 0, Color32::from_black_alpha(190));
@@ -113,6 +125,10 @@ impl App {
             _ => tr!("Cover size and position · {name}", name = game.name),
         };
         painter.text(dialog.left_top() + vec2(40.0 * s, 32.0 * s), Align2::LEFT_TOP, title, FontId::proportional(30.0 * s), Color32::WHITE);
+        if kind == AssetKind::Cover {
+            let note = tr!("Kept separately for this tile style: {style}", style = self.theme().settings.tile_style.label());
+            painter.text(dialog.left_top() + vec2(40.0 * s, 72.0 * s), Align2::LEFT_TOP, note, FontId::proportional(18.0 * s), Color32::from_gray(150));
+        }
 
         let settings = &self.theme().settings;
         let tile_h = 330.0 * s;
@@ -189,7 +205,7 @@ impl App {
             }
         }
 
-        self.mode = Mode::CoverEditor(CoverEditor { kind, draft, cursor, button });
+        self.mode = Mode::CoverEditor(CoverEditor { kind, draft, cursor, button, from_menu });
         if let Some(accept) = accept {
             self.close_cover_editor(accept);
         }

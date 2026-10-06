@@ -283,7 +283,7 @@ impl Control {
             Self::Back => tr!("Back / cancel"),
             Self::Erase => tr!("Delete"),
             Self::Add => tr!("Add / extra"),
-            Self::Store => tr!("Open Store"),
+            Self::Store => tr!("Open Discover"),
             Self::AddGame => tr!("Add game"),
             Self::Options => tr!("Options"),
             Self::Fullscreen => tr!("Toggle fullscreen"),

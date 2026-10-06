@@ -88,12 +88,12 @@ impl App {
             ),
             AddonRow::Import => (
                 tr!("Import addon from file…").into(),
-                tr!("A .zip with yasaffConfig.json; the Store's Addons tab has more").into(),
+                tr!("A .zip with yasaffConfig.json; Discover's Addons tab has more").into(),
                 RowValue::Action(tr!("Choose…")),
             ),
             AddonRow::NoAddons => (
                 tr!("No addons installed").into(),
-                tr!("Import one from a file or get one from the Store's Addons tab").into(),
+                tr!("Import one from a file or get one from Discover's Addons tab").into(),
                 RowValue::Action(tr!("Import…")),
             ),
             AddonRow::Addon(i) => {

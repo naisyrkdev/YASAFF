@@ -8,11 +8,14 @@ pub(super) enum MenuItem {
     CloseApp,
     Update,
     SetCover,
+    AdjustCover,
     SetBackground,
     FetchArtwork,
     BoxAppearance,
     Rename,
     SwapBubble,
+    SwapTile,
+    FixSlot,
     EditCommand,
     SaveFolder,
     OpenSaveFolder,
@@ -22,14 +25,17 @@ pub(super) enum MenuItem {
     Remove,
 }
 
-pub(super) const MENU: [(MenuItem, &str); 12] = [
+pub(super) const MENU: [(MenuItem, &str); 15] = [
     (MenuItem::Start, tr_key!("Start")),
     (MenuItem::BoxAppearance, tr_key!("Tile and box appearance…")),
     (MenuItem::SetCover, tr_key!("Set cover image")),
+    (MenuItem::AdjustCover, tr_key!("Reposition cover image…")),
     (MenuItem::SetBackground, tr_key!("Set background image")),
     (MenuItem::FetchArtwork, tr_key!("Fetch artwork")),
     (MenuItem::Rename, tr_key!("Rename")),
     (MenuItem::SwapBubble, tr_key!("Swap with other bubble")),
+    (MenuItem::SwapTile, tr_key!("Swap position with another game…")),
+    (MenuItem::FixSlot, tr_key!("Mark this position as static for this game")),
     (MenuItem::EditCommand, tr_key!("Edit launch command")),
     (MenuItem::SaveFolder, tr_key!("Set save folder…")),
     (MenuItem::CreateDisc, tr_key!("Create disc file…")),
@@ -61,6 +67,8 @@ pub(super) enum Removal {
     Addon(usize),
     Profile,
     Everything,
+    /// Not a removal: turning on static order, which deserves the same second look.
+    StaticOrder,
 }
 
 impl App {
@@ -83,7 +91,14 @@ impl App {
                 }
                 MenuItem::SaveFolder if store_app => {}
                 MenuItem::SwapBubble if !self.is_bubbles() => {}
+                MenuItem::SwapTile if self.is_bubbles() || self.library.games.len() < 2 => {}
+                MenuItem::FixSlot if self.is_bubbles() || self.settings.order.static_order => {}
+                MenuItem::FixSlot if game.is_some_and(|g| g.fixed_slot.is_some()) => {
+                    menu.push((item, tr!("Unmark static position (slot {slot})", slot = self.selected + 1)));
+                }
+                MenuItem::FixSlot => menu.push((item, tr!("Mark this position as static for this game (slot {slot})", slot = self.selected + 1))),
                 MenuItem::SetCover if boxes => {}
+                MenuItem::AdjustCover if boxes || game.is_none_or(|g| g.asset(AssetKind::Cover).is_none()) => {}
                 MenuItem::EditCommand | MenuItem::FetchArtwork if store_app => {}
                 MenuItem::Remove if store_app => menu.push((item, tr!("Uninstall").to_owned())),
                 _ => menu.push((item, i18n::tr(label).to_owned())),
@@ -119,6 +134,7 @@ impl App {
             MenuItem::BackupSaves => self.backup_saves(),
             MenuItem::Update => self.update_selected(),
             MenuItem::SetCover => self.pick_asset(AssetKind::Cover),
+            MenuItem::AdjustCover => self.open_cover_editor(AssetKind::Cover, true),
             MenuItem::SetBackground => self.pick_asset(AssetKind::Background),
             MenuItem::FetchArtwork => {
                 let id = game.id.clone();
@@ -132,6 +148,19 @@ impl App {
             MenuItem::SwapBubble => {
                 let target = self.bubble_places().get(self.selected).copied().unwrap_or(self.selected);
                 self.mode = Mode::SwapBubble { from: self.selected, target };
+            }
+            MenuItem::SwapTile => self.mode = Mode::SwapTile { from: self.selected },
+            MenuItem::FixSlot => {
+                let fixed = game.fixed_slot.is_none();
+                self.library.set_fixed(self.selected, fixed);
+                self.save();
+                let slot = self.selected + 1;
+                self.notify(if fixed {
+                    tr!("Stays in slot {slot}, whatever else moves", slot = slot)
+                } else {
+                    tr!("Slot {slot} is no longer static", slot = slot)
+                });
+                self.mode = Mode::Home;
             }
             MenuItem::EditCommand => {
                 let buffer = apps::join_command(&game.target, &game.args);
@@ -336,6 +365,10 @@ impl App {
                 tr!("Reset YASAFF?").to_owned(),
                 tr!("Every profile and all data are deleted. YASAFF restarts as on a fresh install."),
             ),
+            Removal::StaticOrder => (
+                tr!("Mark all games static?").to_owned(),
+                tr!("Each stays in its current slot; you place games yourself with Swap position."),
+            ),
         };
         let painter = ui.painter();
         painter.rect_filled(screen, 0, Color32::from_black_alpha(160));
@@ -350,6 +383,7 @@ impl App {
             Removal::AppStore => tr!("Remove"),
             Removal::Addon(_) => tr!("Uninstall"),
             Removal::Profile | Removal::Everything => tr!("Reset"),
+            Removal::StaticOrder => tr!("Turn on"),
             Removal::Game if self.selected_game().is_some_and(|g| g.app_id.is_some()) => tr!("Uninstall"),
             Removal::Game => tr!("Remove"),
         };
@@ -570,6 +604,13 @@ impl App {
                         }
                         self.mode = self.addon_manager_after_uninstall(i, yes);
                     }
+                    Removal::StaticOrder => {
+                        self.mode = self.settings_at(SettingRow::OrderStatic);
+                        if yes {
+                            self.settings.order.static_order = true;
+                            self.save_settings();
+                        }
+                    }
                     Removal::Profile | Removal::Everything => {
                         let row = if what == Removal::Profile { SettingRow::ProfileReset } else { SettingRow::AppReset };
                         self.mode = self.settings_at(row);
@@ -588,6 +629,7 @@ impl App {
                     Removal::Addon(i) => self.addon_manager_after_uninstall(i, false),
                     Removal::Profile => self.settings_at(SettingRow::ProfileReset),
                     Removal::Everything => self.settings_at(SettingRow::AppReset),
+                    Removal::StaticOrder => self.settings_at(SettingRow::OrderStatic),
                 }
             }
             _ => {}

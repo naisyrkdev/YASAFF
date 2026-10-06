@@ -11,6 +11,7 @@ pub(super) struct BubbleLook {
     pub(super) texture: Option<(TextureId, Vec2)>,
     pub(super) fill: Color32,
     pub(super) label: String,
+    pub(super) icon: Option<egui::ImageSource<'static>>,
     pub(super) swapping: bool,
     pub(super) running: bool,
 }
@@ -42,6 +43,27 @@ pub(super) fn disc_mesh(texture: TextureId, rings: usize, segments: usize, verte
 pub(super) fn scale_color(c: Color32, k: f32) -> Color32 {
     let f = |v: u8| (v as f32 * k).round().clamp(0.0, 255.0) as u8;
     Color32::from_rgba_premultiplied(f(c.r()), f(c.g()), f(c.b()), c.a())
+}
+
+/// Paints an icon (a white SVG) `size` square at `center`, tinted with `tint`.
+pub(super) fn paint_icon(painter: &Painter, icon: egui::ImageSource<'static>, center: Pos2, size: f32, tint: Color32) {
+    let rect = Rect::from_center_size(center, Vec2::splat(size));
+    if let Ok(egui::load::TexturePoll::Ready { texture }) = egui::Image::new(icon).load_for_size(painter.ctx(), rect.size()) {
+        painter.image(texture.id, rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), tint);
+    }
+}
+
+
+impl App {
+    /// Paints a special tile's mark: its icon if it has one, else its glyph.
+    fn paint_special_mark(&self, painter: &Painter, special: Option<Special>, center: Pos2, size: f32) {
+        match special.and_then(|s| self.special_icon(s)) {
+            Some(icon) => paint_icon(painter, icon, center, size, Color32::WHITE),
+            None => {
+                painter.text(center, Align2::CENTER_CENTER, special.map_or("", Special::glyph), FontId::proportional(size), Color32::WHITE);
+            }
+        }
+    }
 }
 
 pub(super) fn paint_bubble(painter: &Painter, center: Pos2, r: f32, look: &BubbleLook, t: f32, focus: f32, s: f32) {
@@ -78,8 +100,12 @@ pub(super) fn paint_bubble(painter: &Painter, center: Pos2, r: f32, look: &Bubbl
         (center + dir * rho * r, uv, scale_color(base, lit * rim))
         }));
     }
-    if !look.empty && look.texture.is_none() && !look.label.is_empty() {
-        shadow_text(painter, center, Align2::CENTER_CENTER, &look.label, r * 0.5, Color32::WHITE);
+    if !look.empty && look.texture.is_none() {
+        match &look.icon {
+            Some(icon) => paint_icon(painter, icon.clone(), center, r * 0.6, Color32::WHITE),
+            None if !look.label.is_empty() => shadow_text(painter, center, Align2::CENTER_CENTER, &look.label, r * 0.5, Color32::WHITE),
+            None => {}
+        }
     }
 
     painter.add(disc_mesh(TextureId::default(), 8, 56, |rho, theta| {
@@ -189,6 +215,17 @@ impl App {
         self.paint_tile_art(ui, i, rect, radius, s, focus);
         self.paint_artwork_badge(ui, i, rect, s);
         self.paint_app_badges(ui, i, rect, s);
+        self.paint_swap_mark(ui, i, rect, radius, s);
+    }
+
+    /// Outlines the game being moved while another slot is picked for it.
+    fn paint_swap_mark(&self, ui: &Ui, i: usize, rect: Rect, radius: u8, s: f32) {
+        let Mode::SwapTile { from } = self.mode else { return };
+        if i != from {
+            return;
+        }
+        let pulse = 0.6 + 0.4 * (ui.input(|inp| inp.time) as f32 * 4.0).sin();
+        ui.painter().rect_stroke(rect.expand(4.0 * s), radius, Stroke::new(4.0 * s, SWAP_GLOW.gamma_multiply(pulse)), StrokeKind::Outside);
     }
 
     pub(super) fn paint_tile_art(&self, ui: &Ui, i: usize, rect: Rect, radius: u8, s: f32, focus: f32) {
@@ -231,9 +268,8 @@ impl App {
         match self.library.games.get(i) {
             Some(game) => draw_game_tile(ui, game, rect, radius),
             None => {
-                let glyph = self.special(i).map_or("", Special::glyph);
                 painter.rect_filled(rect, radius, Color32::from_white_alpha(28));
-                painter.text(rect.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(rect.height() * 0.4), Color32::WHITE);
+                self.paint_special_mark(painter, self.special(i), rect.center(), rect.height() * 0.4);
             }
         }
         if i == self.selected {
@@ -271,9 +307,8 @@ impl App {
         match game {
             Some(game) => draw_game_tile(ui, game, b.front, 0),
             None => {
-                let glyph = self.special(i).map_or("", Special::glyph);
                 painter.rect_filled(b.front, 0, Color32::from_rgb(0x2a, 0x2d, 0x34));
-                painter.text(b.front.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(b.front.width() * 0.45), Color32::WHITE);
+                self.paint_special_mark(painter, self.special(i), b.front.center(), b.front.width() * 0.45);
             }
         }
 

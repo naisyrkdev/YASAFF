@@ -217,6 +217,29 @@ pub struct ShortcutSettings {
     pub add_game: Option<crate::theme::BarSlot>,
 }
 
+/// How the row and grid views order the library.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct OrderSettings {
+    /// Starting a game moves it to the first slot no game is fixed to.
+    pub last_played_first: bool,
+    /// Games only move when swapped by hand: nothing reorders them on its own.
+    #[serde(rename = "static")]
+    pub static_order: bool,
+}
+
+impl OrderSettings {
+    pub fn moves_played(&self) -> bool {
+        self.last_played_first && !self.static_order
+    }
+}
+
+impl Default for OrderSettings {
+    fn default() -> Self {
+        OrderSettings { last_played_first: true, static_order: false }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(default)]
 pub struct Settings {
@@ -230,6 +253,7 @@ pub struct Settings {
     pub controls: ControlSettings,
     pub shortcuts: ShortcutSettings,
     pub fonts: FontSettings,
+    pub order: OrderSettings,
     pub app_stores: Vec<AppStoreSettings>,
     pub active_app_store: usize,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -1,7 +1,7 @@
 
 use crate::apps::AppEntry;
 use crate::object3d::ModelUp;
-use crate::theme::BoxOverrides;
+use crate::theme::{BoxOverrides, TileStyle};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -35,6 +35,28 @@ pub struct Game {
     pub save_dir: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bubble_place: Option<String>,
+    /// The cover placement kept for each tile style, so every tile shape keeps its own crop.
+    #[serde(default, skip_serializing_if = "CoverShapes::is_empty")]
+    pub cover_shapes: CoverShapes,
+    /// The slot this game always takes in the row and grid views, whatever else moves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixed_slot: Option<usize>,
+}
+
+/// Cover placements per tile style. The active one lives in `Assets::placements` (what painting
+/// reads); this keeps a copy for every style the cover was shown in, keyed by the style it belongs to.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct CoverShapes {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    current: Option<TileStyle>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    saved: BTreeMap<TileStyle, CoverPlacement>,
+}
+
+impl CoverShapes {
+    fn is_empty(&self) -> bool {
+        self.current.is_none() && self.saved.is_empty()
+    }
 }
 
 impl Game {
@@ -58,6 +80,31 @@ impl Game {
 
     pub fn placement_mut(&mut self, kind: AssetKind) -> &mut CoverPlacement {
         self.assets.placements.entry(kind.placement_key()).or_default()
+    }
+
+    /// Makes the cover placement the one kept for `style`. The placement of the style shown before
+    /// is stored first; a style seen for the first time starts as a copy of it. Returns whether
+    /// anything changed.
+    pub fn use_cover_shape(&mut self, style: TileStyle) -> bool {
+        let shapes = &mut self.cover_shapes;
+        if shapes.current == Some(style) {
+            return false;
+        }
+        let active = self.assets.placements.get(&AssetKind::Cover).copied().unwrap_or_default();
+        if shapes.is_empty() && active.is_default() {
+            return false;
+        }
+        if let Some(previous) = shapes.current {
+            shapes.saved.insert(previous, active);
+        }
+        let next = *shapes.saved.entry(style).or_insert(active);
+        shapes.current = Some(style);
+        if next.is_default() {
+            self.assets.placements.remove(&AssetKind::Cover);
+        } else {
+            self.assets.placements.insert(AssetKind::Cover, next);
+        }
+        true
     }
 }
 
@@ -288,7 +335,7 @@ impl Library {
             }
         };
         lib.data_dir = data_dir;
-        lib.sort();
+        lib.arrange();
         (lib, warning)
     }
 
@@ -304,12 +351,42 @@ impl Library {
         crate::fsutil::write_atomic(&self.file(), serde_json::to_string_pretty(self)?)
     }
 
-    fn sort(&mut self) {
-        self.games.sort_by(|a, b| {
-            b.last_played
-                .cmp(&a.last_played)
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-        });
+    /// Puts every game with a fixed slot back on it; the other games fill the free slots in the
+    /// order they are in. A slot past the end of the library (games were removed) falls back to the
+    /// nearest free one, and the game returns to it once the library is long enough again.
+    fn arrange(&mut self) {
+        let n = self.games.len();
+        let (mut fixed, free): (Vec<Game>, Vec<Game>) = std::mem::take(&mut self.games).into_iter().partition(|g| g.fixed_slot.is_some());
+        fixed.sort_by_key(|g| g.fixed_slot);
+        let mut slots: Vec<Option<Game>> = (0..n).map(|_| None).collect();
+        for game in fixed {
+            let want = game.fixed_slot.unwrap_or(0).min(n - 1);
+            let slot = (want..n).chain((0..want).rev()).find(|&j| slots[j].is_none()).unwrap_or(want);
+            slots[slot] = Some(game);
+        }
+        let mut free = free.into_iter();
+        self.games = slots.into_iter().filter_map(|slot| slot.or_else(|| free.next())).collect();
+    }
+
+    /// Makes the game at `index` keep its current slot, or lets it move again.
+    pub fn set_fixed(&mut self, index: usize, fixed: bool) {
+        if fixed {
+            for game in self.games.iter_mut().filter(|g| g.fixed_slot == Some(index)) {
+                game.fixed_slot = None;
+            }
+        }
+        self.games[index].fixed_slot = fixed.then_some(index);
+    }
+
+    /// Swaps two games' slots. A game with a fixed slot keeps the one it was moved to.
+    pub fn swap(&mut self, a: usize, b: usize) {
+        self.games.swap(a, b);
+        for i in [a, b] {
+            if self.games[i].fixed_slot.is_some() {
+                self.games[i].fixed_slot = Some(i);
+            }
+        }
+        self.arrange();
     }
 
     pub fn add(&mut self, entry: &AppEntry) -> usize {
@@ -328,8 +405,10 @@ impl Library {
             app_id: None,
             save_dir: None,
             bubble_place: None,
+            cover_shapes: CoverShapes::default(),
+            fixed_slot: None,
         });
-        self.sort();
+        self.arrange();
         self.games.iter().position(|g| g.id == id).unwrap()
     }
 
@@ -370,7 +449,13 @@ impl Library {
 
     fn replace_asset(&mut self, index: usize, kind: AssetKind, dest: PathBuf) {
         let assets = self.assets_dir();
-        if let Some(old) = self.games[index].assets.paths.insert(kind, dest) {
+        let game = &mut self.games[index];
+        if kind == AssetKind::Cover {
+            // A new image starts centered, and the crops made for the old one are dropped.
+            game.assets.placements.remove(&AssetKind::Cover);
+            game.cover_shapes = CoverShapes::default();
+        }
+        if let Some(old) = game.assets.paths.insert(kind, dest) {
             remove_if_owned(&assets, &old);
         }
     }
@@ -388,13 +473,20 @@ impl Library {
         for (_, path) in game.assets.paths() {
             remove_if_owned(&assets, path);
         }
+        self.arrange();
     }
 
-    pub fn mark_played(&mut self, index: usize) -> usize {
+    /// Records that the game was started. With `to_front` it moves to the first slot no game is
+    /// fixed to; a game with a fixed slot stays where it is. Returns the game's new index.
+    pub fn mark_played(&mut self, index: usize, to_front: bool) -> usize {
         let id = self.games[index].id.clone();
         self.games[index].last_played = Some(now_secs());
-        self.sort();
-        self.games.iter().position(|g| g.id == id).unwrap_or(0)
+        if to_front && self.games[index].fixed_slot.is_none() {
+            let game = self.games.remove(index);
+            self.games.insert(0, game);
+            self.arrange();
+        }
+        self.position(&id).unwrap_or(0)
     }
 }
 
@@ -415,6 +507,83 @@ fn new_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_tile_style_keeps_its_own_cover_placement() {
+        let mut game: Game = serde_json::from_str(r#"{"id":"g","name":"G","target":"/g"}"#).unwrap();
+        assert!(!game.use_cover_shape(TileStyle::Flat), "an untouched cover needs nothing stored");
+        let square = CoverPlacement { zoom: 2.0, x: 0.2, y: 0.5 };
+        *game.placement_mut(AssetKind::Cover) = square;
+        assert!(game.use_cover_shape(TileStyle::Flat));
+
+        assert!(game.use_cover_shape(TileStyle::Cover));
+        assert_eq!(game.placement(AssetKind::Cover), square, "a new style starts as a copy of the previous one");
+        let rect = CoverPlacement { zoom: 1.5, x: 0.5, y: 0.8 };
+        *game.placement_mut(AssetKind::Cover) = rect;
+
+        game.use_cover_shape(TileStyle::Flat);
+        assert_eq!(game.placement(AssetKind::Cover), square, "going back restores that style's placement");
+        game.use_cover_shape(TileStyle::Cover);
+        assert_eq!(game.placement(AssetKind::Cover), rect);
+
+        let json = serde_json::to_string(&game).unwrap();
+        let mut reloaded: Game = serde_json::from_str(&json).unwrap();
+        reloaded.use_cover_shape(TileStyle::Flat);
+        assert_eq!(reloaded.placement(AssetKind::Cover), square);
+    }
+
+    fn library(names: &[&str]) -> Library {
+        let games = names.iter().map(|n| serde_json::from_str(&format!(r#"{{"id":"{n}","name":"{n}","target":"/{n}"}}"#)).unwrap()).collect();
+        Library { games, data_dir: PathBuf::new() }
+    }
+
+    fn order(lib: &Library) -> String {
+        lib.games.iter().map(|g| g.id.as_str()).collect()
+    }
+
+    #[test]
+    fn played_games_move_to_the_front_around_fixed_slots() {
+        let mut lib = library(&["a", "b", "c", "d", "e"]);
+        lib.set_fixed(0, true);
+        lib.set_fixed(2, true);
+        assert_eq!(lib.mark_played(4, true), 1, "slot 0 is fixed, so the first free slot is 1");
+        assert_eq!(order(&lib), "aecbd");
+        assert_eq!(lib.mark_played(2, true), 2, "a game with a fixed slot stays put");
+        assert_eq!(lib.mark_played(3, false), 3, "without to_front nothing moves");
+        assert_eq!(order(&lib), "aecbd");
+    }
+
+    #[test]
+    fn fixed_slots_survive_removals_and_swaps() {
+        let mut lib = library(&["a", "b", "c", "d", "e"]);
+        lib.set_fixed(2, true);
+        lib.games.remove(0);
+        lib.arrange();
+        assert_eq!(order(&lib), "bdce", "c keeps slot 2 when a game before it goes");
+        lib.games.truncate(2);
+        lib.arrange();
+        assert_eq!(order(&lib), "bd", "c was removed with the rest");
+
+        let mut lib = library(&["a", "b", "c", "d"]);
+        lib.set_fixed(3, true);
+        lib.games.remove(0);
+        lib.arrange();
+        assert_eq!(order(&lib), "bcd", "a slot past the end falls back to the last one");
+        lib.games.push(library(&["x"]).games.remove(0));
+        lib.arrange();
+        assert_eq!(order(&lib), "bcxd", "and returns once there is room again");
+
+        let mut lib = library(&["a", "b", "c", "d"]);
+        lib.set_fixed(1, true);
+        lib.swap(1, 3);
+        assert_eq!(order(&lib), "adcb", "a swapped game takes its new slot");
+        assert_eq!(lib.games[3].fixed_slot, Some(3));
+        assert_eq!(lib.games[1].fixed_slot, None);
+
+        let json = serde_json::to_string(&lib.games[3]).unwrap();
+        let reloaded: Game = serde_json::from_str(&json).unwrap();
+        assert_eq!(reloaded.fixed_slot, Some(3));
+    }
 
     #[test]
     fn assets_keep_the_flat_library_format() {

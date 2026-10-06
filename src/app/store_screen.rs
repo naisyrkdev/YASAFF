@@ -581,7 +581,7 @@ impl App {
             Ok(process) => {
                 let pid = process.child.id();
                 self.running.push(RunningApp { game_id, name: name.clone(), process, started: Instant::now() });
-                self.selected = self.library.mark_played(self.selected);
+                self.selected = self.library.mark_played(self.selected, self.settings.order.moves_played());
                 self.save();
                 let watch = GameWatch::start(self.ctx.clone(), Some(pid));
                 self.focus_guard_until = None;

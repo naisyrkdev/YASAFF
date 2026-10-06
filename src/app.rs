@@ -105,15 +105,32 @@ impl Special {
 
     fn glyph(self) -> &'static str {
         match self {
-            Special::Store => "🏪",
+            Special::Store => "",
             Special::Add => "+",
             Special::Settings => "⚙",
         }
     }
 
+    /// Names the special in a theme's `icons`.
+    fn key(self) -> &'static str {
+        match self {
+            Special::Store => "discover",
+            Special::Add => "add",
+            Special::Settings => "settings",
+        }
+    }
+
+    /// The built-in icon, drawn in place of the glyph when present.
+    fn icon(self) -> Option<egui::ImageSource<'static>> {
+        match self {
+            Special::Store => Some(egui::include_image!("../assets/ui/squares-plus.svg")),
+            Special::Add | Special::Settings => None,
+        }
+    }
+
     fn name(self) -> &'static str {
         match self {
-            Special::Store => tr!("Store"),
+            Special::Store => tr!("Discover"),
             Special::Add => tr!("Add game"),
             Special::Settings => tr!("Settings"),
         }
@@ -125,6 +142,8 @@ enum Mode {
     Welcome { cursor: usize },
     Options { cursor: usize },
     SwapBubble { from: usize, target: usize },
+    /// Picking the game to swap with the one at `from`; `selected` is the slot being pointed at.
+    SwapTile { from: usize },
     AddMenu { cursor: usize },
     Picker(Box<Picker>),
     Scan(Box<ScanState>),
@@ -384,6 +403,18 @@ impl App {
         }
     }
 
+    /// Gives every game the cover placement kept for the current tile style.
+    fn sync_cover_shapes(&mut self) {
+        let style = self.theme().settings.tile_style;
+        let mut changed = false;
+        for game in &mut self.library.games {
+            changed |= game.use_cover_shape(style);
+        }
+        if changed {
+            self.save();
+        }
+    }
+
     fn save_settings(&mut self) {
         if let Err(e) = self.settings.save() {
             self.notify(tr!("Could not save settings: {error}", error = format!("{e:#}")));
@@ -407,6 +438,14 @@ impl App {
 
     fn theme(&self) -> &Theme {
         &self.themes[self.theme]
+    }
+
+    /// The icon a special tile shows: the theme's own, else the built-in one.
+    fn special_icon(&self, special: Special) -> Option<egui::ImageSource<'static>> {
+        match self.theme().tile_icon(special.key()) {
+            Some(path) => Some(egui::ImageSource::Uri(file_uri(&path).into())),
+            None => special.icon(),
+        }
     }
 
     fn save_theme(&mut self) {
@@ -465,6 +504,7 @@ impl App {
             Mode::Home => self.handle_home(action),
             Mode::Options { .. } => self.handle_options(action),
             Mode::SwapBubble { .. } => self.handle_swap_bubble(action),
+            Mode::SwapTile { .. } => self.handle_swap_tile(action),
             Mode::Welcome { .. } => self.handle_welcome(action),
             Mode::AddMenu { .. } => self.handle_add_menu(action),
             Mode::Picker(_) => self.handle_picker(action),
@@ -541,6 +581,7 @@ impl eframe::App for App {
         if let Some(loaded) = self.fonts_pending.take() {
             self.fonts = loaded;
         }
+        self.sync_cover_shapes();
         self.poll_discs(&ctx);
         self.poll_scan();
         self.poll_burn();

@@ -49,7 +49,7 @@ impl ThemeKind {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum TileStyle {
     #[default]
@@ -772,6 +772,9 @@ pub struct ThemeSettings {
     pub top_bar: BarStyle,
     pub bottom_bar: BarStyle,
     pub buttons: ButtonStyles,
+    /// Custom icons for the special tiles, keyed by `Special::key`; file names in the images folder.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub icons: BTreeMap<String, String>,
 }
 
 impl ThemeSettings {
@@ -849,6 +852,7 @@ impl Default for ThemeSettings {
             top_bar: BarStyle::default(),
             bottom_bar: BarStyle::default(),
             buttons: ButtonStyles::default(),
+            icons: BTreeMap::new(),
         }
     }
 }
@@ -1008,6 +1012,44 @@ impl Theme {
 
     fn remove_button_icon_file(&self, button: PadButton) {
         if let Some(old) = self.button_icon(button) {
+            let _ = fs::remove_file(old);
+        }
+    }
+
+    pub fn tile_icon(&self, key: &str) -> Option<PathBuf> {
+        let name = self.settings.icons.get(key)?;
+        is_plain_file_name(name).then(|| self.images_dir().join(name))
+    }
+
+    /// Copies `src` in as the icon for the special tile `key`. An SVG's `currentColor` becomes white, so it shows on
+    /// the dark tiles and takes the tint it is drawn with.
+    pub fn set_tile_icon(&mut self, key: &str, src: &Path) -> Result<()> {
+        let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("svg").to_lowercase();
+        let name = format!("icon-{key}-{}.{ext}", now_secs());
+        fs::create_dir_all(self.images_dir())?;
+        let dest = self.images_dir().join(&name);
+        if ext == "svg" {
+            let text = fs::read_to_string(src).with_context(|| format!("reading {}", src.display()))?;
+            if !text.contains("<svg") {
+                bail!("{} is not an SVG image", src.display());
+            }
+            fs::write(&dest, text.replace("currentColor", "white"))?;
+        } else {
+            fs::copy(src, &dest).with_context(|| format!("copying {}", src.display()))?;
+        }
+        self.remove_tile_icon_file(key);
+        self.settings.icons.insert(key.to_owned(), name);
+        self.save()
+    }
+
+    pub fn clear_tile_icon(&mut self, key: &str) -> Result<()> {
+        self.remove_tile_icon_file(key);
+        self.settings.icons.remove(key);
+        self.save()
+    }
+
+    fn remove_tile_icon_file(&self, key: &str) {
+        if let Some(old) = self.tile_icon(key) {
             let _ = fs::remove_file(old);
         }
     }
@@ -1323,6 +1365,14 @@ mod tests {
         assert!(!plain.contains("\"store\""));
         let s: ThemeSettings = serde_json::from_str(r#"{"name":"N","store":{"id":"neon-nights","version":2}}"#).unwrap();
         assert_eq!(s.store, Some(StoreOrigin { id: "neon-nights".into(), version: 2 }));
+    }
+
+    #[test]
+    fn tile_icons_round_trip_and_are_omitted_when_unset() {
+        assert!(!ThemeSettings::default().to_json().unwrap().contains("\"icons\""));
+        let s: ThemeSettings = serde_json::from_str(r#"{"icons":{"discover":"icon-discover-1.svg"}}"#).unwrap();
+        let back = parse_settings(&s.to_json().unwrap()).unwrap();
+        assert_eq!(back.icons.get("discover").map(String::as_str), Some("icon-discover-1.svg"));
     }
 
     #[test]
