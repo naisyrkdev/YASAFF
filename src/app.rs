@@ -107,7 +107,7 @@ impl Special {
         match self {
             Special::Store => "",
             Special::Add => "+",
-            Special::Settings => "⚙",
+            Special::Settings => "",
         }
     }
 
@@ -124,7 +124,8 @@ impl Special {
     fn icon(self) -> Option<egui::ImageSource<'static>> {
         match self {
             Special::Store => Some(egui::include_image!("../assets/ui/squares-plus.svg")),
-            Special::Add | Special::Settings => None,
+            Special::Settings => Some(egui::include_image!("../assets/ui/gears.svg")),
+            Special::Add => None,
         }
     }
 

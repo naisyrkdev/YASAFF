@@ -10,3 +10,5 @@ YASAFF writes a log to `<YASAFF data>/logs/yasaff.log` (the previous run's log i
 - Windows: `%APPDATA%\yasaff\data\logs\`
 
 Attach it when reporting a problem.
+
+![YASAFF demo](assets/for_docs/1.gif)
