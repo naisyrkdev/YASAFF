@@ -782,7 +782,7 @@ impl App {
                     shadow_text(painter, pos2(x, y + 62.0 * s), Align2::LEFT_TOP, &text, 22.0 * s, SWAP_GLOW);
                     return false;
                 } else if self.is_active(self.selected) {
-                    tr!("Running  ·  A switches to it, Guide comes back here").to_owned()
+                    tr!("Running").to_owned()
                 } else if let Some(update) = self.game_update(game) {
                     tr!("{status}  ·  Update to {version} in Options", status = sub, version = update.latest.version)
                 } else {

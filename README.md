@@ -11,6 +11,7 @@ YASAFF is a console-style game launcher for PC, made to be used with a controlle
 - [Installing and building](#installing-and-building)
 - [Adding games](#adding-games)
 - [Controls](#controls)
+- [Apps and games in the background](#apps-and-games-in-the-background)
 - [Game options](#game-options)
 - [Customization](#customization)
 - [Discs, USB sticks and SD cards](#discs-usb-sticks-and-sd-cards)
@@ -91,7 +92,19 @@ These are the default bindings. You can remap every controller button in **Setti
 | Bring YASAFF to front | Guide | |
 | Mouse click / right-click (virtual mouse) | RT or R3 / LT | |
 
-While a game or app is running, press **Guide** to come back to YASAFF. Select the running game to switch back to it.
+While a game or app is running, press **Guide** to come back to YASAFF. See [Apps and games in the background](#apps-and-games-in-the-background).
+
+## Apps and games in the background
+
+![Re-entering an app running in the background](assets/for_docs/bg_apps_1.gif)
+
+You don't have to close a game or app to get back to YASAFF. Press **Guide** and it stays open in the background while YASAFF comes to the front. A music player, for example, keeps playing.
+
+- The running entry shows **Running** under its name in the library.
+- Select it and press **A**. Its options show **Switch to game** / **Switch to app** instead of **Start**. It opens again where you left it, fullscreen or over YASAFF's window, just as it was.
+- To end it from YASAFF, use **Close game** / **Close application** in its options.
+- When the game or app quits on its own, YASAFF comes back to the front by itself.
+- Only one app from the YASAFF Store can run at a time.
 
 ## Game options
 

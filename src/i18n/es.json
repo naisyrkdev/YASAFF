@@ -91,7 +91,7 @@
   "Last played {date}": "Última partida: {date}",
   "%d %b %Y, %H:%M": "%d/%m/%Y, %H:%M",
   "Never played": "Nunca jugado",
-  "Running  ·  A switches to it, Guide comes back here": "En ejecución  ·  A cambia a él, Guide vuelve aquí",
+  "Running": "En ejecución",
   "{status}  ·  Update to {version} in Options": "{status}  ·  Actualiza a {version} en Opciones",
   "Switch": "Cambiar",
   "Start": "Jugar",
