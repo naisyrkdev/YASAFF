@@ -808,7 +808,7 @@ impl App {
                 let sub = match special {
                     Special::Store => tr!("Apps, games and themes from Yasaff Discover, installed and updated right here"),
                     Special::Add => tr!("Scan for installed games, or add an app, a .desktop/shortcut file, or a command or URL"),
-                    Special::Settings => tr!("Appearance and themes, the YASAFF Store, storefronts (Heroic, Steam) and general options"),
+                    Special::Settings => tr!("Change theme, appearance, set discover server and more"),
                 };
                 let title = special.name();
                 shadow_text(painter, pos2(x, y), Align2::LEFT_TOP, title, 46.0 * s, Color32::WHITE);
