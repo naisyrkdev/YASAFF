@@ -81,7 +81,7 @@ impl App {
             ),
             SettingRow::AboutSource => (tr!("Source code").into(), "github.com/naisyrkdev/YASAFF", Action(tr!("Open"))),
             SettingRow::AboutServer => (
-                tr!("YASAFF Store server").into(),
+                tr!("YASAFF Discover Server").into(),
                 tr!("YasaffStuffServer: the website apps and themes come from"),
                 Action(tr!("Open")),
             ),

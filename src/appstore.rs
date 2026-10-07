@@ -797,7 +797,7 @@ fn get(agent: &ureq::Agent, endpoint: &Endpoint, url: &str) -> Result<ureq::http
 
 fn get_json<T: serde::de::DeserializeOwned>(agent: &ureq::Agent, endpoint: &Endpoint, url: &str) -> Result<T> {
     let text = get(agent, endpoint, url)?.into_body().with_config().limit(MAX_JSON_BYTES).read_to_string()?;
-    serde_json::from_str(&text).context("the address answered, but not like a YASAFF store; check it ends in /api/v1")
+    serde_json::from_str(&text).context("the address answered, but not like a YASAFF Discover Server; check it ends in /api/v1")
 }
 
 fn cached_icon(agent: &ureq::Agent, endpoint: &Endpoint, url: &str, app: &RemoteApp) -> Result<PathBuf> {

@@ -230,7 +230,7 @@ impl App {
                 Some((tr!("Profile: {name}", name = profiles::active()), Color32::from_gray(140))),
             )),
             SettingRow::AppReset => Some((tr!("Power options"), None)),
-            SettingRow::AppStoreActive => Some((tr!("YASAFF Store"), Some(self.store_status()))),
+            SettingRow::AppStoreActive => Some((tr!("YASAFF Discover"), Some(self.store_status()))),
             SettingRow::AboutApp => Some((tr!("About"), None)),
             SettingRow::AddonManager => Some(self.addons_heading()),
             SettingRow::VirtualMouse => Some((tr!("Mouse"), self.global_mouse_status())),

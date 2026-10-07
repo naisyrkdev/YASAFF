@@ -757,7 +757,7 @@ impl App {
         painter.rect_filled(screen, 0, Color32::from_black_alpha(170));
         let panel = store_panel(screen, s);
         painter.rect_filled(panel, (8.0 * s) as u8, Color32::from_rgb(14, 20, 36));
-        let title = if self.store.store_name.is_empty() { tr!("YASAFF Store").to_owned() } else { self.store.store_name.clone() };
+        let title = if self.store.store_name.is_empty() { tr!("YASAFF Discover").to_owned() } else { self.store.store_name.clone() };
         let title = painter.text(panel.left_top() + vec2(40.0 * s, 36.0 * s), Align2::LEFT_TOP, title, FontId::proportional(30.0 * s), Color32::WHITE);
         let switch_tab = self.draw_store_tabs(ui, pos2(title.right() + 36.0 * s, title.center().y), s);
         let count = self.store.count();
@@ -782,7 +782,7 @@ impl App {
         if self.store_endpoint().is_none() {
             center_text(
                 tr!("Connect a store"),
-                tr!("Settings → YASAFF Store: paste the store's address. Press A to open it."),
+                tr!("Settings → YASAFF Discover: paste the store's address. Press A to open it."),
                 Color32::WHITE,
             );
             return;
@@ -795,7 +795,7 @@ impl App {
             Listing::Failed(e) if count == 0 => {
                 center_text(
                     tr!("Could not load the store"),
-                    &tr!("{error}\n\nY to try again · Settings → YASAFF Store to change the address", error = e),
+                    &tr!("{error}\n\nY to try again · Settings → YASAFF Discover to change the address", error = e),
                     PAD_B,
                 );
                 return;

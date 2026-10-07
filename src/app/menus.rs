@@ -423,7 +423,7 @@ impl App {
             PromptKind::ProfileName => (tr!("Rename profile"), Some(tr!("YASAFF restarts after renaming."))),
             PromptKind::ProfileNew => (tr!("New profile name"), Some(tr!("YASAFF restarts into the new, empty profile."))),
             PromptKind::AppStoreUrl => (
-                tr!("YASAFF Store address"),
+                tr!("YASAFF Discover address"),
                 Some(tr!("Paste the store's site address, e.g. https://store.example.com. Save it empty to disconnect.")),
             ),
             PromptKind::CrtSize(row) => (

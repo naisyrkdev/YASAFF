@@ -296,7 +296,7 @@ The existing apps share one style:
    Add a Windows build with `WINDOWS_EXE=path/to/my-app.exe ./package.sh`.
 8. **Install:** in YASAFF use **Add → Import application from file…** and pick the zip. The file window opens in `apps_installation_packs` in the profile's data folder (YASAFF creates it), a handy place to keep app packages. The app appears in the library with your icon and background.
 9. **Update:** bump `version` in `Cargo.toml`, re-run `package.sh`, import again. The same `id` replaces the old install and keeps its data.
-10. **Publish (optional):** upload the zip to a YASAFF store server ([YasaffStuffServer](YasaffStuffServer/), *My apps*). YASAFF lists it in the store screen for the platforms in `run`, and checks the download against its sha256.
+10. **Publish (optional):** upload the zip to a YASAFF Discover Server ([YasaffStuffServer](YasaffStuffServer/), *My apps*). YASAFF lists it in Discover for the platforms in `run`, and checks the download against its sha256.
 
 ---
 
@@ -364,4 +364,4 @@ While the widget is placed, YASAFF keeps its `run` command running in the backgr
 
 ### 9.4 Publishing
 
-Upload the zip on the store server like an app (**Upload → An addon**). It's listed under **Addons** on the website and in YASAFF's Store, at `GET /api/v1/addons?platform=…`. That endpoint has the same shape as `/apps`, plus `minHeight`. `/apps` doesn't list addons.
+Upload the zip on the YASAFF Discover Server like an app (**Upload → An addon**). It's listed under **Addons** on the website and in YASAFF Discover, at `GET /api/v1/addons?platform=…`. That endpoint has the same shape as `/apps`, plus `minHeight`. `/apps` doesn't list addons.

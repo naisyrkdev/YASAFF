@@ -16,7 +16,7 @@ YASAFF is a console-style game launcher for PC, made to be used with a controlle
 - [Customization](#customization)
 - [Discs, USB sticks and SD cards](#discs-usb-sticks-and-sd-cards)
 - [Saves](#saves)
-- [YASAFF Store, apps and addons](#yasaff-store-apps-and-addons)
+- [YASAFF Discover, apps and addons](#yasaff-discover-apps-and-addons)
 - [Profiles](#profiles)
 - [Settings overview](#settings-overview)
 - [Data folders](#data-folders)
@@ -32,7 +32,7 @@ YASAFF is a console-style game launcher for PC, made to be used with a controlle
 - **Physical games:** insert a disc, USB stick or SD card that holds a `.yasaff` file and its game starts, like on a console. YASAFF can also burn that file to a CD or DVD.
 - Save backups, and save syncing to the USB stick or SD card a game was started from.
 - A virtual mouse on the right analog stick and button remapping.
-- The **YASAFF Store** (Discover) for apps, games, themes and addons, and bar widgets you can place on the screen.
+- **YASAFF Discover** for apps, games, themes and addons, and bar widgets you can place on the screen.
 - Several profiles, each with its own library and settings.
 - Available in English, French, Spanish and Polish.
 
@@ -74,7 +74,7 @@ Open the **Add game** tile, or press **Y** / **Insert**. From there you can:
 - **Add a command or URL:** for example `steam://rungameid/...` or any command line.
 - **Import an application from file:** a YASAFF app or game package (`.zip`).
 
-Games installed from the YASAFF Store are added to the library automatically.
+Games installed from YASAFF Discover are added to the library automatically.
 
 ## Controls
 
@@ -104,7 +104,7 @@ You don't have to close a game or app to get back to YASAFF. Press **Guide** and
 - Select it and press **A**. Its options show **Switch to game** / **Switch to app** instead of **Start**. It opens again where you left it, fullscreen or over YASAFF's window, just as it was.
 - To end it from YASAFF, use **Close game** / **Close application** in its options.
 - When the game or app quits on its own, YASAFF comes back to the front by itself.
-- Only one app from the YASAFF Store can run at a time.
+- Only one app from YASAFF Discover can run at a time.
 
 ## Game options
 
@@ -184,9 +184,9 @@ A **disc file** is a small JSON file with the `.yasaff` extension that tells YAS
 
 Each copy is written to a temporary folder first and then renamed, so pulling the device out never leaves a half-written save.
 
-## YASAFF Store, apps and addons
+## YASAFF Discover, apps and addons
 
-The **Discover** tile lists apps, games, themes and addons from a YASAFF Store server ([YasaffStuffServer](https://github.com/naisyrkdev/YasaffStuffServer)), where you install and update them. Add the store address in **Settings → YASAFF Store**. You can add several stores and switch between them.
+The **Discover** tile lists apps, games, themes and addons from a YASAFF Discover Server ([YasaffStuffServer](https://github.com/naisyrkdev/YasaffStuffServer)), where you install and update them. Add the store address in **Settings → YASAFF Discover**. You can add several stores and switch between them.
 
 - **Apps** are separate programs that YASAFF starts and holds inside its own window. Press Guide to come back to YASAFF while they keep running.
 - **Addons** are bar widgets, for example device info or a clock. Manage them in **Settings → Addons → Addons Manager…** and show each one in the top bar, the bottom bar or anywhere on the screen, at 50–300 % size.
@@ -205,7 +205,7 @@ Each profile has its own library, settings, themes, images and apps. In **Settin
 | Game order | Last played games first, static order |
 | Profiles | Change, rename, create, export, import, reset |
 | Power options | Reset application |
-| YASAFF Store | Active store, address, test connection, add or remove stores |
+| YASAFF Discover | Active store, address, test connection, add or remove stores |
 | Steam / Heroic | Launch games through the store, start the store in the background with YASAFF, custom launch command (auto-detected by default) |
 | Physical Devices | When a disc is inserted, check the drive at startup, USB stick and SD card support, keep saves on the launch device |
 | Mouse | Virtual mouse on the right stick, speed, custom cursor and cursor size |
@@ -213,7 +213,7 @@ Each profile has its own library, settings, themes, images and apps. In **Settin
 | Fonts | Game title font, import and manage fonts |
 | Theme | Everything in [Customization](#customization) |
 | Addons | Addons Manager |
-| About | Version, source code, YASAFF Store server |
+| About | Version, source code, YASAFF Discover Server |
 
 Settings are saved in `userSettings.json` in the profile folder.
 
