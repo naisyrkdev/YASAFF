@@ -166,8 +166,8 @@ A **disc file** is a small JSON file with the `.yasaff` extension that tells YAS
   "yasaff": "disc",
   "version": 1,
   "id": "<YASAFF game id>",
-  "ids": { "steam": "1903340", "gog": "2125022825" },
-  "name": "Clair Obscur: Expedition 33"
+  "ids": { "steam": "{steam_id}", "gog": "{gog_id}" },
+  "name": "Kombo Breiker: Breaking Inside"
 }
 ```
 

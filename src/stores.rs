@@ -161,13 +161,13 @@ mod tests {
 
     #[test]
     fn store_from_command() {
-        let args = vec!["heroic://launch?appName=2125022825&runner=gog".to_owned()];
+        let args = vec!["heroic://launch?appName=1234567890&runner=gog".to_owned()];
         assert_eq!(
             Store::for_command("xdg-open", &args),
             Some((Store::Heroic, args[0].clone()))
         );
         assert_eq!(
-            Store::for_command("steam://rungameid/570", &[]).map(|s| s.0),
+            Store::for_command("steam://rungameid/123456", &[]).map(|s| s.0),
             Some(Store::Steam)
         );
         assert_eq!(Store::for_command("/usr/bin/true", &[]), None);
@@ -176,9 +176,9 @@ mod tests {
     #[test]
     fn silent_launch_args() {
         assert_eq!(
-            Store::Heroic.uri_args("heroic://launch?appName=2125022825&runner=gog"),
-            ["--no-gui", "heroic://launch?appName=2125022825&runner=gog"]
+            Store::Heroic.uri_args("heroic://launch?appName=1234567890&runner=gog"),
+            ["--no-gui", "heroic://launch?appName=1234567890&runner=gog"]
         );
-        assert_eq!(Store::Steam.uri_args("steam://rungameid/570"), ["-silent", "steam://rungameid/570"]);
+        assert_eq!(Store::Steam.uri_args("steam://rungameid/123456"), ["-silent", "steam://rungameid/123456"]);
     }
 }

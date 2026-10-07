@@ -438,9 +438,9 @@ mod tests {
 
     #[test]
     fn localized_name() {
-        let keys = ini_group("[Desktop Entry]\nName=Clair Obscur: Expedition 33\nName[en_US]=COE 33\n", "Desktop Entry");
-        assert_eq!(localized_for(&keys, "Name", "en_US.UTF-8").unwrap(), "COE 33");
-        assert_eq!(localized_for(&keys, "Name", "de_DE.UTF-8").unwrap(), "Clair Obscur: Expedition 33");
+        let keys = ini_group("[Desktop Entry]\nName=Kombo Breiker: Breaking Inside\nName[en_US]=KB Breaking Inside\n", "Desktop Entry");
+        assert_eq!(localized_for(&keys, "Name", "en_US.UTF-8").unwrap(), "KB Breaking Inside");
+        assert_eq!(localized_for(&keys, "Name", "de_DE.UTF-8").unwrap(), "Kombo Breiker: Breaking Inside");
     }
 
     #[test]
