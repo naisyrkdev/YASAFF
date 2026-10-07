@@ -825,9 +825,9 @@ fn cached_image(agent: &ureq::Agent, endpoint: &Endpoint, url: &str, dir: &Path,
         [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => "webp",
         _ => bail!("not an image"),
     };
-    fs::create_dir_all(dir)?;
     let path = dir.join(format!("{stem}.{ext}"));
-    fs::write(&path, bytes)?;
+    // Atomic, so an interrupted download never leaves a cut-off image that later passes as cached.
+    crate::fsutil::write_atomic(&path, bytes)?;
     Ok(path)
 }
 

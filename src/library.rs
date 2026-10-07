@@ -330,6 +330,9 @@ pub struct Library {
     pub games: Vec<Game>,
     #[serde(skip)]
     data_dir: PathBuf,
+    /// `library.json` could be neither read nor moved aside; saving would destroy it.
+    #[serde(skip)]
+    keep_file: bool,
 }
 
 impl Library {
@@ -352,8 +355,10 @@ impl Library {
             Ok(lib) => (lib, None),
             Err(e) => {
                 let backup = file.with_extension(format!("json.broken-{}", now_secs()));
-                let _ = fs::rename(&file, &backup);
-                (Library::default(), Some(format!("{e:#} (moved to {})", backup.display())))
+                match fs::rename(&file, &backup) {
+                    Ok(()) => (Library::default(), Some(format!("{e:#} (moved to {})", backup.display()))),
+                    Err(_) => (Library { keep_file: true, ..Library::default() }, Some(format!("{e:#} (left as it is; changes won't be saved)"))),
+                }
             }
         };
         lib.data_dir = data_dir;
@@ -370,6 +375,7 @@ impl Library {
     }
 
     pub fn save(&self) -> Result<()> {
+        anyhow::ensure!(!self.keep_file, "{} could not be read at startup and is left as it is", self.file().display());
         crate::fsutil::write_atomic(&self.file(), serde_json::to_string_pretty(self)?)
     }
 
@@ -632,9 +638,20 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
     }
 
+    #[test]
+    fn an_unreadable_library_is_never_overwritten() {
+        let root = std::env::temp_dir().join(format!("yasaff-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("library.json"), "the user's library").unwrap();
+        let lib = Library { data_dir: root.clone(), keep_file: true, ..library(&["a"]) };
+        assert!(lib.save().is_err());
+        assert_eq!(fs::read_to_string(root.join("library.json")).unwrap(), "the user's library");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
     fn library(names: &[&str]) -> Library {
         let games = names.iter().map(|n| serde_json::from_str(&format!(r#"{{"id":"{n}","name":"{n}","target":"/{n}"}}"#)).unwrap()).collect();
-        Library { games, data_dir: PathBuf::new() }
+        Library { games, ..Library::default() }
     }
 
     fn order(lib: &Library) -> String {

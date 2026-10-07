@@ -917,6 +917,35 @@ impl App {
     }
 }
 
+pub(super) const WIDGET_COLUMN: f32 = 130.0;
+const WIDGET_HEIGHT: f32 = 110.0;
+
+fn widget_columns(status: &addons::Status) -> f32 {
+    match status {
+        addons::Status::Showing(frame) => frame.items.len().max(1) as f32,
+        _ => 2.0,
+    }
+}
+
+fn paint_widget(painter: &Painter, addon: &Manifest, status: &addons::Status, area: Rect, s: f32) {
+    match status {
+        addons::Status::Showing(frame) => {
+            for (i, item) in frame.items.iter().enumerate() {
+                let cell = Rect::from_min_size(pos2(area.left() + i as f32 * WIDGET_COLUMN * s, area.top()), vec2(WIDGET_COLUMN * s, area.height()));
+                paint_widget_item(painter, item, cell, s);
+            }
+        }
+        addons::Status::Starting => {
+            shadow_text(painter, area.center(), Align2::CENTER_CENTER, &addon.name, 18.0 * s, Color32::from_gray(150));
+        }
+        addons::Status::Failed(error) => {
+            let text = tr!("{name}: {error}", name = addon.name, error = error);
+            let painter = painter.with_clip_rect(area.expand2(vec2(WIDGET_COLUMN * s, 0.0)));
+            shadow_text(&painter, area.center(), Align2::CENTER_CENTER, &text, 16.0 * s, PAD_B);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Action, Layout, navigate, navigate_bubble_pages, navigate_free, pack_bubbles};
@@ -1002,34 +1031,5 @@ mod tests {
         assert_eq!(navigate(grid, 48, 60, Action::Left), 7);
         assert_eq!(navigate(grid, 56, 60, Action::Left), 15);
         assert_eq!(navigate(grid, 47, 60, Action::Right), 59);
-    }
-}
-
-pub(super) const WIDGET_COLUMN: f32 = 130.0;
-const WIDGET_HEIGHT: f32 = 110.0;
-
-fn widget_columns(status: &addons::Status) -> f32 {
-    match status {
-        addons::Status::Showing(frame) => frame.items.len().max(1) as f32,
-        _ => 2.0,
-    }
-}
-
-fn paint_widget(painter: &Painter, addon: &Manifest, status: &addons::Status, area: Rect, s: f32) {
-    match status {
-        addons::Status::Showing(frame) => {
-            for (i, item) in frame.items.iter().enumerate() {
-                let cell = Rect::from_min_size(pos2(area.left() + i as f32 * WIDGET_COLUMN * s, area.top()), vec2(WIDGET_COLUMN * s, area.height()));
-                paint_widget_item(painter, item, cell, s);
-            }
-        }
-        addons::Status::Starting => {
-            shadow_text(painter, area.center(), Align2::CENTER_CENTER, &addon.name, 18.0 * s, Color32::from_gray(150));
-        }
-        addons::Status::Failed(error) => {
-            let text = tr!("{name}: {error}", name = addon.name, error = error);
-            let painter = painter.with_clip_rect(area.expand2(vec2(WIDGET_COLUMN * s, 0.0)));
-            shadow_text(&painter, area.center(), Align2::CENTER_CENTER, &text, 16.0 * s, PAD_B);
-        }
     }
 }

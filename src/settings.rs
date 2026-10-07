@@ -265,6 +265,9 @@ pub struct Settings {
     pub addons: BTreeMap<String, AddonSettings>,
     #[serde(skip_serializing)]
     app_store: Option<AppStoreSettings>,
+    /// The settings file could be neither read nor moved aside; saving would destroy it.
+    #[serde(skip)]
+    keep_file: bool,
 }
 
 impl Settings {
@@ -272,26 +275,31 @@ impl Settings {
         Library::data_dir().join(FILE)
     }
 
-    /// Reads the settings, falling back to defaults. A file that can't be parsed is moved aside
-    /// (rather than overwritten by the next save) and described in the returned warning.
+    /// Reads the settings, falling back to defaults. A file that can't be read or parsed is moved
+    /// aside (rather than overwritten by the next save) and described in the returned warning;
+    /// one that can't be moved either is kept, and saving is refused for this session.
     pub fn load() -> (Self, Option<String>) {
         let mut file = Self::file();
         if !file.exists() {
             file = Library::data_dir().join(LEGACY_FILE);
         }
-        let Ok(text) = fs::read_to_string(&file) else { return (Self::default(), None) };
-        match serde_json::from_str::<Self>(&text) {
+        if !file.exists() {
+            return (Self::default(), None);
+        }
+        let read = fs::read_to_string(&file).map_err(anyhow::Error::from).and_then(|text| Ok(serde_json::from_str::<Self>(&text)?));
+        match read {
             Ok(settings) => (settings.migrated(), None),
             Err(e) => {
                 let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
                 let backup = file.with_extension(format!("json.broken-{stamp}"));
-                let moved = fs::rename(&file, &backup);
-                log::warn!("ignoring invalid {}: {e}", file.display());
-                let warning = match moved {
-                    Ok(()) => format!("{}: {e} (moved to {})", file.display(), backup.display()),
-                    Err(_) => format!("{}: {e}", file.display()),
-                };
-                (Self::default(), Some(warning))
+                log::warn!("ignoring unreadable {}: {e:#}", file.display());
+                match fs::rename(&file, &backup) {
+                    Ok(()) => (Self::default(), Some(format!("{}: {e:#} (moved to {})", file.display(), backup.display()))),
+                    Err(_) => (
+                        Self { keep_file: true, ..Self::default() },
+                        Some(format!("{}: {e:#} (left as it is; changes won't be saved)", file.display())),
+                    ),
+                }
             }
         }
     }
@@ -333,6 +341,7 @@ impl Settings {
     }
 
     pub fn save(&self) -> Result<()> {
+        anyhow::ensure!(!self.keep_file, "{} could not be read at startup and is left as it is", Self::file().display());
         crate::fsutil::write_atomic(&Self::file(), serde_json::to_string_pretty(self)?)?;
         let _ = fs::remove_file(Library::data_dir().join(LEGACY_FILE));
         Ok(())
