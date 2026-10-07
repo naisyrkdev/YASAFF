@@ -89,6 +89,10 @@ impl App {
             self.notify(tr!("Disc inserted: {name}. Another game is already starting.", name = name));
             return;
         }
+        if self.device_sync_running() {
+            self.notify(tr!("Disc inserted: {name}. Saves are still being copied; insert it again afterwards.", name = name));
+            return;
+        }
 
         let candidates = match crate::physical::resolve(&manifests, &self.library.disc_ids()) {
             Resolution::NotFound => {
@@ -109,6 +113,7 @@ impl App {
             self.mode = Mode::Home;
             self.selected = only;
             ctx.send_viewport_cmd(ViewportCommand::Focus);
+            self.launch_volume = Some(event.volume);
             self.launch_selected();
             return;
         }
@@ -120,7 +125,7 @@ impl App {
             self.mode = Mode::DiscNotFound { name };
             return;
         }
-        self.mode = Mode::DiscChooser { name, candidates, cursor: 0 };
+        self.mode = Mode::DiscChooser { name, candidates, cursor: 0, volume: event.volume };
     }
 
     pub(super) fn create_disc_file(&mut self) {
@@ -233,7 +238,7 @@ impl App {
     }
 
     pub(super) fn draw_disc_chooser(&mut self, ui: &Ui, screen: Rect, s: f32) {
-        let Mode::DiscChooser { name, candidates, cursor } = &self.mode else { return };
+        let Mode::DiscChooser { name, candidates, cursor, .. } = &self.mode else { return };
         let (cursor, count) = (*cursor, candidates.len());
         let painter = ui.painter();
         painter.rect_filled(screen, 0, Color32::from_black_alpha(190));
@@ -416,9 +421,10 @@ impl App {
             Action::Right | Action::Down => *cursor = (*cursor + 1).min(candidates.len() - 1),
             Action::Confirm => {
                 let game = candidates.get(*cursor).and_then(|id| self.library.position(id));
-                self.mode = Mode::Home;
+                let Mode::DiscChooser { volume, .. } = std::mem::replace(&mut self.mode, Mode::Home) else { return };
                 if let Some(i) = game {
                     self.selected = i;
+                    self.launch_volume = Some(volume);
                     self.launch_selected();
                 }
             }

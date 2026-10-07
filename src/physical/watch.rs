@@ -80,6 +80,11 @@ impl Watcher {
     }
 }
 
+/// The USB sticks and SD cards plugged in now.
+pub fn removable_volumes() -> Vec<Volume> {
+    platform::Platform::new().volumes(true).into_iter().filter(|v| v.kind == VolumeKind::Removable).collect()
+}
+
 fn sleep_unless_stopped(total: Duration, stop: &AtomicBool) {
     let step = Duration::from_millis(100);
     let mut slept = Duration::ZERO;

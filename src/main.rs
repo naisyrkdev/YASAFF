@@ -25,6 +25,7 @@ mod object3d;
 mod physical;
 mod profiles;
 mod saves;
+mod device_saves;
 mod scan;
 mod settings;
 mod sound;

@@ -256,6 +256,10 @@ impl App {
     }
 
     pub(super) fn draw_hints(&self, ui: &Ui, screen: Rect, s: f32) -> Option<Action> {
+        if let Some(hints) = self.device_sync_hints() {
+            let y = self.bar_rect(BarSlot::Bottom, screen, s).center().y;
+            return self.draw_hint_row(ui, &hints, screen.right() - 60.0 * s, y, s, "hint");
+        }
         let hints: &[Hint] = match self.mode {
             Mode::Home if self.empty_bubble().is_some() => &[],
             Mode::Home if self.app_running_at(self.selected) => &[

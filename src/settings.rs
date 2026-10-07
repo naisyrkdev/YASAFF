@@ -45,11 +45,14 @@ pub struct DiscSettings {
     pub on_insert: DiscAction,
     pub scan_at_start: bool,
     pub removable_drives: bool,
+    /// Copy a game's saves to the USB stick or SD card it was started from when it closes, for
+    /// the games that have it turned on.
+    pub keep_saves: bool,
 }
 
 impl Default for DiscSettings {
     fn default() -> Self {
-        DiscSettings { on_insert: DiscAction::Start, scan_at_start: true, removable_drives: true }
+        DiscSettings { on_insert: DiscAction::Start, scan_at_start: true, removable_drives: true, keep_saves: false }
     }
 }
 
@@ -176,10 +179,10 @@ impl AppStoreSettings {
         }
     }
 
+    /// The store to talk to; only the address is needed. A key saved by older versions is still sent.
     pub fn endpoint(&self) -> Option<crate::appstore::Endpoint> {
-        let key = self.api_key.trim();
         let base = crate::appstore::api_base(&self.url)?;
-        (!key.is_empty()).then(|| crate::appstore::Endpoint { base, key: key.to_owned() })
+        Some(crate::appstore::Endpoint { base, key: self.api_key.trim().to_owned() })
     }
 }
 

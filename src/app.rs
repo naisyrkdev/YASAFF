@@ -3,6 +3,7 @@ mod addon_manager;
 mod add_games;
 mod buttons;
 mod cover_editor;
+mod device_ui;
 mod dialogs;
 mod discs;
 mod font_ui;
@@ -58,6 +59,7 @@ use active_game::*;
 use add_games::*;
 use buttons::*;
 use cover_editor::*;
+use device_ui::*;
 use discs::*;
 use home::*;
 use menus::*;
@@ -153,7 +155,7 @@ enum Mode {
     Settings { cursor: usize, page: Page, in_rows: bool },
     Launching(Launching),
     /// `candidates` are game ids: the library may be re-sorted while the chooser is open.
-    DiscChooser { name: String, candidates: Vec<String>, cursor: usize },
+    DiscChooser { name: String, candidates: Vec<String>, cursor: usize, volume: Volume },
     DiscNotFound { name: String },
     CoverEditor(CoverEditor),
     FontManager { cursor: usize, armed: bool },
@@ -229,6 +231,14 @@ pub struct App {
     dialog: Option<dialogs::PendingDialog>,
     /// The button the theme's button rows in Settings change.
     button_edit: PadButton,
+    /// The device whose disc file is starting a game right now; handed to the running game.
+    launch_volume: Option<Volume>,
+    /// USB sticks and SD cards for a game's SD and USB settings, and when they were listed.
+    devices: Vec<Volume>,
+    devices_looked: Option<Instant>,
+    device_pick: Option<PathBuf>,
+    /// Copying a closed game's saves to the device it was started from.
+    device_sync: Option<DeviceSync>,
 }
 
 impl App {
@@ -309,6 +319,11 @@ impl App {
             restarting: false,
             dialog: None,
             button_edit: PadButton::South,
+            launch_volume: None,
+            devices: Vec::new(),
+            devices_looked: None,
+            device_pick: None,
+            device_sync: None,
         };
         app.apply_fonts();
         if let Some(w) = warning {
@@ -500,6 +515,9 @@ impl App {
             Action::BringToFront => return self.come_home(ctx),
             _ => {}
         }
+        if self.device_sync.is_some() {
+            return self.handle_device_sync(action);
+        }
 
         match &self.mode {
             Mode::Home => self.handle_home(action),
@@ -549,6 +567,7 @@ impl eframe::App for App {
         self.poll_running(ctx);
         self.poll_game(ctx);
         self.poll_store();
+        self.poll_device_sync();
         ctx.request_repaint_after(Duration::from_millis(100));
     }
 
@@ -592,6 +611,8 @@ impl eframe::App for App {
         self.poll_game(&ctx);
         self.poll_save_dirs();
         self.poll_backup();
+        self.poll_device_sync();
+        self.refresh_devices();
         self.poll_profile_job();
         self.poll_setup();
         self.update_launching(&ctx);
@@ -637,6 +658,7 @@ impl eframe::App for App {
         self.draw_disc_not_found(ui, screen, s);
         self.draw_profile_imported(ui, screen, s);
         self.draw_burn(ui, screen, s);
+        self.draw_device_sync(ui, screen, s);
         self.draw_setup(&painter, screen, s);
         self.draw_dialog_wait(&painter, screen, s);
         self.draw_toast(&painter, screen, s);

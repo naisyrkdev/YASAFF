@@ -90,6 +90,32 @@ impl TileStyle {
             _ => 1.0,
         }
     }
+
+    /// The shape of cover image this style shows; each shape can have its own image.
+    pub fn cover_shape(self) -> CoverShape {
+        match self {
+            Self::Cover | Self::FlatBox | Self::Model | Self::Case => CoverShape::Tall,
+            Self::Flat | Self::Object | Self::Disc | Self::Crt => CoverShape::Square,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum CoverShape {
+    /// Square cards, objects, discs and screens.
+    Square,
+    /// Game covers and the front of the boxes.
+    Tall,
+}
+
+impl CoverShape {
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::Square => "square",
+            Self::Tall => "tall",
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]

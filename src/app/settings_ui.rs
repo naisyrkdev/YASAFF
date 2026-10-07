@@ -18,7 +18,6 @@ pub(super) enum SettingRow {
     AppReset,
     AppStoreActive,
     AppStoreUrl,
-    AppStoreKey,
     AppStoreTest,
     AppStoreAdd,
     AppStoreRemove,
@@ -104,6 +103,16 @@ pub(super) enum SettingRow {
     DiscOnInsert,
     DiscScanAtStart,
     DiscRemovable,
+    DiscKeepSaves,
+    DeviceTarget,
+    DeviceInsertConfig,
+    DeviceCreateCatalog,
+    DeviceKeepSaves,
+    DeviceRecovery,
+    DeviceSavePath(usize),
+    DeviceSaveFolder,
+    DeviceAddFiles,
+    DeviceAddFolders,
     GameCover,
     GameAdjust(AssetKind),
     GameAdjustReset(AssetKind),
@@ -200,6 +209,15 @@ impl SettingRow {
             | R::GameSpineText
             | R::GameTopColor
             | R::GameTitleFont => Page::GameBox,
+            R::DeviceTarget
+            | R::DeviceInsertConfig
+            | R::DeviceCreateCatalog
+            | R::DeviceKeepSaves
+            | R::DeviceRecovery
+            | R::DeviceSavePath(_)
+            | R::DeviceSaveFolder
+            | R::DeviceAddFiles
+            | R::DeviceAddFolders => Page::GameDevice,
             _ => Page::App,
         }
     }
@@ -209,6 +227,8 @@ impl SettingRow {
 pub(super) enum Page {
     App,
     GameBox,
+    /// A game's SD and USB settings.
+    GameDevice,
 }
 
 pub(super) struct SettingSection {
@@ -306,6 +326,17 @@ pub(super) fn cycle_or_default<T: Copy + PartialEq>(all: &[T], current: Option<T
 impl App {
     pub(super) fn setting_rows(&self, page: Page) -> Vec<SettingRow> {
         use SettingRow as R;
+        if page == Page::GameDevice {
+            let mut rows = vec![R::DeviceTarget, R::DeviceInsertConfig, R::DeviceCreateCatalog, R::DeviceKeepSaves, R::DeviceRecovery];
+            if let Some(game) = self.selected_game() {
+                rows.extend((0..game.device_saves.paths.len()).map(R::DeviceSavePath));
+                if game.device_saves.paths.is_empty() && game.save_dir.is_some() {
+                    rows.push(R::DeviceSaveFolder);
+                }
+            }
+            rows.extend([R::DeviceAddFiles, R::DeviceAddFolders]);
+            return rows;
+        }
         if page == Page::GameBox {
             let game = self.selected_game();
             let mut rows = vec![R::GameAdjust(AssetKind::Cover)];
@@ -456,7 +487,7 @@ impl App {
         } else if tiles_used && theme.tile_style == TileStyle::Crt {
             rows.extend([R::CrtWidth, R::CrtHeight, R::CrtVideo, R::CrtIdleVideo, R::CrtFilter]);
         }
-        rows.extend([R::AppStoreActive, R::AppStoreUrl, R::AppStoreKey, R::AppStoreTest, R::AppStoreAdd]);
+        rows.extend([R::AppStoreActive, R::AppStoreUrl, R::AppStoreTest, R::AppStoreAdd]);
         if self.settings.app_stores.len() > 1 || !self.settings.app_store().is_empty() {
             rows.push(R::AppStoreRemove);
         }
@@ -483,7 +514,7 @@ impl App {
         for store in Store::ALL {
             rows.extend([R::StoreEnabled(store), R::StoreBackground(store), R::StoreCommand(store)]);
         }
-        rows.extend([R::DiscOnInsert, R::DiscScanAtStart, R::DiscRemovable]);
+        rows.extend([R::DiscOnInsert, R::DiscScanAtStart, R::DiscRemovable, R::DiscKeepSaves]);
         rows.push(R::AddonManager);
         rows.extend([R::AboutApp, R::AboutSource, R::AboutServer, R::AppReset]);
         rows
@@ -580,7 +611,7 @@ impl App {
     }
 
     pub(super) fn activate_setting(&mut self, row: SettingRow) {
-        if row.page() == Page::GameBox && self.selected_game().is_none() {
+        if row.page() != Page::App && self.selected_game().is_none() {
             return;
         }
         match row {
@@ -644,7 +675,6 @@ impl App {
             }
             SettingRow::AboutApp => {}
             SettingRow::AddonManager => self.mode = AddonManager::open(AddonView::Menu, 0),
-            SettingRow::AppStoreKey => self.mode = Mode::Prompt { kind: PromptKind::AppStoreKey, buffer: String::new() },
             SettingRow::AppStoreTest => self.test_store_connection(),
             SettingRow::StoreEnabled(store) => {
                 let s = self.settings.store_mut(store);
@@ -701,6 +731,17 @@ impl App {
                 self.disc_removable.store(self.settings.discs.removable_drives, Ordering::Relaxed);
                 self.save_settings();
             }
+            SettingRow::DiscKeepSaves => {
+                self.settings.discs.keep_saves ^= true;
+                self.save_settings();
+            }
+            SettingRow::DeviceInsertConfig => self.insert_launch_config(),
+            SettingRow::DeviceCreateCatalog => self.create_save_catalog(),
+            SettingRow::DeviceSavePath(i) => self.remove_device_save_path(i),
+            SettingRow::DeviceSaveFolder => {}
+            SettingRow::DeviceAddFiles => self.add_device_save_paths(false),
+            SettingRow::DeviceAddFolders => self.add_device_save_paths(true),
+            SettingRow::DeviceTarget | SettingRow::DeviceKeepSaves | SettingRow::DeviceRecovery => self.adjust_device_setting(row, 1),
             SettingRow::StoreBackground(store) => {
                 let s = self.settings.store_mut(store);
                 s.start_in_background ^= true;
@@ -955,6 +996,9 @@ impl App {
         if row.page() == Page::GameBox {
             return self.adjust_game_setting(row, delta);
         }
+        if row.page() == Page::GameDevice {
+            return self.adjust_device_setting(row, delta);
+        }
         match row {
             SettingRow::ControllerSwap | SettingRow::OrderLastPlayed | SettingRow::OrderStatic => return self.activate_setting(row),
             SettingRow::ControllerPrompts => {
@@ -1011,7 +1055,8 @@ impl App {
             | SettingRow::StoreEnabled(_)
             | SettingRow::StoreBackground(_)
             | SettingRow::DiscScanAtStart
-            | SettingRow::DiscRemovable => {
+            | SettingRow::DiscRemovable
+            | SettingRow::DiscKeepSaves => {
                 return self.activate_setting(row);
             }
             SettingRow::DiscOnInsert => {
@@ -1204,6 +1249,22 @@ impl App {
         self.save();
     }
 
+    pub(super) fn adjust_device_setting(&mut self, row: SettingRow, delta: i32) {
+        if row == SettingRow::DeviceTarget {
+            return self.cycle_device(delta);
+        }
+        let Some(game) = self.library.games.get_mut(self.selected) else { return };
+        let device = &mut game.device_saves;
+        match row {
+            SettingRow::DeviceKeepSaves => device.keep_on_device ^= true,
+            SettingRow::DeviceRecovery => {
+                device.recovery_count = step_count(device.recovery_count, delta, (0, crate::device_saves::MAX_RECOVERY));
+            }
+            _ => return,
+        }
+        self.save();
+    }
+
     pub(super) fn setting_heading(&self, row: SettingRow) -> Option<(&'static str, Option<(String, Color32)>)> {
         match row {
             SettingRow::Fullscreen => Some((tr!("General"), None)),
@@ -1276,8 +1337,35 @@ impl App {
             SettingRow::DiscOnInsert => {
                 Some((tr!("Physical Devices"), Some((tr!("A disc or USB stick with a .yasaff file").to_owned(), Color32::from_gray(140)))))
             }
+            SettingRow::DeviceTarget => Some((
+                tr!("Launch device"),
+                Some(match self.devices.len() {
+                    0 => (tr!("Plug in a USB stick or SD card; it shows up here").to_owned(), PAD_Y),
+                    n => (tr_n!(n, "{n} USB stick or SD card plugged in", "{n} USB sticks or SD cards plugged in"), Color32::from_gray(140)),
+                }),
+            )),
+            SettingRow::DeviceKeepSaves => Some((
+                tr!("Saves on device"),
+                Some(if self.settings.discs.keep_saves {
+                    (tr!("Copied when the game closes, if it was started from a USB stick or SD card").to_owned(), Color32::from_gray(140))
+                } else {
+                    (tr!("Also turn on \"Keep saves on the launch device\" in Settings › Physical Devices").to_owned(), PAD_Y)
+                }),
+            )),
+            SettingRow::DeviceSavePath(0) | SettingRow::DeviceSaveFolder => Some(self.device_files_heading()),
+            SettingRow::DeviceAddFiles if self.selected_game().is_none_or(|g| crate::app::device_save_paths(g).is_empty()) => {
+                Some(self.device_files_heading())
+            }
             _ => None,
         }
+    }
+
+    pub(super) fn device_files_heading(&self) -> (&'static str, Option<(String, Color32)>) {
+        let status = match self.selected_game().map(|g| g.device_saves.paths.len()) {
+            Some(0) | None => (tr!("Pick the files or folders the game saves to").to_owned(), Color32::from_gray(140)),
+            Some(n) => (tr_n!(n, "{n} tracked", "{n} tracked"), Color32::from_gray(140)),
+        };
+        (tr!("Save files"), Some(status))
     }
 
     pub(super) fn addons_heading(&self) -> (&'static str, Option<(String, Color32)>) {
@@ -1366,7 +1454,7 @@ impl App {
             SettingRow::ProfileImport => (tr!("Import profile…").into(), tr!("An exported .zip; added as a new profile, renamed if the name is taken"), Action(tr!("Import"))),
             SettingRow::ProfileReset => (tr!("Reset current profile").into(), tr!("Deletes this profile's library, settings, themes and apps"), Action(tr!("Reset…"))),
             SettingRow::AppReset => (tr!("Reset application").into(), tr!("Deletes every profile and all data, as on a fresh install"), Action(tr!("Reset…"))),
-            SettingRow::AppStoreAdd => (tr!("Add another store…").into(), tr!("Each store has its own address and API key"), Action(tr!("Add"))),
+            SettingRow::AppStoreAdd => (tr!("Add another store…").into(), tr!("Each store has its own address"), Action(tr!("Add"))),
             SettingRow::AppStoreRemove => (tr!("Remove this store").into(), tr!("Installed apps and themes stay"), Action(tr!("Remove…"))),
             SettingRow::AboutApp => (
                 "YASAFF".into(),
@@ -1828,9 +1916,8 @@ impl App {
             SettingRow::AppStoreUrl => {
                 let url = self.settings.app_store().url.trim();
                 let value = if url.is_empty() { tr!("Not set").to_owned() } else { url.to_owned() };
-                (tr!("Store address").into(), tr!("From the store's API keys page, e.g. https://store.example.com/api/v1"), RowValue::Summary(value))
+                (tr!("Store address").into(), tr!("The store's site address, e.g. https://store.example.com"), RowValue::Summary(value))
             }
-            SettingRow::AppStoreKey => (tr!("API key").into(), tr!("Paste a key created on the store's API keys page"), RowValue::Summary(self.masked_api_key())),
             SettingRow::AppStoreTest => (tr!("Test connection").into(), tr!("The Discover tile lists the store's apps once this works"), Action(tr!("Test"))),
             SettingRow::StoreEnabled(st) => (
                 tr!("Launch {store} games through {store}", store = st.short_name()),
@@ -1861,6 +1948,62 @@ impl App {
                 tr!("This option will make those devices behave like a disc"),
                 Toggle(self.settings.discs.removable_drives),
             ),
+            SettingRow::DiscKeepSaves => (
+                tr!("Keep saves on the launch device").into(),
+                tr!("Games with it on in Options › SD and USB Yasaff settings copy their saves to the stick they were started from"),
+                Toggle(self.settings.discs.keep_saves),
+            ),
+            SettingRow::DeviceTarget => (
+                tr!("Device").into(),
+                tr!("Left/Right picks a plugged-in USB stick or SD card"),
+                Choice(self.picked_device().map_or_else(|| tr!("None plugged in").to_owned(), volume_name)),
+            ),
+            SettingRow::DeviceInsertConfig => (
+                tr!("Insert YASAFF launch config into device").into(),
+                tr!("Writes this game's .yasaff file; plugging the device in then starts the game"),
+                Action(tr!("Insert")),
+            ),
+            SettingRow::DeviceCreateCatalog => (
+                tr!("Create a YasaffSaves catalog for this game on device").into(),
+                tr!("YasaffSaves/<game> with a backup folder; saves are kept there"),
+                if self.picked_catalog().is_some_and(|c| c.is_dir()) { RowValue::Summary(tr!("Created").into()) } else { Action(tr!("Create")) },
+            ),
+            SettingRow::DeviceKeepSaves => (
+                tr!("Keep saves on device that was used to launch this game").into(),
+                tr!("When the game closes, its saves are copied to the USB stick or SD card it was started from"),
+                Toggle(game.is_some_and(|g| g.device_saves.keep_on_device)),
+            ),
+            SettingRow::DeviceRecovery => {
+                let count = game.map_or(0, |g| g.device_saves.recovery_count);
+                let value = if count == 0 { tr!("Off").to_owned() } else { count.to_string() };
+                (
+                    tr!("Disaster Recovery Count").into(),
+                    tr!("Timestamped backups kept in the backup folder, plus the current save"),
+                    Choice(value),
+                )
+            }
+            SettingRow::DeviceSavePath(i) => {
+                let path = game.and_then(|g| g.device_saves.paths.get(i)).cloned().unwrap_or_default();
+                let sub = if path.is_dir() {
+                    tr!("Folder, subfolders included · Enter stops tracking it")
+                } else if path.exists() {
+                    tr!("File · Enter stops tracking it")
+                } else {
+                    tr!("Not there yet · Enter stops tracking it")
+                };
+                (path.display().to_string(), sub, Action(tr!("Remove")))
+            }
+            SettingRow::DeviceSaveFolder => (
+                game.and_then(|g| g.save_dir.as_ref()).map(|d| d.display().to_string()).unwrap_or_default(),
+                tr!("The save folder from Set save folder…; used until you add files or folders below"),
+                RowValue::Summary(tr!("Save folder").into()),
+            ),
+            SettingRow::DeviceAddFiles => (tr!("Add save files…").into(), tr!("One or more files the game saves to"), Action(tr!("Add"))),
+            SettingRow::DeviceAddFolders => (
+                tr!("Add save folders…").into(),
+                tr!("Each folder is copied with everything in it, subfolders too"),
+                Action(tr!("Add")),
+            ),
         }
     }
 
@@ -1870,6 +2013,7 @@ impl App {
         let sections = self.setting_sections(&rows);
         let title = match (page, self.selected_game()) {
             (Page::GameBox, Some(game)) => tr!("Appearance · {name}", name = game.name),
+            (Page::GameDevice, Some(game)) => tr!("SD and USB · {name}", name = game.name),
             _ => tr!("Settings").to_owned(),
         };
         let cursor = cursor.min(rows.len() - 1);
@@ -2078,6 +2222,7 @@ impl App {
             self.mode = match page {
                 Page::App => Mode::Home,
                 Page::GameBox => Mode::Options { cursor: self.menu_index(MenuItem::BoxAppearance) },
+                Page::GameDevice => Mode::Options { cursor: self.menu_index(MenuItem::DeviceSaves) },
             }
         }
     }

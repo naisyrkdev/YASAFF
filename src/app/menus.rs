@@ -20,12 +20,13 @@ pub(super) enum MenuItem {
     SaveFolder,
     OpenSaveFolder,
     BackupSaves,
+    DeviceSaves,
     CreateDisc,
     BurnDisc,
     Remove,
 }
 
-pub(super) const MENU: [(MenuItem, &str); 15] = [
+pub(super) const MENU: [(MenuItem, &str); 16] = [
     (MenuItem::Start, tr_key!("Start")),
     (MenuItem::BoxAppearance, tr_key!("Tile and box appearance…")),
     (MenuItem::SetCover, tr_key!("Set cover image")),
@@ -38,6 +39,7 @@ pub(super) const MENU: [(MenuItem, &str); 15] = [
     (MenuItem::FixSlot, tr_key!("Mark this position as static for this game")),
     (MenuItem::EditCommand, tr_key!("Edit launch command")),
     (MenuItem::SaveFolder, tr_key!("Set save folder…")),
+    (MenuItem::DeviceSaves, tr_key!("SD and USB Yasaff settings…")),
     (MenuItem::CreateDisc, tr_key!("Create disc file…")),
     (MenuItem::BurnDisc, tr_key!("Burn to CD/DVD…")),
     (MenuItem::Remove, tr_key!("Remove from library")),
@@ -51,7 +53,6 @@ pub(super) enum PromptKind {
     StoreCommand(Store),
     ThemeName,
     AppStoreUrl,
-    AppStoreKey,
     Color(SettingRow),
     BoxSize(SettingRow),
     CrtSize(SettingRow),
@@ -65,6 +66,8 @@ pub(super) enum Removal {
     Theme,
     AppStore,
     Addon(usize),
+    /// Index into `crate::appstore::addon_packs()`.
+    AddonPack(usize),
     Profile,
     Everything,
     /// Not a removal: turning on static order, which deserves the same second look.
@@ -89,7 +92,7 @@ impl App {
                     menu.push((item, tr!("Switch to game").to_owned()));
                     menu.push((MenuItem::CloseApp, tr!("Close game").to_owned()));
                 }
-                MenuItem::SaveFolder if store_app => {}
+                MenuItem::SaveFolder | MenuItem::DeviceSaves if store_app => {}
                 MenuItem::SwapBubble if !self.is_bubbles() => {}
                 MenuItem::SwapTile if self.is_bubbles() || self.library.games.len() < 2 => {}
                 MenuItem::FixSlot if self.is_bubbles() || self.settings.order.static_order => {}
@@ -132,6 +135,7 @@ impl App {
             MenuItem::SaveFolder => self.pick_save_dir(),
             MenuItem::OpenSaveFolder => self.open_save_dir(),
             MenuItem::BackupSaves => self.backup_saves(),
+            MenuItem::DeviceSaves => self.open_device_settings(),
             MenuItem::Update => self.update_selected(),
             MenuItem::SetCover => self.pick_asset(AssetKind::Cover),
             MenuItem::AdjustCover => self.open_cover_editor(AssetKind::Cover, true),
@@ -201,18 +205,13 @@ impl App {
                 self.save_settings();
                 self.mode = self.settings_at(SettingRow::StoreCommand(store));
             }
-            PromptKind::AppStoreUrl | PromptKind::AppStoreKey => {
-                let row = if kind == PromptKind::AppStoreUrl { SettingRow::AppStoreUrl } else { SettingRow::AppStoreKey };
+            PromptKind::AppStoreUrl => {
                 let store = self.settings.app_store_mut();
-                let slot = match kind {
-                    PromptKind::AppStoreUrl => &mut store.url,
-                    _ => &mut store.api_key,
-                };
-                *slot = text.to_owned();
+                store.url = text.to_owned();
                 store.name.clear();
                 self.save_settings();
                 self.store_settings_changed();
-                self.mode = self.settings_at(row);
+                self.mode = self.settings_at(SettingRow::AppStoreUrl);
             }
             PromptKind::ThemeName => {
                 if !text.is_empty() {
@@ -317,7 +316,6 @@ impl App {
             Mode::Prompt { kind: PromptKind::ProfileName, .. } => self.settings_at(SettingRow::ProfileRename),
             Mode::Prompt { kind: PromptKind::ProfileNew, .. } => self.settings_at(SettingRow::ProfileNew),
             Mode::Prompt { kind: PromptKind::AppStoreUrl, .. } => self.settings_at(SettingRow::AppStoreUrl),
-            Mode::Prompt { kind: PromptKind::AppStoreKey, .. } => self.settings_at(SettingRow::AppStoreKey),
             Mode::Prompt { kind: PromptKind::Color(row) | PromptKind::BoxSize(row) | PromptKind::CrtSize(row), .. } => self.settings_at(*row),
             _ => Mode::Home,
         };
@@ -351,11 +349,15 @@ impl App {
             ),
             Removal::AppStore => (
                 tr!("Remove store \"{name}\"?", name = self.settings.app_store().title()),
-                tr!("Its address and API key are forgotten. Apps and themes installed from it stay."),
+                tr!("Its address is forgotten. Apps and themes installed from it stay."),
             ),
             Removal::Addon(i) => {
                 let Some(addon) = self.addons.installed.get(i) else { return };
                 (tr!("Uninstall \"{name}\"?", name = addon.name), tr!("Its files are deleted. Its saved data is kept for a reinstall."))
+            }
+            Removal::AddonPack(i) => {
+                let Some(pack) = crate::appstore::addon_packs().get(i).cloned() else { return };
+                (tr!("Delete pack \"{name}\"?", name = pack.file), tr!("The .zip is deleted. An addon installed from it stays installed."))
             }
             Removal::Profile => (
                 tr!("Reset profile \"{name}\"?", name = profiles::active()),
@@ -379,7 +381,7 @@ impl App {
 
         let mut choice = None;
         let action = match what {
-            Removal::Theme => tr!("Delete"),
+            Removal::Theme | Removal::AddonPack(_) => tr!("Delete"),
             Removal::AppStore => tr!("Remove"),
             Removal::Addon(_) => tr!("Uninstall"),
             Removal::Profile | Removal::Everything => tr!("Reset"),
@@ -422,11 +424,7 @@ impl App {
             PromptKind::ProfileNew => (tr!("New profile name"), Some(tr!("YASAFF restarts into the new, empty profile."))),
             PromptKind::AppStoreUrl => (
                 tr!("YASAFF Store address"),
-                Some(tr!("Paste the address shown on the store's API keys page. Just the site address works too.")),
-            ),
-            PromptKind::AppStoreKey => (
-                tr!("YASAFF Store API key"),
-                Some(tr!("Paste a key from the store's API keys page. Save it empty to disconnect.")),
+                Some(tr!("Paste the store's site address, e.g. https://store.example.com. Save it empty to disconnect.")),
             ),
             PromptKind::CrtSize(row) => (
                 if *row == SettingRow::CrtWidth { tr!("Screen width (px)") } else { tr!("Screen height (px)") },
@@ -604,6 +602,7 @@ impl App {
                         }
                         self.mode = self.addon_manager_after_uninstall(i, yes);
                     }
+                    Removal::AddonPack(i) => self.delete_addon_pack(i, yes),
                     Removal::StaticOrder => {
                         self.mode = self.settings_at(SettingRow::OrderStatic);
                         if yes {
@@ -627,6 +626,7 @@ impl App {
                     Removal::Theme => self.settings_at(SettingRow::ThemeDelete),
                     Removal::AppStore => self.settings_at(SettingRow::AppStoreRemove),
                     Removal::Addon(i) => self.addon_manager_after_uninstall(i, false),
+                    Removal::AddonPack(i) => return self.delete_addon_pack(i, false),
                     Removal::Profile => self.settings_at(SettingRow::ProfileReset),
                     Removal::Everything => self.settings_at(SettingRow::AppReset),
                     Removal::StaticOrder => self.settings_at(SettingRow::OrderStatic),

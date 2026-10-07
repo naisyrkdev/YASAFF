@@ -8,6 +8,7 @@ pub(super) enum Pick {
     File,
     Files,
     Folder,
+    Folders,
     Save,
 }
 
@@ -33,6 +34,7 @@ impl App {
                 Pick::File => dialog.pick_file().into_iter().collect(),
                 Pick::Files => dialog.pick_files().unwrap_or_default(),
                 Pick::Folder => dialog.pick_folder().into_iter().collect(),
+                Pick::Folders => dialog.pick_folders().unwrap_or_default(),
                 Pick::Save => dialog.save_file().into_iter().collect(),
             };
             let _ = tx.send(picked);

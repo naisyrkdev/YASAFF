@@ -13,11 +13,22 @@ pub(super) fn paint_checkbox(painter: &Painter, rect: Rect, checked: bool, s: f3
 }
 
 pub(super) fn side_panel(ui: &Ui, screen: Rect, s: f32, title: &str, rows: &[(&str, Option<&str>)], cursor: &mut usize) -> Option<usize> {
-    let panel = Rect::from_min_max(pos2(screen.right() - 520.0 * s, screen.top()), screen.max);
     let painter = ui.painter();
+    let text_w = |text: &str, size: f32| painter.layout_no_wrap(text.to_owned(), FontId::proportional(size * s), Color32::WHITE).size().x;
+    // Grow past the default width so labels fit, but never cover more than 60% of the screen;
+    // anything still too long is shrunk to fit below.
+    let needed = rows
+        .iter()
+        .flat_map(|(label, sub)| [text_w(label, 24.0), sub.map_or(0.0, |sub| text_w(sub, 16.0))])
+        .fold(text_w(title, 30.0), f32::max)
+        + 80.0 * s;
+    let width = needed.clamp(520.0 * s, (screen.width() * 0.6).max(520.0 * s));
+    let panel = Rect::from_min_max(pos2(screen.right() - width, screen.top()), screen.max);
+    let max_text = width - 80.0 * s;
+    let fit = |text: &str, size: f32| FontId::proportional(size * s * (max_text / text_w(text, size)).min(1.0));
     painter.rect_filled(screen, 0, Color32::from_black_alpha(80));
     painter.rect_filled(panel, 0, Color32::from_rgba_unmultiplied(10, 16, 32, 240));
-    painter.text(pos2(panel.left() + 40.0 * s, panel.top() + 110.0 * s), Align2::LEFT_TOP, title, FontId::proportional(30.0 * s), Color32::WHITE);
+    painter.text(pos2(panel.left() + 40.0 * s, panel.top() + 110.0 * s), Align2::LEFT_TOP, title, fit(title, 30.0), Color32::WHITE);
 
     let row_h = if rows.iter().any(|(_, sub)| sub.is_some()) { 84.0 } else { 60.0 } * s;
     let mut clicked = None;
@@ -39,11 +50,11 @@ pub(super) fn side_panel(ui: &Ui, screen: Rect, s: f32, title: &str, rows: &[(&s
         let x = row.left() + 40.0 * s;
         match sub {
             Some(sub) => {
-                painter.text(pos2(x, row.center().y - 4.0 * s), Align2::LEFT_BOTTOM, *label, FontId::proportional(24.0 * s), color);
-                painter.text(pos2(x, row.center().y + 4.0 * s), Align2::LEFT_TOP, *sub, FontId::proportional(16.0 * s), Color32::from_gray(140));
+                painter.text(pos2(x, row.center().y - 4.0 * s), Align2::LEFT_BOTTOM, *label, fit(label, 24.0), color);
+                painter.text(pos2(x, row.center().y + 4.0 * s), Align2::LEFT_TOP, *sub, fit(sub, 16.0), Color32::from_gray(140));
             }
             None => {
-                painter.text(pos2(x, row.center().y), Align2::LEFT_CENTER, *label, FontId::proportional(24.0 * s), color);
+                painter.text(pos2(x, row.center().y), Align2::LEFT_CENTER, *label, fit(label, 24.0), color);
             }
         }
     }

@@ -7,6 +7,8 @@ pub(super) struct RunningGame {
     pub(super) game_id: String,
     pub(super) name: String,
     pub(super) watch: GameWatch,
+    /// The USB stick, SD card or disc the game was started from.
+    pub(super) device: Option<Volume>,
 }
 
 impl App {
@@ -53,6 +55,7 @@ impl App {
         if !game.watch.tracked() {
             return;
         }
+        self.after_game_closed(&game.game_id, game.device);
         if matches!(self.mode, Mode::Launching(_)) {
             self.mode = Mode::Home;
         }
@@ -107,6 +110,7 @@ impl App {
     }
 
     pub(super) fn launch_selected(&mut self) {
+        let device = self.launch_volume.take();
         let Some(game) = self.selected_game() else { return };
         if game.app_id.is_some() {
             return self.launch_app();
@@ -120,7 +124,7 @@ impl App {
                 self.selected = self.library.mark_played(self.selected, self.settings.order.moves_played());
                 self.save();
                 let watch = GameWatch::start(self.ctx.clone(), pid);
-                self.set_running_game(RunningGame { game_id, name: name.clone(), watch: watch.clone() });
+                self.set_running_game(RunningGame { game_id, name: name.clone(), watch: watch.clone(), device });
                 self.focus_guard_until = None;
                 self.mode = Mode::Launching(Launching { name, font, cover, via, store_app: false, started: Instant::now(), watch });
             }

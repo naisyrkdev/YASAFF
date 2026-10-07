@@ -54,7 +54,7 @@ enum ThemeState {
 enum Connection {
     Unknown,
     Checking,
-    Ok { store: String, user: String },
+    Ok { store: String },
     Failed(String),
 }
 
@@ -188,7 +188,7 @@ impl App {
                 self.store.connection = Connection::Checking;
                 self.store.client.check(endpoint);
             }
-            None => self.notify(tr!("Set the store address and an API key first")),
+            None => self.notify(tr!("Set the store address first")),
         }
     }
 
@@ -212,10 +212,10 @@ impl App {
     pub(super) fn poll_store(&mut self) {
         for event in self.store.client.poll() {
             match event {
-                Event::Checked(Ok((store, user))) => {
-                    self.notify(tr!("Connected to {store} as {user}", store = store.name, user = user));
+                Event::Checked(Ok((store, _))) => {
+                    self.notify(tr!("Connected to {store}", store = store.name));
                     self.remember_store_name(&store.name);
-                    self.store.connection = Connection::Ok { store: store.name, user };
+                    self.store.connection = Connection::Ok { store: store.name };
                 }
                 Event::Checked(Err(e)) => {
                     self.notify(tr!("Store: {error}", error = e));
@@ -306,13 +306,18 @@ impl App {
     }
 
     pub(super) fn import_app_file(&mut self) {
+        let dir = appstore::app_packs_dir();
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            log::warn!("creating {}: {e}", dir.display());
+        }
         let dialog = rfd::FileDialog::new()
             .set_title(tr!("Select a YASAFF app package (.zip with yasaffConfig.json)"))
-            .add_filter(tr!("YASAFF app package"), &["zip"]);
+            .add_filter(tr!("YASAFF app package"), &["zip"])
+            .set_directory(&dir);
         self.ask_path(dialog, super::Pick::File, Self::import_app_zip);
     }
 
-    fn import_app_zip(&mut self, zip: PathBuf) {
+    pub(super) fn import_app_zip(&mut self, zip: PathBuf) {
         let busy = self.running.iter().filter_map(|r| self.library.games.iter().find(|g| g.id == r.game_id)?.app_id.clone()).collect();
         self.notify(tr!("Importing {file}…", file = zip.file_name().unwrap_or_default().to_string_lossy()));
         self.store.client.import_file(zip, busy);
@@ -413,7 +418,16 @@ impl App {
         game.app_id = Some(id.clone());
         game.save_dir = Some(appstore::app_data_dir(&id));
         (game.target, game.args) = (target, run.args);
-        let assets = [(AssetKind::Cover, manifest.icon.as_ref()), (AssetKind::Background, manifest.background.as_ref())];
+        let shape_covers = manifest.artwork.shape_covers(manifest.icon.as_ref());
+        if !shape_covers.is_empty() && !self.library.games[i].has_cover() {
+            let covers: Vec<_> = shape_covers.iter().map(|(shape, file)| (*shape, dir.join(file))).collect();
+            let style = self.theme().settings.tile_style;
+            if let Err(e) = self.library.set_shape_covers(i, style, &covers) {
+                log::warn!("{id}: {e:#}");
+            }
+        }
+        let icon = manifest.icon.as_ref().filter(|_| shape_covers.is_empty());
+        let assets = [(AssetKind::Cover, icon), (AssetKind::Background, manifest.background.as_ref())];
         for (kind, file) in assets.into_iter().chain(manifest.artwork.assets()) {
             if let Some(file) = file
                 && self.library.games[i].asset(kind).is_none()
@@ -666,17 +680,8 @@ impl App {
             _ if self.store_endpoint().is_none() => (tr!("Not set up").to_owned(), gray),
             Connection::Unknown => (tr!("Not tested").to_owned(), gray),
             Connection::Checking => (tr!("Connecting…").to_owned(), gray),
-            Connection::Ok { store, user } => (tr!("Connected to {store} as {user}", store = store, user = user), PAD_A),
+            Connection::Ok { store } => (tr!("Connected to {store}", store = store), PAD_A),
             Connection::Failed(e) => (e.clone(), PAD_B),
-        }
-    }
-
-    pub(super) fn masked_api_key(&self) -> String {
-        let key = self.settings.app_store().api_key.trim();
-        match key.char_indices().nth(8) {
-            _ if key.is_empty() => tr!("Not set").to_owned(),
-            Some((i, _)) => format!("{}…", &key[..i]),
-            None => tr!("Set").to_owned(),
         }
     }
 
@@ -777,7 +782,7 @@ impl App {
         if self.store_endpoint().is_none() {
             center_text(
                 tr!("Connect a store"),
-                tr!("Settings → YASAFF Store: paste the store's address and an API key from its API keys page. Press A to open it."),
+                tr!("Settings → YASAFF Store: paste the store's address. Press A to open it."),
                 Color32::WHITE,
             );
             return;
@@ -790,7 +795,7 @@ impl App {
             Listing::Failed(e) if count == 0 => {
                 center_text(
                     tr!("Could not load the store"),
-                    &tr!("{error}\n\nY to try again · Settings → YASAFF Store to change the address or key", error = e),
+                    &tr!("{error}\n\nY to try again · Settings → YASAFF Store to change the address", error = e),
                     PAD_B,
                 );
                 return;

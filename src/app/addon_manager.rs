@@ -1,15 +1,19 @@
 //! The Addons Manager: a window opened from Settings → Addons. Its first page offers the
-//! installed addons and importing a new one; the installed list leads to one addon's page
-//! with its options (bar placement, replaceable images, uninstall).
+//! installed addons and installing one; the installed list leads to one addon's page
+//! with its options (bar placement, replaceable images, uninstall). Installing lists the packs
+//! (.zip) kept in `addons_installation_packs` and imports new ones into that folder.
 
 use super::*;
-use crate::appstore::{self, Manifest};
+use crate::appstore::{self, AddonPack, Manifest};
 use crate::settings::AddonSettings;
 
 #[derive(Clone, PartialEq)]
 pub(super) enum AddonView {
     Menu,
     Installed,
+    Packs,
+    /// By file name, like `Addon`.
+    Pack(String),
     /// By id, so the page survives the list being re-sorted by an install.
     Addon(String),
     /// Moving a widget placed anywhere on screen; `from` is its position and size before, for Back.
@@ -23,20 +27,31 @@ const SIZE_STEP: i32 = 10;
 pub(super) struct AddonManager {
     pub(super) view: AddonView,
     pub(super) cursor: usize,
+    /// The packs folder, read when a page opens rather than every frame.
+    packs: Vec<AddonPack>,
 }
 
 impl AddonManager {
     pub(super) fn open(view: AddonView, cursor: usize) -> Mode {
-        Mode::AddonManager(AddonManager { view, cursor })
+        Mode::AddonManager(AddonManager { view, cursor, packs: appstore::addon_packs() })
     }
+}
+
+fn pack_size(pack: &AddonPack) -> String {
+    tr!("{size} MB", size = format!("{:.1}", pack.size as f64 / 1_000_000.0))
 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum AddonRow {
     Installed,
-    Import,
+    Install,
     Addon(usize),
     NoAddons,
+    /// Index into `AddonManager::packs`.
+    Pack(usize),
+    ImportPack,
+    InstallPack,
+    DeletePack,
     Place,
     Size,
     Position,
@@ -53,9 +68,24 @@ impl App {
         self.addons.installed.iter().enumerate().find(|(_, m)| &m.id == id)
     }
 
+    fn addon_packs(&self) -> &[AddonPack] {
+        match &self.mode {
+            Mode::AddonManager(manager) => &manager.packs,
+            _ => &[],
+        }
+    }
+
+    /// The pack a page is about, with its index in the packs folder.
+    fn managed_pack(&self, view: &AddonView) -> Option<(usize, &AddonPack)> {
+        let AddonView::Pack(file) = view else { return None };
+        self.addon_packs().iter().enumerate().find(|(_, p)| &p.file == file)
+    }
+
     fn addon_rows(&self, view: &AddonView) -> Vec<AddonRow> {
         match view {
-            AddonView::Menu => vec![AddonRow::Installed, AddonRow::Import],
+            AddonView::Menu => vec![AddonRow::Installed, AddonRow::Install],
+            AddonView::Packs => (0..self.addon_packs().len()).map(AddonRow::Pack).chain([AddonRow::ImportPack]).collect(),
+            AddonView::Pack(_) => vec![AddonRow::InstallPack, AddonRow::DeletePack],
             AddonView::Installed if self.addons.installed.is_empty() => vec![AddonRow::NoAddons],
             AddonView::Installed => (0..self.addons.installed.len()).map(AddonRow::Addon).collect(),
             AddonView::Move { .. } => vec![],
@@ -86,15 +116,34 @@ impl App {
                 tr!("Place them in a bar, change their images or uninstall them").into(),
                 RowValue::Summary(tr!("{count} installed", count = self.addons.installed.len())),
             ),
-            AddonRow::Import => (
-                tr!("Import addon from file…").into(),
-                tr!("A .zip with yasaffConfig.json; Discover's Addons tab has more").into(),
-                RowValue::Action(tr!("Choose…")),
+            AddonRow::Install => (
+                tr!("Install addon…").into(),
+                tr!("From a pack in addons_installation_packs; Discover's Addons tab has more").into(),
+                RowValue::Summary(tr_n!(self.addon_packs().len(), "{n} pack", "{n} packs")),
             ),
             AddonRow::NoAddons => (
                 tr!("No addons installed").into(),
-                tr!("Import one from a file or get one from Discover's Addons tab").into(),
-                RowValue::Action(tr!("Import…")),
+                tr!("Install one from a pack or get one from Discover's Addons tab").into(),
+                RowValue::Action(tr!("Install…")),
+            ),
+            AddonRow::Pack(i) => {
+                let Some(pack) = self.addon_packs().get(i) else { return (String::new(), String::new(), RowValue::Summary(String::new())) };
+                (pack.file.clone(), tr!("Install it or delete the pack").into(), RowValue::Summary(pack_size(pack)))
+            }
+            AddonRow::ImportPack => (
+                tr!("Import new pack…").into(),
+                tr!("Copies a .zip with yasaffConfig.json into this folder and installs it").into(),
+                RowValue::Action(tr!("Choose…")),
+            ),
+            AddonRow::InstallPack => (
+                tr!("Install").into(),
+                tr!("Installs the addon, or replaces the installed version with this one").into(),
+                RowValue::Action(tr!("Install")),
+            ),
+            AddonRow::DeletePack => (
+                tr!("Delete pack").into(),
+                tr!("Deletes the .zip; an addon installed from it stays").into(),
+                RowValue::Action(tr!("Delete…")),
             ),
             AddonRow::Addon(i) => {
                 let Some(m) = self.addons.installed.get(i) else { return (String::new(), String::new(), RowValue::Summary(String::new())) };
@@ -149,9 +198,26 @@ impl App {
     fn activate_addon_row(&mut self, row: AddonRow) {
         let Mode::AddonManager(manager) = &self.mode else { return };
         let index = self.managed_addon(&manager.view).map(|(i, _)| i);
+        let pack = self.managed_pack(&manager.view).map(|(i, p)| (i, p.clone()));
         match (row, index) {
             (AddonRow::Installed, _) => self.mode = AddonManager::open(AddonView::Installed, 0),
-            (AddonRow::Import | AddonRow::NoAddons, _) => self.import_app_file(),
+            (AddonRow::Install | AddonRow::NoAddons, _) => self.mode = AddonManager::open(AddonView::Packs, 0),
+            (AddonRow::Pack(i), _) => {
+                if let Some(p) = self.addon_packs().get(i) {
+                    self.mode = AddonManager::open(AddonView::Pack(p.file.clone()), 0);
+                }
+            }
+            (AddonRow::ImportPack, _) => self.import_addon_pack(),
+            (AddonRow::InstallPack, _) => {
+                if let Some((_, p)) = pack {
+                    self.import_app_zip(p.path());
+                }
+            }
+            (AddonRow::DeletePack, _) => {
+                if let Some((i, _)) = pack {
+                    self.mode = Mode::ConfirmRemove { what: Removal::AddonPack(i), yes: false };
+                }
+            }
             (AddonRow::Addon(i), _) => {
                 if let Some(m) = self.addons.installed.get(i) {
                     self.mode = AddonManager::open(AddonView::Addon(m.id.clone()), 0);
@@ -237,8 +303,60 @@ impl App {
                 AddonManager::open(AddonView::Installed, at)
             }
             AddonView::Installed => AddonManager::open(AddonView::Menu, 0),
+            AddonView::Pack(_) => {
+                let at = self.managed_pack(&manager.view).map_or(0, |(i, _)| i);
+                AddonManager::open(AddonView::Packs, at)
+            }
+            AddonView::Packs => AddonManager::open(AddonView::Menu, 1),
             AddonView::Menu => self.settings_at(SettingRow::AddonManager),
         };
+    }
+
+    /// Opens the file dialog in the packs folder; the chosen .zip is copied there and installed.
+    fn import_addon_pack(&mut self) {
+        let dir = appstore::addon_packs_dir();
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            log::warn!("creating {}: {e}", dir.display());
+        }
+        let dialog = rfd::FileDialog::new()
+            .set_title(tr!("Select an addon pack (.zip with yasaffConfig.json)"))
+            .add_filter(tr!("Addon pack"), &["zip"])
+            .set_directory(&dir);
+        self.ask_path(dialog, Pick::File, Self::import_addon_pack_file);
+    }
+
+    fn import_addon_pack_file(&mut self, zip: PathBuf) {
+        match appstore::store_addon_pack(&zip) {
+            Ok(path) => {
+                if matches!(self.mode, Mode::AddonManager(_)) {
+                    let file = path.file_name().unwrap_or_default().to_string_lossy();
+                    let at = appstore::addon_packs().iter().position(|p| p.file == file).unwrap_or(0);
+                    self.mode = AddonManager::open(AddonView::Packs, at);
+                }
+                self.import_app_zip(path);
+            }
+            Err(e) => {
+                let name = zip.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                self.notify(tr!("Could not import {name}: {error}", name = name, error = format!("{e:#}")));
+            }
+        }
+    }
+
+    /// Answers the delete dialog for pack `i` of the folder, then goes back to where it was asked.
+    pub(super) fn delete_addon_pack(&mut self, i: usize, yes: bool) {
+        let Some(pack) = appstore::addon_packs().get(i).cloned() else {
+            self.mode = AddonManager::open(AddonView::Packs, 0);
+            return;
+        };
+        if !yes {
+            self.mode = AddonManager::open(AddonView::Pack(pack.file), 1);
+            return;
+        }
+        match appstore::delete_addon_pack(&pack.file) {
+            Ok(()) => self.notify(tr!("Deleted {name}", name = pack.file)),
+            Err(e) => self.notify(tr!("Could not delete {name}: {error}", name = pack.file, error = format!("{e:#}"))),
+        }
+        self.mode = AddonManager::open(AddonView::Packs, i);
     }
 
     /// Where the cursor goes back to after the uninstall dialog for addon `i`.
@@ -257,6 +375,8 @@ impl App {
         let Mode::AddonManager(manager) = &self.mode else { return };
         if matches!(manager.view, AddonView::Addon(_) | AddonView::Move { .. }) && self.managed_addon(&manager.view).is_none() {
             self.mode = AddonManager::open(AddonView::Installed, 0);
+        } else if matches!(manager.view, AddonView::Pack(_)) && self.managed_pack(&manager.view).is_none() {
+            self.mode = AddonManager::open(AddonView::Packs, 0);
         }
         if let Mode::AddonManager(AddonManager { view: AddonView::Move { .. }, .. }) = &self.mode {
             return self.handle_addon_move(action);
@@ -272,10 +392,12 @@ impl App {
                 }
             }
             Action::Confirm => self.activate_addon_row(rows[cursor]),
-            Action::Right if matches!(rows[cursor], AddonRow::Installed | AddonRow::Addon(_)) => self.activate_addon_row(rows[cursor]),
+            Action::Right if matches!(rows[cursor], AddonRow::Installed | AddonRow::Install | AddonRow::Addon(_) | AddonRow::Pack(_)) => {
+                self.activate_addon_row(rows[cursor])
+            }
             Action::Right | Action::Left if rows[cursor] == AddonRow::Position => {}
             Action::Left | Action::Right => self.adjust_addon_row(rows[cursor], if action == Action::Left { -1 } else { 1 }),
-            Action::Add => self.import_app_file(),
+            Action::Add => self.import_addon_pack(),
             Action::Back => self.addon_manager_back(),
             Action::Options => self.mode = self.settings_at(SettingRow::AddonManager),
             _ => {}
@@ -302,6 +424,11 @@ impl App {
         let (crumb, note) = match (&view, addon) {
             (AddonView::Menu, _) => (None, tr!("{count} installed", count = self.addons.installed.len())),
             (AddonView::Installed, _) => (Some(tr!("Installed addons").to_owned()), tr!("Choose an addon to see its options").to_owned()),
+            (AddonView::Packs, _) => (Some(tr!("Addon packs").to_owned()), appstore::addon_packs_dir().display().to_string()),
+            (AddonView::Pack(file), _) => {
+                let size = self.managed_pack(&view).map(|(_, p)| pack_size(p)).unwrap_or_default();
+                (Some(format!("{} › {file}", tr!("Addon packs"))), size)
+            }
             (AddonView::Addon(_), Some(m)) => {
                 let by = m.author.as_ref().map(|a| tr!("by {author}", author = a)).unwrap_or_default();
                 (Some(format!("{} › {}", tr!("Installed addons"), m.name)), [m.version.as_str(), by.as_str()].iter().filter(|t| !t.is_empty()).copied().collect::<Vec<_>>().join(" · "))
@@ -344,7 +471,7 @@ impl App {
                 text_x += side + 16.0 * s;
             }
             let (label, sub, value) = self.addon_row_content(row, addon);
-            let label_color = if row == AddonRow::Uninstall && active { PAD_B } else { Color32::WHITE };
+            let label_color = if matches!(row, AddonRow::Uninstall | AddonRow::DeletePack) && active { PAD_B } else { Color32::WHITE };
             let right = r.right() - 24.0 * s;
             let font = FontId::proportional(17.0 * s);
             let mut arrows = None;

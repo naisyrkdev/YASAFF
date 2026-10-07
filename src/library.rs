@@ -1,7 +1,8 @@
 
 use crate::apps::AppEntry;
+use crate::device_saves::DeviceSaves;
 use crate::object3d::ModelUp;
-use crate::theme::{BoxOverrides, TileStyle};
+use crate::theme::{BoxOverrides, CoverShape, TileStyle};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -41,21 +42,28 @@ pub struct Game {
     /// The slot this game always takes in the row and grid views, whatever else moves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fixed_slot: Option<usize>,
+    /// Keeping the saves on the USB stick or SD card the game is started from.
+    #[serde(default, skip_serializing_if = "DeviceSaves::is_default")]
+    pub device_saves: DeviceSaves,
 }
 
-/// Cover placements per tile style. The active one lives in `Assets::placements` (what painting
-/// reads); this keeps a copy for every style the cover was shown in, keyed by the style it belongs to.
+/// Cover placements per tile style, and cover images per `CoverShape`. The active ones live in
+/// `Assets` (what painting reads); this keeps a placement for every style the cover was shown in,
+/// and the image of every other shape that has one of its own.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct CoverShapes {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     current: Option<TileStyle>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     saved: BTreeMap<TileStyle, CoverPlacement>,
+    /// Never holds the shape of `current`: its image is the `Cover` asset.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    images: BTreeMap<CoverShape, PathBuf>,
 }
 
 impl CoverShapes {
     fn is_empty(&self) -> bool {
-        self.current.is_none() && self.saved.is_empty()
+        self.current.is_none() && self.saved.is_empty() && self.images.is_empty()
     }
 }
 
@@ -70,6 +78,11 @@ impl Game {
         ids::from_command(&self.target, &self.args)
     }
 
+    /// Whether the game has a cover image, for any tile shape.
+    pub fn has_cover(&self) -> bool {
+        self.asset(AssetKind::Cover).is_some() || !self.cover_shapes.images.is_empty()
+    }
+
     pub fn asset(&self, kind: AssetKind) -> Option<&Path> {
         self.assets.paths.get(&kind).map(PathBuf::as_path)
     }
@@ -82,20 +95,29 @@ impl Game {
         self.assets.placements.entry(kind.placement_key()).or_default()
     }
 
-    /// Makes the cover placement the one kept for `style`. The placement of the style shown before
-    /// is stored first; a style seen for the first time starts as a copy of it. Returns whether
-    /// anything changed.
+    /// Makes the cover image and placement the ones kept for `style`. The placement of the style
+    /// shown before is stored first; a style seen for the first time starts as a copy of it, unless
+    /// its shape brings a different image. Returns whether anything changed.
     pub fn use_cover_shape(&mut self, style: TileStyle) -> bool {
         let shapes = &mut self.cover_shapes;
         if shapes.current == Some(style) {
             return false;
         }
-        let active = self.assets.placements.get(&AssetKind::Cover).copied().unwrap_or_default();
+        let mut active = self.assets.placements.get(&AssetKind::Cover).copied().unwrap_or_default();
         if shapes.is_empty() && active.is_default() {
             return false;
         }
         if let Some(previous) = shapes.current {
             shapes.saved.insert(previous, active);
+            let (from, to) = (previous.cover_shape(), style.cover_shape());
+            if from != to
+                && let Some(image) = shapes.images.remove(&to)
+            {
+                if let Some(shown) = self.assets.paths.insert(AssetKind::Cover, image) {
+                    shapes.images.insert(from, shown);
+                }
+                active = CoverPlacement::default();
+            }
         }
         let next = *shapes.saved.entry(style).or_insert(active);
         shapes.current = Some(style);
@@ -407,6 +429,7 @@ impl Library {
             bubble_place: None,
             cover_shapes: CoverShapes::default(),
             fixed_slot: None,
+            device_saves: DeviceSaves::default(),
         });
         self.arrange();
         self.games.iter().position(|g| g.id == id).unwrap()
@@ -425,35 +448,69 @@ impl Library {
     }
 
     pub fn set_asset(&mut self, index: usize, kind: AssetKind, src: &Path) -> Result<()> {
-        let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("png").to_lowercase();
-        let dest = self.new_asset_path(index, kind, &ext)?;
-        fs::copy(src, &dest).with_context(|| format!("copying {}", src.display()))?;
+        let dest = self.copy_asset(index, kind.slug(), src)?;
         self.replace_asset(index, kind, dest);
         Ok(())
     }
 
+    /// Gives the game a cover image for each listed shape, `style` being the tile style shown
+    /// now: its shape's image becomes the cover, the others are kept until their shape is shown.
+    pub fn set_shape_covers(&mut self, index: usize, style: TileStyle, covers: &[(CoverShape, PathBuf)]) -> Result<()> {
+        let shown = style.cover_shape();
+        if let Some((_, src)) = covers.iter().find(|(shape, _)| *shape == shown) {
+            self.set_asset(index, AssetKind::Cover, src)?;
+        }
+        for (shape, src) in covers.iter().filter(|(shape, _)| *shape != shown) {
+            let dest = self.copy_asset(index, &format!("cover-{}", shape.slug()), src)?;
+            if let Some(old) = self.games[index].cover_shapes.images.insert(*shape, dest) {
+                remove_if_owned(&self.assets_dir(), &old);
+            }
+        }
+        let shapes = &mut self.games[index].cover_shapes;
+        if shapes.current != Some(style) {
+            shapes.saved.clear();
+            shapes.current = Some(style);
+        }
+        Ok(())
+    }
+
+    fn copy_asset(&self, index: usize, slug: &str, src: &Path) -> Result<PathBuf> {
+        let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("png").to_lowercase();
+        let dest = self.new_asset_path(index, slug, &ext)?;
+        fs::copy(src, &dest).with_context(|| format!("copying {}", src.display()))?;
+        Ok(dest)
+    }
+
     pub fn set_model(&mut self, index: usize, src: &Path) -> Result<()> {
         let mesh = crate::object3d::import(src).with_context(|| format!("reading {}", src.display()))?;
-        let dest = self.new_asset_path(index, AssetKind::Model, "ply")?;
+        let dest = self.new_asset_path(index, AssetKind::Model.slug(), "ply")?;
         crate::object3d::formats::write_ply(&mesh, &dest)?;
         self.replace_asset(index, AssetKind::Model, dest);
         Ok(())
     }
 
-    fn new_asset_path(&self, index: usize, kind: AssetKind, ext: &str) -> Result<PathBuf> {
+    fn new_asset_path(&self, index: usize, slug: &str, ext: &str) -> Result<PathBuf> {
         let assets = self.assets_dir();
         fs::create_dir_all(&assets)?;
         let millis = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
-        Ok(assets.join(format!("{}-{}-{millis}.{ext}", self.games[index].id, kind.slug())))
+        // A file set within the same millisecond must not overwrite (and then delete) the one it replaces.
+        let path = |n: u128| assets.join(format!("{}-{slug}-{n}.{ext}", self.games[index].id));
+        Ok((millis..).map(path).find(|p| !p.exists()).unwrap())
     }
 
     fn replace_asset(&mut self, index: usize, kind: AssetKind, dest: PathBuf) {
         let assets = self.assets_dir();
         let game = &mut self.games[index];
         if kind == AssetKind::Cover {
-            // A new image starts centered, and the crops made for the old one are dropped.
+            // A new image starts centered, and the crops made for the old one are dropped. Shapes
+            // with an image of their own keep it and their crops.
             game.assets.placements.remove(&AssetKind::Cover);
-            game.cover_shapes = CoverShapes::default();
+            let CoverShapes { saved, images, .. } = &mut game.cover_shapes;
+            if images.is_empty() {
+                game.cover_shapes = CoverShapes::default();
+            } else {
+                saved.retain(|style, _| images.contains_key(&style.cover_shape()));
+            }
         }
         if let Some(old) = game.assets.paths.insert(kind, dest) {
             remove_if_owned(&assets, &old);
@@ -470,7 +527,7 @@ impl Library {
     pub fn remove(&mut self, index: usize) {
         let assets = self.assets_dir();
         let game = self.games.remove(index);
-        for (_, path) in game.assets.paths() {
+        for path in game.assets.paths().map(|(_, p)| p).chain(game.cover_shapes.images.values().map(PathBuf::as_path)) {
             remove_if_owned(&assets, path);
         }
         self.arrange();
@@ -530,6 +587,49 @@ mod tests {
         let mut reloaded: Game = serde_json::from_str(&json).unwrap();
         reloaded.use_cover_shape(TileStyle::Flat);
         assert_eq!(reloaded.placement(AssetKind::Cover), square);
+    }
+
+    #[test]
+    fn each_cover_shape_keeps_its_own_image() {
+        let root = std::env::temp_dir().join(format!("yasaff-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let file = |name: &str| {
+            let path = root.join(name);
+            fs::write(&path, name).unwrap();
+            path
+        };
+        let (square, tall, picked) = (file("square.png"), file("tall.png"), file("picked.png"));
+        let mut lib = library(&["g"]);
+        lib.data_dir = root.join("data");
+        let shown = |lib: &Library| fs::read_to_string(lib.games[0].asset(AssetKind::Cover).unwrap()).unwrap();
+
+        lib.set_shape_covers(0, TileStyle::Flat, &[(CoverShape::Square, square), (CoverShape::Tall, tall)]).unwrap();
+        assert_eq!(shown(&lib), "square.png", "the shape shown when importing gets its image");
+        assert!(!lib.games[0].use_cover_shape(TileStyle::Flat));
+        assert!(lib.games[0].use_cover_shape(TileStyle::Cover));
+        assert_eq!(shown(&lib), "tall.png");
+        lib.games[0].use_cover_shape(TileStyle::Model);
+        assert_eq!(shown(&lib), "tall.png", "boxes share the tall image");
+        let crop = CoverPlacement { zoom: 2.0, x: 0.3, y: 0.5 };
+        *lib.games[0].placement_mut(AssetKind::Cover) = crop;
+
+        lib.games[0].use_cover_shape(TileStyle::Disc);
+        assert_eq!(shown(&lib), "square.png");
+        assert!(lib.games[0].placement(AssetKind::Cover).is_default(), "the tall crop doesn't carry over to the square image");
+        lib.set_asset(0, AssetKind::Cover, &picked).unwrap();
+        assert_eq!(shown(&lib), "picked.png");
+
+        let json = serde_json::to_string(&lib.games[0]).unwrap();
+        lib.games[0] = serde_json::from_str(&json).unwrap();
+        lib.games[0].use_cover_shape(TileStyle::Model);
+        assert_eq!(shown(&lib), "tall.png", "picking a square cover leaves the tall one alone");
+        assert_eq!(lib.games[0].placement(AssetKind::Cover), crop);
+        lib.games[0].use_cover_shape(TileStyle::Flat);
+        assert_eq!(shown(&lib), "picked.png", "and is kept for the square tiles");
+
+        lib.remove(0);
+        assert_eq!(fs::read_dir(root.join("data/assets")).unwrap().count(), 0, "removing the game deletes every shape's image");
+        fs::remove_dir_all(&root).unwrap();
     }
 
     fn library(names: &[&str]) -> Library {

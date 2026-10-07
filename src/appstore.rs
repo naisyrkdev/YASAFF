@@ -1,5 +1,6 @@
 
 use crate::library::{AssetKind, Library};
+use crate::theme::CoverShape;
 use anyhow::{Context as _, Result, bail, ensure};
 use egui::Context;
 use serde::{Deserialize, Serialize};
@@ -44,6 +45,10 @@ pub struct Manifest {
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Artwork {
+    /// Portrait cover for the game-cover tiles and the front of the boxes.
+    pub cover: Option<String>,
+    /// Cover for the square tiles.
+    pub square_cover: Option<String>,
     pub logo: Option<String>,
     pub booklet: Option<String>,
     pub spine: Option<String>,
@@ -65,8 +70,20 @@ impl Artwork {
         ]
     }
 
+    /// The cover image of each shape, when the package has one for at least one shape; a shape
+    /// without its own uses `icon`.
+    pub fn shape_covers<'a>(&'a self, icon: Option<&'a String>) -> Vec<(CoverShape, &'a String)> {
+        if self.cover.is_none() && self.square_cover.is_none() {
+            return Vec::new();
+        }
+        [(CoverShape::Square, self.square_cover.as_ref()), (CoverShape::Tall, self.cover.as_ref())]
+            .into_iter()
+            .filter_map(|(shape, file)| Some((shape, file.or(icon)?)))
+            .collect()
+    }
+
     fn paths(&self) -> impl Iterator<Item = &String> {
-        self.assets().into_iter().filter_map(|(_, p)| p).chain(&self.logo)
+        self.assets().into_iter().filter_map(|(_, p)| p).chain(&self.logo).chain(&self.cover).chain(&self.square_cover)
     }
 }
 
@@ -228,6 +245,71 @@ pub fn uninstall_addon(id: &str) -> Result<()> {
         fs::remove_dir_all(&dir).with_context(|| format!("deleting {}", dir.display()))?;
     }
     Ok(())
+}
+
+/// Where app packages (.zip) are kept to install from; importing an app starts there.
+pub fn app_packs_dir() -> PathBuf {
+    Library::data_dir().join("apps_installation_packs")
+}
+
+/// Where addon packages (.zip) are kept to install from; the Addons Manager lists them.
+pub fn addon_packs_dir() -> PathBuf {
+    Library::data_dir().join("addons_installation_packs")
+}
+
+/// A package in [`addon_packs_dir`].
+#[derive(Clone, PartialEq, Debug)]
+pub struct AddonPack {
+    pub file: String,
+    pub size: u64,
+}
+
+impl AddonPack {
+    pub fn path(&self) -> PathBuf {
+        addon_packs_dir().join(&self.file)
+    }
+}
+
+pub fn addon_packs() -> Vec<AddonPack> {
+    addon_packs_in(&addon_packs_dir())
+}
+
+fn addon_packs_in(dir: &Path) -> Vec<AddonPack> {
+    let mut packs: Vec<AddonPack> = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|ext| ext.eq_ignore_ascii_case("zip")))
+        .filter_map(|e| {
+            let meta = e.metadata().ok().filter(|m| m.is_file())?;
+            Some(AddonPack { file: e.file_name().into_string().ok()?, size: meta.len() })
+        })
+        .collect();
+    packs.sort_by_key(|p| p.file.to_lowercase());
+    packs
+}
+
+/// Copies `source` into [`addon_packs_dir`], replacing a pack of the same name, and returns its
+/// path there. A file already in the folder stays where it is.
+pub fn store_addon_pack(source: &Path) -> Result<PathBuf> {
+    store_addon_pack_in(&addon_packs_dir(), source)
+}
+
+fn store_addon_pack_in(dir: &Path, source: &Path) -> Result<PathBuf> {
+    fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    let name = source.file_name().context("no file name")?;
+    let dest = dir.join(name);
+    let same = |a: &Path, b: &Path| matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b);
+    if !same(source, &dest) {
+        fs::copy(source, &dest).with_context(|| format!("copying {}", source.display()))?;
+    }
+    Ok(dest)
+}
+
+pub fn delete_addon_pack(file: &str) -> Result<()> {
+    ensure!(Path::new(file).file_name().is_some_and(|n| n == file), "invalid pack name {file}");
+    let path = addon_packs_dir().join(file);
+    fs::remove_file(&path).with_context(|| format!("deleting {}", path.display()))
 }
 
 pub fn app_data_dir(id: &str) -> PathBuf {
@@ -688,7 +770,7 @@ fn get(agent: &ureq::Agent, endpoint: &Endpoint, url: &str) -> Result<ureq::http
     let mut request = agent.get(url);
     // The store hands out icon and package URLs that may live on another host (a CDN); the key
     // only ever goes back to the store itself.
-    if origin(url).is_some_and(|o| Some(o) == origin(&endpoint.base)) {
+    if !endpoint.key.is_empty() && origin(url).is_some_and(|o| Some(o) == origin(&endpoint.base)) {
         request = request.header(API_KEY_HEADER, &endpoint.key);
     }
     let response = request.call().map_err(|e| match e {
@@ -707,7 +789,7 @@ fn get(agent: &ureq::Agent, endpoint: &Endpoint, url: &str) -> Result<ureq::http
         .and_then(|v| v.get("error")?.as_str().map(str::to_owned));
     match (status.as_u16(), message) {
         (_, Some(m)) => bail!("{m}"),
-        (401 | 403, None) => bail!("the store refused the API key"),
+        (401 | 403, None) => bail!("the store refused access"),
         (404, None) => bail!("not found at {url}; check the store address"),
         (code, None) => bail!("the store answered HTTP {code}"),
     }
@@ -1012,6 +1094,29 @@ mod tests {
         let left: Vec<_> = fs::read_dir(&apps).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert_eq!(left, ["demo-app"]);
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn keeps_imported_packs_in_the_packs_folder() {
+        let root = std::env::temp_dir().join(format!("yasaff-packs-{}", uuid::Uuid::new_v4()));
+        let (outside, packs) = (root.join("downloads"), root.join("packs"));
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("Clock.zip"), "one").unwrap();
+        fs::write(outside.join("notes.txt"), "not a pack").unwrap();
+
+        let stored = store_addon_pack_in(&packs, &outside.join("Clock.zip")).unwrap();
+        assert_eq!(stored, packs.join("Clock.zip"));
+        assert!(outside.join("Clock.zip").is_file(), "the picked file is copied, not moved");
+        assert_eq!(store_addon_pack_in(&packs, &stored).unwrap(), stored, "a pack already in the folder stays");
+        fs::write(outside.join("Clock.zip"), "newer").unwrap();
+        store_addon_pack_in(&packs, &outside.join("Clock.zip")).unwrap();
+        assert_eq!(fs::read_to_string(&stored).unwrap(), "newer", "importing again replaces the pack");
+
+        fs::write(packs.join("about.txt"), "x").unwrap();
+        fs::write(packs.join("analog.ZIP"), "xy").unwrap();
+        let listed: Vec<_> = addon_packs_in(&packs).into_iter().map(|p| (p.file, p.size)).collect();
+        assert_eq!(listed, [("analog.ZIP".to_owned(), 2), ("Clock.zip".to_owned(), 5)]);
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
