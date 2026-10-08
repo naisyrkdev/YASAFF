@@ -87,7 +87,14 @@ impl App {
                 painter.rect_filled(r, (4.0 * s) as u8, Color32::from_white_alpha(22));
                 painter.rect_filled(Rect::from_min_size(r.min, vec2(5.0 * s, r.height())), 0, ACCENT);
             }
-            let x = r.left() + 30.0 * s;
+            let mut x = r.left() + 30.0 * s;
+            if let Some(image) = self.setting_row_image(row) {
+                let h = r.height() - 12.0 * s;
+                let thumb = Rect::from_min_size(pos2(x, r.center().y - h / 2.0), vec2(h * 1.5, h));
+                painter.rect_filled(thumb, (4.0 * s) as u8, Color32::from_white_alpha(12));
+                paint_image_contained(ui.ctx(), &painter, &image, thumb);
+                x = thumb.right() + 16.0 * s;
+            }
             if sub.is_empty() {
                 text_with_buttons(&painter, pos2(x, r.center().y), Align2::LEFT_CENTER, &label, FontId::proportional(21.0 * s), text_color, s, &skin);
             } else {

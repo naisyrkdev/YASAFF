@@ -237,6 +237,20 @@ impl OrderSettings {
     }
 }
 
+/// What happens to a game's images when new ones replace them.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct GallerySettings {
+    /// Replaced images stay in the game's gallery until removed by hand.
+    pub keep_all: bool,
+}
+
+impl Default for GallerySettings {
+    fn default() -> Self {
+        GallerySettings { keep_all: true }
+    }
+}
+
 impl Default for OrderSettings {
     fn default() -> Self {
         OrderSettings { last_played_first: true, static_order: false }
@@ -257,6 +271,7 @@ pub struct Settings {
     pub shortcuts: ShortcutSettings,
     pub fonts: FontSettings,
     pub order: OrderSettings,
+    pub gallery: GallerySettings,
     pub app_stores: Vec<AppStoreSettings>,
     pub active_app_store: usize,
     #[serde(skip_serializing_if = "Option::is_none")]

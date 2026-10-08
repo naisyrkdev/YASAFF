@@ -1097,7 +1097,7 @@ impl App {
         painter.text(pos2(x, y), Align2::LEFT_TOP, facts, FontId::proportional(17.0 * s), Color32::from_gray(160));
         y += 30.0 * s;
         if let Some(min) = app.min_height {
-            let text = tr!("Needs a bar at least {px} px high; a lower bar is raised", px = format!("{min:.0}"));
+            let text = tr!("Needs a bar at least {px} px high. A lower bar is raised", px = format!("{min:.0}"));
             painter.text(pos2(x, y), Align2::LEFT_TOP, text, FontId::proportional(17.0 * s), PAD_Y);
             y += 30.0 * s;
         }

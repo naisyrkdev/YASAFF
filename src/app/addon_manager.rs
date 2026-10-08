@@ -118,7 +118,7 @@ impl App {
             ),
             AddonRow::Install => (
                 tr!("Install addon…").into(),
-                tr!("From a pack in addons_installation_packs; Discover's Addons tab has more").into(),
+                tr!("From a pack in addons_installation_packs. Discover's Addons tab has more").into(),
                 RowValue::Summary(tr_n!(self.addon_packs().len(), "{n} pack", "{n} packs")),
             ),
             AddonRow::NoAddons => (
@@ -142,7 +142,7 @@ impl App {
             ),
             AddonRow::DeletePack => (
                 tr!("Delete pack").into(),
-                tr!("Deletes the .zip; an addon installed from it stays").into(),
+                tr!("Deletes the .zip. An addon installed from it stays").into(),
                 RowValue::Action(tr!("Delete…")),
             ),
             AddonRow::Addon(i) => {
@@ -156,7 +156,7 @@ impl App {
             AddonRow::Place => {
                 let Some(m) = addon else { return (String::new(), String::new(), RowValue::Summary(String::new())) };
                 let sub = match m.min_height() {
-                    Some(min) => tr!("Left/Right picks the bar; it needs one at least {px} px high", px = format!("{min:.0}")),
+                    Some(min) => tr!("Left/Right picks the bar. It needs one at least {px} px high", px = format!("{min:.0}")),
                     None => tr!("Left/Right picks the bar it shows in").into(),
                 };
                 (tr!("Shown in").into(), sub, RowValue::Choice(self.placement_label(&m.id).into()))
@@ -165,7 +165,7 @@ impl App {
                 let Some(m) = addon else { return (String::new(), String::new(), RowValue::Summary(String::new())) };
                 let size = self.settings.addons.get(&m.id).cloned().unwrap_or_default().size;
                 let sub = match AddonHost::placement(&self.settings, &m.id) {
-                    Some(Placement::Bar(_)) => tr!("Left/Right resizes it; a bigger widget makes its bar taller"),
+                    Some(Placement::Bar(_)) => tr!("Left/Right resizes it. A bigger widget makes its bar taller"),
                     _ => tr!("Left/Right resizes it"),
                 };
                 (tr!("Size").into(), sub.into(), RowValue::Choice(format!("{size} %")))
@@ -189,7 +189,7 @@ impl App {
             AddonRow::ResetImages => (tr!("Use built-in images").into(), tr!("Forgets the images you picked above").into(), RowValue::Action(tr!("Reset"))),
             AddonRow::Uninstall => (
                 tr!("Uninstall").into(),
-                tr!("Its files are deleted; its saved data is kept").into(),
+                tr!("Its files are deleted. Its saved data is kept").into(),
                 RowValue::Action(tr!("Uninstall…")),
             ),
         }

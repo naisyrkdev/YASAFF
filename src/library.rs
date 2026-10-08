@@ -36,9 +36,12 @@ pub struct Game {
     pub save_dir: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bubble_place: Option<String>,
-    /// The cover placement kept for each tile style, so every tile shape keeps its own crop.
+    /// The cover image and placement kept for each tile style.
     #[serde(default, skip_serializing_if = "CoverShapes::is_empty")]
     pub cover_shapes: CoverShapes,
+    /// Every image file the game keeps, used or not, so it can be picked again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gallery: Vec<PathBuf>,
     /// The slot this game always takes in the row and grid views, whatever else moves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fixed_slot: Option<usize>,
@@ -47,24 +50,50 @@ pub struct Game {
     pub device_saves: DeviceSaves,
 }
 
-/// Cover placements per tile style, and cover images per `CoverShape`. The active ones live in
-/// `Assets` (what painting reads); this keeps a placement for every style the cover was shown in,
-/// and the image of every other shape that has one of its own.
+/// The cover image and placement of every tile style. The shown style's live in `Assets` (what
+/// painting reads); this keeps them for the others, so each style has a cover of its own.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct CoverShapes {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     current: Option<TileStyle>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     saved: BTreeMap<TileStyle, CoverPlacement>,
-    /// Never holds the shape of `current`: its image is the `Cover` asset.
+    /// Never holds `current`: its image is the `Cover` asset.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    styles: BTreeMap<TileStyle, PathBuf>,
+    /// Images per shape, from before each style had its own; moved into `styles` when loaded.
+    #[serde(default, skip_serializing)]
     images: BTreeMap<CoverShape, PathBuf>,
 }
 
 impl CoverShapes {
     fn is_empty(&self) -> bool {
-        self.current.is_none() && self.saved.is_empty() && self.images.is_empty()
+        self.current.is_none() && self.saved.is_empty() && self.styles.is_empty()
     }
+
+    fn shows(&self, style: TileStyle) -> bool {
+        self.current.is_none_or(|c| c == style)
+    }
+
+    /// Gives every style of an image's shape that image, unless the style has its own.
+    fn migrate(&mut self) {
+        for (shape, image) in std::mem::take(&mut self.images) {
+            for style in TileStyle::ALL.into_iter().filter(|s| s.cover_shape() == shape) {
+                if !self.shows(style) {
+                    self.styles.entry(style).or_insert_with(|| image.clone());
+                }
+            }
+        }
+    }
+}
+
+/// Where a game shows an image.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ImageSlot {
+    /// The cover a tile style shows.
+    Cover(TileStyle),
+    /// Any other image: background, box faces, booklet. `AssetKind::Cover` is the shown style's cover.
+    Asset(AssetKind),
 }
 
 impl Game {
@@ -78,9 +107,63 @@ impl Game {
         ids::from_command(&self.target, &self.args)
     }
 
-    /// Whether the game has a cover image, for any tile shape.
+    /// Whether the game has a cover image, for any tile style.
     pub fn has_cover(&self) -> bool {
-        self.asset(AssetKind::Cover).is_some() || !self.cover_shapes.images.is_empty()
+        self.asset(AssetKind::Cover).is_some() || !self.cover_shapes.styles.is_empty()
+    }
+
+    /// The cover image `style` shows; `None` for a style that has none of its own yet.
+    pub fn style_cover(&self, style: TileStyle) -> Option<&Path> {
+        if self.cover_shapes.shows(style) {
+            return self.asset(AssetKind::Cover);
+        }
+        self.cover_shapes.styles.get(&style).map(PathBuf::as_path)
+    }
+
+    pub fn style_placement(&self, style: TileStyle) -> CoverPlacement {
+        if self.cover_shapes.shows(style) {
+            return self.placement(AssetKind::Cover);
+        }
+        self.cover_shapes.saved.get(&style).copied().unwrap_or_default()
+    }
+
+    pub fn set_style_placement(&mut self, style: TileStyle, placement: CoverPlacement) {
+        if self.cover_shapes.shows(style) {
+            *self.placement_mut(AssetKind::Cover) = placement;
+        } else {
+            self.cover_shapes.saved.insert(style, placement);
+        }
+    }
+
+    /// The image in `slot`.
+    pub fn image(&self, slot: ImageSlot) -> Option<&Path> {
+        match slot {
+            ImageSlot::Cover(style) => self.style_cover(style),
+            ImageSlot::Asset(kind) => self.asset(kind),
+        }
+    }
+
+    /// Every place the image at `path` is shown, covers first.
+    pub fn image_uses(&self, path: &Path) -> Vec<ImageSlot> {
+        let covers = TileStyle::ALL.into_iter().filter(|s| s.shows_cover() && self.style_cover(*s) == Some(path)).map(ImageSlot::Cover);
+        let others = AssetKind::IMAGES.into_iter().filter(|k| *k != AssetKind::Cover && self.asset(*k) == Some(path)).map(ImageSlot::Asset);
+        covers.chain(others).collect()
+    }
+
+    fn uses_image(&self, path: &Path) -> bool {
+        self.assets.paths.values().chain(self.cover_shapes.styles.values()).any(|p| p == path)
+    }
+
+    /// Puts every image the game shows in its gallery, for libraries from before it had one.
+    fn adopt_images(&mut self) {
+        self.cover_shapes.migrate();
+        let shown = self.assets.paths.iter().filter(|(k, _)| k.is_image()).map(|(_, p)| p);
+        let images: Vec<PathBuf> = shown.chain(self.cover_shapes.styles.values()).cloned().collect();
+        for image in images {
+            if !self.gallery.contains(&image) {
+                self.gallery.push(image);
+            }
+        }
     }
 
     pub fn asset(&self, kind: AssetKind) -> Option<&Path> {
@@ -95,36 +178,37 @@ impl Game {
         self.assets.placements.entry(kind.placement_key()).or_default()
     }
 
-    /// Makes the cover image and placement the ones kept for `style`. The placement of the style
-    /// shown before is stored first; a style seen for the first time starts as a copy of it, unless
-    /// its shape brings a different image. Returns whether anything changed.
+    /// Makes the cover image and placement the ones kept for `style`. The style shown before keeps
+    /// its own; a style with no cover of its own starts as a copy of it. Returns whether anything
+    /// worth saving changed.
     pub fn use_cover_shape(&mut self, style: TileStyle) -> bool {
         let shapes = &mut self.cover_shapes;
         if shapes.current == Some(style) {
             return false;
         }
-        let mut active = self.assets.placements.get(&AssetKind::Cover).copied().unwrap_or_default();
-        if shapes.is_empty() && active.is_default() {
-            return false;
-        }
-        if let Some(previous) = shapes.current {
-            shapes.saved.insert(previous, active);
-            let (from, to) = (previous.cover_shape(), style.cover_shape());
-            if from != to
-                && let Some(image) = shapes.images.remove(&to)
-            {
-                if let Some(shown) = self.assets.paths.insert(AssetKind::Cover, image) {
-                    shapes.images.insert(from, shown);
-                }
-                active = CoverPlacement::default();
-            }
-        }
-        let next = *shapes.saved.entry(style).or_insert(active);
-        shapes.current = Some(style);
-        if next.is_default() {
+        let image = self.assets.paths.get(&AssetKind::Cover).cloned();
+        let placement = self.assets.placements.get(&AssetKind::Cover).copied().unwrap_or_default();
+        let Some(previous) = shapes.current.replace(style) else {
+            return image.is_some() || !placement.is_default();
+        };
+        match &image {
+            Some(image) => shapes.styles.insert(previous, image.clone()),
+            None => shapes.styles.remove(&previous),
+        };
+        shapes.saved.insert(previous, placement);
+        let kept = shapes.saved.remove(&style);
+        let (image, placement) = match shapes.styles.remove(&style) {
+            Some(own) => (Some(own), kept.unwrap_or_default()),
+            None => (image, kept.unwrap_or(placement)),
+        };
+        match image {
+            Some(image) => self.assets.paths.insert(AssetKind::Cover, image),
+            None => self.assets.paths.remove(&AssetKind::Cover),
+        };
+        if placement.is_default() {
             self.assets.placements.remove(&AssetKind::Cover);
         } else {
-            self.assets.placements.insert(AssetKind::Cover, next);
+            self.assets.placements.insert(AssetKind::Cover, placement);
         }
         true
     }
@@ -285,6 +369,22 @@ pub enum AssetKind {
 }
 
 impl AssetKind {
+    /// The kinds that are pictures, and so go in the gallery.
+    pub const IMAGES: [AssetKind; 8] = [
+        AssetKind::Cover,
+        AssetKind::Background,
+        AssetKind::Spine,
+        AssetKind::Top,
+        AssetKind::Back,
+        AssetKind::Side,
+        AssetKind::Bottom,
+        AssetKind::Booklet,
+    ];
+
+    pub fn is_image(self) -> bool {
+        Self::IMAGES.contains(&self)
+    }
+
     pub const ALL: [AssetKind; 11] = [
         AssetKind::Cover,
         AssetKind::Background,
@@ -333,6 +433,10 @@ pub struct Library {
     /// `library.json` could be neither read nor moved aside; saving would destroy it.
     #[serde(skip)]
     keep_file: bool,
+    /// A replaced image leaves the gallery (and the disk) when nothing else shows it, instead of
+    /// being kept for the user to manage.
+    #[serde(skip)]
+    pub prune_gallery: bool,
 }
 
 impl Library {
@@ -363,6 +467,9 @@ impl Library {
         };
         lib.data_dir = data_dir;
         lib.arrange();
+        for game in &mut lib.games {
+            game.adopt_images();
+        }
         (lib, warning)
     }
 
@@ -434,6 +541,7 @@ impl Library {
             save_dir: None,
             bubble_place: None,
             cover_shapes: CoverShapes::default(),
+            gallery: Vec::new(),
             fixed_slot: None,
             device_saves: DeviceSaves::default(),
         });
@@ -454,28 +562,57 @@ impl Library {
     }
 
     pub fn set_asset(&mut self, index: usize, kind: AssetKind, src: &Path) -> Result<()> {
-        let dest = self.copy_asset(index, kind.slug(), src)?;
-        self.replace_asset(index, kind, dest);
+        self.import_image(index, ImageSlot::Asset(kind), src)
+    }
+
+    /// Copies `src` into the game's files and shows it in `slot`. Images also join the gallery.
+    pub fn import_image(&mut self, index: usize, slot: ImageSlot, src: &Path) -> Result<()> {
+        let slug = match slot {
+            ImageSlot::Cover(_) => AssetKind::Cover.slug(),
+            ImageSlot::Asset(kind) => kind.slug(),
+        };
+        let dest = self.copy_asset(index, slug, src)?;
+        self.set_image(index, slot, dest);
         Ok(())
     }
 
-    /// Gives the game a cover image for each listed shape, `style` being the tile style shown
-    /// now: its shape's image becomes the cover, the others are kept until their shape is shown.
-    pub fn set_shape_covers(&mut self, index: usize, style: TileStyle, covers: &[(CoverShape, PathBuf)]) -> Result<()> {
-        let shown = style.cover_shape();
-        if let Some((_, src)) = covers.iter().find(|(shape, _)| *shape == shown) {
-            self.set_asset(index, AssetKind::Cover, src)?;
+    /// Shows `image`, a file the game already has or was just given, in `slot`. A new cover starts
+    /// centered. The image it replaces stays in the gallery, unless `prune_gallery` is on and
+    /// nothing else shows it.
+    pub fn set_image(&mut self, index: usize, slot: ImageSlot, image: PathBuf) {
+        let game = &mut self.games[index];
+        let is_image = match slot {
+            ImageSlot::Cover(_) => true,
+            ImageSlot::Asset(kind) => kind.is_image(),
+        };
+        if is_image && !game.gallery.contains(&image) {
+            game.gallery.push(image.clone());
         }
-        for (shape, src) in covers.iter().filter(|(shape, _)| *shape != shown) {
-            let dest = self.copy_asset(index, &format!("cover-{}", shape.slug()), src)?;
-            if let Some(old) = self.games[index].cover_shapes.images.insert(*shape, dest) {
-                remove_if_owned(&self.assets_dir(), &old);
+        let old = match slot {
+            ImageSlot::Cover(style) if !game.cover_shapes.shows(style) => {
+                game.cover_shapes.saved.remove(&style);
+                game.cover_shapes.styles.insert(style, image)
             }
+            ImageSlot::Cover(_) | ImageSlot::Asset(AssetKind::Cover) => {
+                game.assets.placements.remove(&AssetKind::Cover);
+                game.assets.paths.insert(AssetKind::Cover, image)
+            }
+            ImageSlot::Asset(kind) => game.assets.paths.insert(kind, image),
+        };
+        if let Some(old) = old {
+            self.release(index, &old);
         }
-        let shapes = &mut self.games[index].cover_shapes;
-        if shapes.current != Some(style) {
-            shapes.saved.clear();
-            shapes.current = Some(style);
+    }
+
+    /// Gives the game a cover image for each listed shape, `style` being the tile style shown
+    /// now: every style of a shape gets that shape's image.
+    pub fn set_shape_covers(&mut self, index: usize, style: TileStyle, covers: &[(CoverShape, PathBuf)]) -> Result<()> {
+        self.games[index].use_cover_shape(style);
+        for (shape, src) in covers {
+            let dest = self.copy_asset(index, &format!("cover-{}", shape.slug()), src)?;
+            for each in TileStyle::ALL.into_iter().filter(|s| s.cover_shape() == *shape) {
+                self.set_image(index, ImageSlot::Cover(each), dest.clone());
+            }
         }
         Ok(())
     }
@@ -491,7 +628,7 @@ impl Library {
         let mesh = crate::object3d::import(src).with_context(|| format!("reading {}", src.display()))?;
         let dest = self.new_asset_path(index, AssetKind::Model.slug(), "ply")?;
         crate::object3d::formats::write_ply(&mesh, &dest)?;
-        self.replace_asset(index, AssetKind::Model, dest);
+        self.set_image(index, ImageSlot::Asset(AssetKind::Model), dest);
         Ok(())
     }
 
@@ -504,36 +641,41 @@ impl Library {
         Ok((millis..).map(path).find(|p| !p.exists()).unwrap())
     }
 
-    fn replace_asset(&mut self, index: usize, kind: AssetKind, dest: PathBuf) {
+    /// Called for a file the game no longer shows in one place. Images stay in the gallery unless
+    /// `prune_gallery` is on; models and videos are deleted, they have no gallery.
+    fn release(&mut self, index: usize, old: &Path) {
         let assets = self.assets_dir();
         let game = &mut self.games[index];
-        if kind == AssetKind::Cover {
-            // A new image starts centered, and the crops made for the old one are dropped. Shapes
-            // with an image of their own keep it and their crops.
-            game.assets.placements.remove(&AssetKind::Cover);
-            let CoverShapes { saved, images, .. } = &mut game.cover_shapes;
-            if images.is_empty() {
-                game.cover_shapes = CoverShapes::default();
-            } else {
-                saved.retain(|style, _| images.contains_key(&style.cover_shape()));
-            }
+        if game.uses_image(old) || (!self.prune_gallery && game.gallery.iter().any(|p| p == old)) {
+            return;
         }
-        if let Some(old) = game.assets.paths.insert(kind, dest) {
-            remove_if_owned(&assets, &old);
-        }
+        game.gallery.retain(|p| p != old);
+        remove_if_owned(&assets, old);
     }
 
     pub fn clear_asset(&mut self, index: usize, kind: AssetKind) {
-        let assets = self.assets_dir();
         if let Some(old) = self.games[index].assets.paths.remove(&kind) {
-            remove_if_owned(&assets, &old);
+            self.release(index, &old);
         }
+    }
+
+    /// Deletes a gallery image nothing shows. Returns false, keeping it, when something does.
+    pub fn remove_from_gallery(&mut self, index: usize, image: &Path) -> bool {
+        let assets = self.assets_dir();
+        let game = &mut self.games[index];
+        if game.uses_image(image) {
+            return false;
+        }
+        game.gallery.retain(|p| p != image);
+        remove_if_owned(&assets, image);
+        true
     }
 
     pub fn remove(&mut self, index: usize) {
         let assets = self.assets_dir();
         let game = self.games.remove(index);
-        for path in game.assets.paths().map(|(_, p)| p).chain(game.cover_shapes.images.values().map(PathBuf::as_path)) {
+        let shown = game.assets.paths().map(|(_, p)| p).chain(game.cover_shapes.styles.values().map(PathBuf::as_path));
+        for path in shown.chain(game.gallery.iter().map(PathBuf::as_path)) {
             remove_if_owned(&assets, path);
         }
         self.arrange();
@@ -571,71 +713,125 @@ fn new_id() -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn each_tile_style_keeps_its_own_cover_placement() {
-        let mut game: Game = serde_json::from_str(r#"{"id":"g","name":"G","target":"/g"}"#).unwrap();
-        assert!(!game.use_cover_shape(TileStyle::Flat), "an untouched cover needs nothing stored");
-        let square = CoverPlacement { zoom: 2.0, x: 0.2, y: 0.5 };
-        *game.placement_mut(AssetKind::Cover) = square;
-        assert!(game.use_cover_shape(TileStyle::Flat));
-
-        assert!(game.use_cover_shape(TileStyle::Cover));
-        assert_eq!(game.placement(AssetKind::Cover), square, "a new style starts as a copy of the previous one");
-        let rect = CoverPlacement { zoom: 1.5, x: 0.5, y: 0.8 };
-        *game.placement_mut(AssetKind::Cover) = rect;
-
-        game.use_cover_shape(TileStyle::Flat);
-        assert_eq!(game.placement(AssetKind::Cover), square, "going back restores that style's placement");
-        game.use_cover_shape(TileStyle::Cover);
-        assert_eq!(game.placement(AssetKind::Cover), rect);
-
-        let json = serde_json::to_string(&game).unwrap();
-        let mut reloaded: Game = serde_json::from_str(&json).unwrap();
-        reloaded.use_cover_shape(TileStyle::Flat);
-        assert_eq!(reloaded.placement(AssetKind::Cover), square);
-    }
-
-    #[test]
-    fn each_cover_shape_keeps_its_own_image() {
+    fn temp_library() -> (PathBuf, Library, impl Fn(&str) -> PathBuf) {
         let root = std::env::temp_dir().join(format!("yasaff-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        let file = |name: &str| {
-            let path = root.join(name);
+        let mut lib = library(&["g"]);
+        lib.data_dir = root.join("data");
+        let dir = root.clone();
+        let file = move |name: &str| {
+            let path = dir.join(name);
             fs::write(&path, name).unwrap();
             path
         };
-        let (square, tall, picked) = (file("square.png"), file("tall.png"), file("picked.png"));
-        let mut lib = library(&["g"]);
-        lib.data_dir = root.join("data");
-        let shown = |lib: &Library| fs::read_to_string(lib.games[0].asset(AssetKind::Cover).unwrap()).unwrap();
+        (root, lib, file)
+    }
 
-        lib.set_shape_covers(0, TileStyle::Flat, &[(CoverShape::Square, square), (CoverShape::Tall, tall)]).unwrap();
-        assert_eq!(shown(&lib), "square.png", "the shape shown when importing gets its image");
-        assert!(!lib.games[0].use_cover_shape(TileStyle::Flat));
+    fn shown(lib: &Library) -> String {
+        fs::read_to_string(lib.games[0].asset(AssetKind::Cover).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn each_tile_style_keeps_its_own_cover() {
+        let (root, mut lib, file) = temp_library();
+        assert!(!lib.games[0].use_cover_shape(TileStyle::Flat), "an untouched cover needs nothing stored");
+        lib.set_asset(0, AssetKind::Cover, &file("square.png")).unwrap();
+        let square = CoverPlacement { zoom: 2.0, x: 0.2, y: 0.5 };
+        *lib.games[0].placement_mut(AssetKind::Cover) = square;
+
         assert!(lib.games[0].use_cover_shape(TileStyle::Cover));
-        assert_eq!(shown(&lib), "tall.png");
-        lib.games[0].use_cover_shape(TileStyle::Model);
-        assert_eq!(shown(&lib), "tall.png", "boxes share the tall image");
-        let crop = CoverPlacement { zoom: 2.0, x: 0.3, y: 0.5 };
-        *lib.games[0].placement_mut(AssetKind::Cover) = crop;
+        assert_eq!(shown(&lib), "square.png", "a style without a cover of its own copies the one shown before");
+        assert_eq!(lib.games[0].placement(AssetKind::Cover), square);
+        let rect = CoverPlacement { zoom: 1.5, x: 0.5, y: 0.8 };
+        *lib.games[0].placement_mut(AssetKind::Cover) = rect;
 
-        lib.games[0].use_cover_shape(TileStyle::Disc);
-        assert_eq!(shown(&lib), "square.png");
-        assert!(lib.games[0].placement(AssetKind::Cover).is_default(), "the tall crop doesn't carry over to the square image");
-        lib.set_asset(0, AssetKind::Cover, &picked).unwrap();
-        assert_eq!(shown(&lib), "picked.png");
+        lib.games[0].use_cover_shape(TileStyle::Flat);
+        assert_eq!(lib.games[0].placement(AssetKind::Cover), square, "going back restores that style's placement");
+        lib.set_asset(0, AssetKind::Cover, &file("new-square.png")).unwrap();
+        assert_eq!(shown(&lib), "new-square.png");
+
+        lib.games[0].use_cover_shape(TileStyle::Cover);
+        assert_eq!(shown(&lib), "square.png", "a new square image leaves the Game covers style alone");
+        assert_eq!(lib.games[0].placement(AssetKind::Cover), rect);
 
         let json = serde_json::to_string(&lib.games[0]).unwrap();
         lib.games[0] = serde_json::from_str(&json).unwrap();
-        lib.games[0].use_cover_shape(TileStyle::Model);
-        assert_eq!(shown(&lib), "tall.png", "picking a square cover leaves the tall one alone");
-        assert_eq!(lib.games[0].placement(AssetKind::Cover), crop);
         lib.games[0].use_cover_shape(TileStyle::Flat);
-        assert_eq!(shown(&lib), "picked.png", "and is kept for the square tiles");
-
-        lib.remove(0);
-        assert_eq!(fs::read_dir(root.join("data/assets")).unwrap().count(), 0, "removing the game deletes every shape's image");
+        assert_eq!(shown(&lib), "new-square.png");
+        assert!(lib.games[0].placement(AssetKind::Cover).is_default(), "a new image starts centered");
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_hidden_style_gets_its_own_cover() {
+        let (root, mut lib, file) = temp_library();
+        lib.games[0].use_cover_shape(TileStyle::Flat);
+        lib.set_asset(0, AssetKind::Cover, &file("square.png")).unwrap();
+        lib.import_image(0, ImageSlot::Cover(TileStyle::Disc), &file("disc.png")).unwrap();
+        assert_eq!(shown(&lib), "square.png", "the shown style keeps its cover");
+        let game = &lib.games[0];
+        assert_eq!(fs::read_to_string(game.style_cover(TileStyle::Disc).unwrap()).unwrap(), "disc.png");
+        assert_eq!(game.style_cover(TileStyle::Crt), None, "a style never set has no cover of its own");
+        lib.games[0].use_cover_shape(TileStyle::Disc);
+        assert_eq!(shown(&lib), "disc.png");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn store_covers_go_to_every_style_of_their_shape() {
+        let (root, mut lib, file) = temp_library();
+        lib.set_shape_covers(0, TileStyle::Flat, &[(CoverShape::Square, file("square.png")), (CoverShape::Tall, file("tall.png"))]).unwrap();
+        assert_eq!(shown(&lib), "square.png", "the shape shown when importing gets its image");
+        lib.games[0].use_cover_shape(TileStyle::Model);
+        assert_eq!(shown(&lib), "tall.png");
+        lib.games[0].use_cover_shape(TileStyle::Case);
+        assert_eq!(shown(&lib), "tall.png");
+        lib.games[0].use_cover_shape(TileStyle::Disc);
+        assert_eq!(shown(&lib), "square.png");
+        assert_eq!(lib.games[0].gallery.len(), 2);
+        lib.remove(0);
+        assert_eq!(fs::read_dir(root.join("data/assets")).unwrap().count(), 0, "removing the game deletes every image");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_gallery_keeps_replaced_images_unless_pruned() {
+        let (root, mut lib, file) = temp_library();
+        lib.games[0].use_cover_shape(TileStyle::Flat);
+        lib.set_asset(0, AssetKind::Cover, &file("one.png")).unwrap();
+        lib.set_asset(0, AssetKind::Cover, &file("two.png")).unwrap();
+        assert_eq!(lib.games[0].gallery.len(), 2, "kept for picking again");
+        let one = lib.games[0].gallery[0].clone();
+        assert!(lib.games[0].image_uses(&one).is_empty());
+        lib.set_image(0, ImageSlot::Asset(AssetKind::Background), one.clone());
+        assert_eq!(lib.games[0].image_uses(&one), [ImageSlot::Asset(AssetKind::Background)]);
+        assert!(!lib.remove_from_gallery(0, &one), "an image in use stays");
+        lib.clear_asset(0, AssetKind::Background);
+        assert!(one.exists(), "clearing keeps it in the gallery");
+        assert!(lib.remove_from_gallery(0, &one));
+        assert!(!one.exists());
+
+        lib.prune_gallery = true;
+        let two = lib.games[0].asset(AssetKind::Cover).unwrap().to_path_buf();
+        lib.games[0].use_cover_shape(TileStyle::Cover);
+        lib.set_asset(0, AssetKind::Cover, &file("three.png")).unwrap();
+        assert!(two.exists(), "the square cards still show it");
+        lib.games[0].use_cover_shape(TileStyle::Flat);
+        lib.set_asset(0, AssetKind::Cover, &file("four.png")).unwrap();
+        assert!(!two.exists(), "pruned once nothing shows it");
+        assert_eq!(lib.games[0].gallery.len(), 2);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn shape_images_of_old_libraries_move_to_their_styles() {
+        let json = r#"{"id":"g","name":"G","target":"/g","cover":"/a/square.png",
+            "cover_shapes":{"current":"flat","images":{"tall":"/a/tall.png"}}}"#;
+        let mut game: Game = serde_json::from_str(json).unwrap();
+        game.adopt_images();
+        assert_eq!(game.style_cover(TileStyle::Model), Some(Path::new("/a/tall.png")));
+        assert_eq!(game.style_cover(TileStyle::Disc), None, "square styles take the shown cover when switched to");
+        assert_eq!(game.gallery, [PathBuf::from("/a/square.png"), PathBuf::from("/a/tall.png")]);
     }
 
     #[test]

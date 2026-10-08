@@ -309,7 +309,8 @@ impl App {
                 &[Hint(Action::Confirm, tr!("Move here")), Hint(Action::Back, tr!("Cancel"))]
             }
             Mode::SwapBubble { .. } | Mode::SwapTile { .. } => &[Hint(Action::Confirm, tr!("Swap here")), Hint(Action::Back, tr!("Cancel"))],
-            Mode::Options { .. } | Mode::AddMenu { .. } | Mode::ConfirmRemove { .. } => {
+            Mode::GalleryPick { .. } => &[Hint(Action::Confirm, tr!("Use")), Hint(Action::Back, tr!("Back"))],
+            Mode::Options { .. } | Mode::AddMenu { .. } | Mode::ConfirmRemove { .. } | Mode::ImageSource { .. } => {
                 &[Hint(Action::Confirm, tr!("Select")), Hint(Action::Back, tr!("Back"))]
             }
             Mode::Picker(_) => &[

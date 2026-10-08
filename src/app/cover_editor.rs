@@ -4,6 +4,8 @@ use super::*;
 
 pub(super) struct CoverEditor {
     pub(super) kind: AssetKind,
+    /// For a cover: the tile style whose placement is edited, shown or not.
+    pub(super) style: Option<TileStyle>,
     pub(super) draft: CoverPlacement,
     pub(super) cursor: usize,
     pub(super) button: EditorButton,
@@ -87,23 +89,54 @@ impl App {
     pub(super) fn open_cover_editor(&mut self, kind: AssetKind) {
         let Some(game) = self.selected_game() else { return };
         let draft = game.placement(kind);
-        self.mode = Mode::CoverEditor(CoverEditor { kind, draft, cursor: 0, button: EditorButton::Accept });
+        self.mode = Mode::CoverEditor(CoverEditor { kind, style: None, draft, cursor: 0, button: EditorButton::Accept });
+    }
+
+    pub(super) fn open_style_editor(&mut self, style: TileStyle) {
+        let Some(game) = self.selected_game() else { return };
+        let draft = game.style_placement(style);
+        let editor = CoverEditor { kind: AssetKind::Cover, style: Some(style), draft, cursor: 0, button: EditorButton::Accept };
+        self.mode = Mode::CoverEditor(editor);
     }
 
     pub(super) fn close_cover_editor(&mut self, accept: bool) {
         let Mode::CoverEditor(editor) = &self.mode else { return };
-        let kind = editor.kind;
+        let (kind, style, draft) = (editor.kind, editor.style, editor.draft);
         if accept && let Some(game) = self.library.games.get_mut(self.selected) {
-            *game.placement_mut(kind) = editor.draft;
+            match style {
+                Some(style) => game.set_style_placement(style, draft),
+                None => *game.placement_mut(kind) = draft,
+            }
             self.save();
         }
-        self.mode = self.settings_at(SettingRow::GameAdjust(kind));
+        self.mode = self.settings_at(match style {
+            Some(style) => SettingRow::StyleAdjust(style),
+            None => SettingRow::GameAdjust(kind),
+        });
+    }
+
+    /// Runs `f` with the theme and the selected game's cover showing `style`, so a tile style
+    /// that isn't shown can be previewed; the shown one comes back afterwards.
+    fn as_style<R>(&mut self, style: Option<TileStyle>, f: impl FnOnce(&mut Self) -> R) -> R {
+        let shown = self.theme().settings.tile_style;
+        let Some(style) = style.filter(|s| *s != shown && self.selected_game().is_some()) else { return f(self) };
+        self.themes[self.theme].settings.tile_style = style;
+        self.library.games[self.selected].use_cover_shape(style);
+        let result = f(self);
+        self.library.games[self.selected].use_cover_shape(shown);
+        self.themes[self.theme].settings.tile_style = shown;
+        result
     }
 
     pub(super) fn draw_cover_editor(&mut self, ui: &Ui, screen: Rect, s: f32) {
         let Mode::CoverEditor(editor) = &self.mode else { return };
+        self.as_style(editor.style, |app| app.draw_cover_editor_as_shown(ui, screen, s));
+    }
+
+    fn draw_cover_editor_as_shown(&mut self, ui: &Ui, screen: Rect, s: f32) {
+        let Mode::CoverEditor(editor) = &self.mode else { return };
         let Some(game) = self.selected_game() else { return };
-        let (kind, mut draft, mut cursor, mut button) = (editor.kind, editor.draft, editor.cursor, editor.button);
+        let (kind, style, mut draft, mut cursor, mut button) = (editor.kind, editor.style, editor.draft, editor.cursor, editor.button);
         let before = game.placement(kind);
         let painter = ui.painter();
         painter.rect_filled(screen, 0, Color32::from_black_alpha(190));
@@ -199,7 +232,7 @@ impl App {
             }
         }
 
-        self.mode = Mode::CoverEditor(CoverEditor { kind, draft, cursor, button });
+        self.mode = Mode::CoverEditor(CoverEditor { kind, style, draft, cursor, button });
         if let Some(accept) = accept {
             self.close_cover_editor(accept);
         }
@@ -221,24 +254,33 @@ impl App {
                 }
             });
         }
-        let title = match kind {
-            AssetKind::Cover => tr!("Select cover image (square works best)"),
-            AssetKind::Background => tr!("Select background image (16:9 works best)"),
-            AssetKind::Spine => tr!("Select spine image (a tall or wide scan of the box spine)"),
-            AssetKind::Top => tr!("Select box top image"),
-            AssetKind::Back => tr!("Select back cover image"),
-            AssetKind::Side => tr!("Select right side image (the edge opposite the spine)"),
-            AssetKind::Bottom => tr!("Select box bottom image"),
-            AssetKind::Booklet => tr!("Select instruction booklet image"),
-            AssetKind::Model | AssetKind::Video | AssetKind::IdleVideo => unreachable!(),
+        self.import_image(ImageSlot::Asset(kind), None);
+    }
+
+    /// Asks for an image file and shows it in `slot`, then returns to the settings row `back`.
+    pub(super) fn import_image(&mut self, slot: ImageSlot, back: Option<SettingRow>) {
+        let title = match slot {
+            ImageSlot::Cover(style) if style.cover_shape() == CoverShape::Square => tr!("Select cover image (square works best)"),
+            ImageSlot::Cover(_) | ImageSlot::Asset(AssetKind::Cover) => tr!("Select cover image"),
+            ImageSlot::Asset(AssetKind::Background) => tr!("Select background image (16:9 works best)"),
+            ImageSlot::Asset(AssetKind::Spine) => tr!("Select spine image (a tall or wide scan of the box spine)"),
+            ImageSlot::Asset(AssetKind::Top) => tr!("Select box top image"),
+            ImageSlot::Asset(AssetKind::Back) => tr!("Select back cover image"),
+            ImageSlot::Asset(AssetKind::Side) => tr!("Select right side image (the edge opposite the spine)"),
+            ImageSlot::Asset(AssetKind::Bottom) => tr!("Select box bottom image"),
+            ImageSlot::Asset(AssetKind::Booklet) => tr!("Select instruction booklet image"),
+            ImageSlot::Asset(AssetKind::Model | AssetKind::Video | AssetKind::IdleVideo) => unreachable!(),
         };
         let dialog = rfd::FileDialog::new().set_title(title).add_filter(tr!("Images"), IMAGE_EXTS);
         let game_id = self.selected_game().map(|g| g.id.clone()).unwrap_or_default();
         self.ask_path(dialog, Pick::File, move |app, path| {
             let Some(i) = app.library.position(&game_id) else { return };
-            match app.library.set_asset(i, kind, &path) {
+            match app.library.import_image(i, slot, &path) {
                 Ok(()) => app.save(),
                 Err(e) => app.notify(tr!("Could not set image: {error}", error = format!("{e:#}"))),
+            }
+            if let Some(row) = back {
+                app.mode = app.settings_at(row);
             }
         });
     }

@@ -145,7 +145,7 @@ pub fn local(external: &[ExternalId]) -> Option<Found> {
 }
 
 fn artwork(request: &Request) -> Result<Artwork> {
-    let Some(found) = local(&request.ids) else { bail!(tr!("none on this computer yet; open the game once in its launcher, or set it by hand")) };
+    let Some(found) = local(&request.ids) else { bail!(tr!("none on this computer yet. Open the game once in its launcher, or set it by hand")) };
 
     let dir = crate::library::Library::data_dir().join("downloads");
     let mut downloads = Vec::new();

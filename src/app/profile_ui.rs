@@ -22,7 +22,7 @@ pub(super) enum Start {
 
 pub(super) const WELCOME: [(Start, &str, &str); 3] = [
     (Start::Import, tr_key!("Import games"), tr_key!("Pick from the Steam, Heroic and shortcut games installed on this computer")),
-    (Start::Blank, tr_key!("Start blank"), tr_key!("An empty library; add games any time with Add game")),
+    (Start::Blank, tr_key!("Start blank"), tr_key!("An empty library. Add games any time with Add game")),
     (Start::Demo, tr_key!("Start blank (with mock games)"), tr_key!("All customization images included")),
 ];
 
@@ -212,7 +212,7 @@ impl App {
         let detail = if missing.is_empty() {
             tr!("Everything it uses was found on this computer.")
         } else {
-            tr!("Not found on this computer; fix these after switching:")
+            tr!("Not found on this computer. Fix these after switching:")
         };
         painter.text(dialog.center_top() + vec2(0.0, 95.0 * s), Align2::CENTER_CENTER, detail, FontId::proportional(17.0 * s), gray);
         let left = dialog.left() + 40.0 * s;

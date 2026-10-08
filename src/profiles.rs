@@ -216,7 +216,7 @@ fn remove(dir: &Path) -> Result<()> {
         return Ok(());
     }
     let trash = root().join(format!(".trash-{}", uuid::Uuid::new_v4()));
-    fs::rename(dir, &trash).with_context(|| tr!("{folder} is in use; close the apps started from YASAFF and try again", folder = dir.display()))?;
+    fs::rename(dir, &trash).with_context(|| tr!("{folder} is in use. Close the apps started from YASAFF and try again", folder = dir.display()))?;
     fs::remove_dir_all(&trash).with_context(|| format!("deleting {}", trash.display()))
 }
 

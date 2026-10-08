@@ -89,13 +89,18 @@ impl App {
                     self.save_settings();
                 }
             }
+            SettingRow::GalleryKeepAll => {
+                self.settings.gallery.keep_all ^= true;
+                self.library.prune_gallery = !self.settings.gallery.keep_all;
+                self.save_settings();
+            }
             SettingRow::OrderStatic if !self.settings.order.static_order => {
                 self.mode = Mode::ConfirmRemove { what: Removal::StaticOrder, yes: false };
             }
             SettingRow::OrderStatic => {
                 self.settings.order.static_order = false;
                 self.save_settings();
-                self.notify(tr!("Static order is off; games keep their places until something moves them"));
+                self.notify(tr!("Static order is off. Games keep their places until something moves them"));
             }
             SettingRow::Autostart => match autostart::set(!self.autostart) {
                 Ok(()) => self.autostart = autostart::is_enabled(),
@@ -363,20 +368,28 @@ impl App {
                 let buffer = format!("{:.0}", self.theme().settings.boxes.size_mm()[i]);
                 self.mode = Mode::Prompt { kind: PromptKind::BoxSize(row), buffer };
             }
-            SettingRow::GameCover => self.pick_asset(AssetKind::Cover),
-            SettingRow::GameBackground => self.pick_asset(AssetKind::Background),
+            SettingRow::StyleCover(style) => self.choose_image(ImageSlot::Cover(style), row),
+            SettingRow::StyleAdjust(style) => self.open_style_editor(style),
+            SettingRow::StyleAdjustReset(style) => {
+                self.library.games[self.selected].set_style_placement(style, CoverPlacement::default());
+                self.save();
+                self.mode = self.settings_at(SettingRow::StyleAdjust(style));
+            }
+            SettingRow::GalleryImage(i) => self.remove_gallery_image(i),
+            SettingRow::GalleryEmpty => {}
+            SettingRow::GameBackground => self.choose_image(ImageSlot::Asset(AssetKind::Background), row),
             SettingRow::GameAdjustReset(kind) => {
                 *self.library.games[self.selected].placement_mut(kind) = CoverPlacement::default();
                 self.save();
                 self.mode = self.settings_at(SettingRow::GameAdjust(kind));
             }
             SettingRow::GameAdjust(kind) => self.open_cover_editor(kind),
-            SettingRow::GameSpine => self.pick_asset(AssetKind::Spine),
-            SettingRow::GameTop => self.pick_asset(AssetKind::Top),
-            SettingRow::GameBack => self.pick_asset(AssetKind::Back),
-            SettingRow::GameSide => self.pick_asset(AssetKind::Side),
-            SettingRow::GameBottom => self.pick_asset(AssetKind::Bottom),
-            SettingRow::GameBooklet => self.pick_asset(AssetKind::Booklet),
+            SettingRow::GameSpine => self.choose_image(ImageSlot::Asset(AssetKind::Spine), row),
+            SettingRow::GameTop => self.choose_image(ImageSlot::Asset(AssetKind::Top), row),
+            SettingRow::GameBack => self.choose_image(ImageSlot::Asset(AssetKind::Back), row),
+            SettingRow::GameSide => self.choose_image(ImageSlot::Asset(AssetKind::Side), row),
+            SettingRow::GameBottom => self.choose_image(ImageSlot::Asset(AssetKind::Bottom), row),
+            SettingRow::GameBooklet => self.choose_image(ImageSlot::Asset(AssetKind::Booklet), row),
             SettingRow::GameModel => self.pick_asset(AssetKind::Model),
             SettingRow::GameVideo => self.pick_asset(AssetKind::Video),
             SettingRow::GameIdleVideo => self.pick_asset(AssetKind::IdleVideo),
@@ -472,7 +485,9 @@ impl App {
             return self.adjust_device_setting(row, delta);
         }
         match row {
-            SettingRow::ControllerSwap | SettingRow::OrderLastPlayed | SettingRow::OrderStatic => return self.activate_setting(row),
+            SettingRow::ControllerSwap | SettingRow::OrderLastPlayed | SettingRow::OrderStatic | SettingRow::GalleryKeepAll => {
+                return self.activate_setting(row);
+            }
             SettingRow::ControllerPrompts => {
                 let choices = [None, Some(PadFamily::Xbox), Some(PadFamily::PlayStation)];
                 self.settings.controls.prompts = cycle(&choices, self.settings.controls.prompts, delta);
@@ -690,12 +705,12 @@ impl App {
         };
         let note = if fresh {
             tr!(
-                "{old} setup saved; switching back restores it. Now editing {new}, starting from a blank setup.",
+                "{old} setup saved. Switching back restores it. Now editing {new}, starting from a blank setup.",
                 old = old.label(),
                 new = view.label(),
             )
         } else {
-            tr!("{old} setup saved; switching back restores it. Now editing {new}.", old = old.label(), new = view.label())
+            tr!("{old} setup saved. Switching back restores it. Now editing {new}.", old = old.label(), new = view.label())
         };
         self.save_theme();
         self.notify(note);

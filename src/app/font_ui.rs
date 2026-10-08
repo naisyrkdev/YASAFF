@@ -13,7 +13,7 @@ impl App {
         let missing = !title.is_empty() && !loaded.contains(&title);
         self.fonts_pending = Some(loaded);
         if missing {
-            self.notify(tr!("Font {font} is gone; game titles use the default font", font = title));
+            self.notify(tr!("Font {font} is gone. Game titles use the default font", font = title));
             self.settings.fonts.title.clear();
             self.save_settings();
         }
@@ -56,9 +56,9 @@ impl App {
         match imported.as_slice() {
             [one] if self.fonts_pending.as_ref().is_some_and(|f| f.contains(one)) => {
                 self.set_title_font(one.clone());
-                self.notify(tr!("Imported {font}; game titles now use it", font = fonts::display_name(one)));
+                self.notify(tr!("Imported {font}. Game titles now use it", font = fonts::display_name(one)));
             }
-            _ => self.notify(tr_n!(imported.len(), "Imported {n} font; choose one under Game title font", "Imported {n} fonts; choose one under Game title font")),
+            _ => self.notify(tr_n!(imported.len(), "Imported {n} font. Choose one under Game title font", "Imported {n} fonts. Choose one under Game title font")),
         }
     }
 

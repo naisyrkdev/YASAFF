@@ -15,7 +15,7 @@ impl App {
             Some(c) => RowValue::Color(c),
             None => RowValue::DefaultColor(theme),
         };
-        let game_color_sub = tr!("Enter to type a hex value; empty uses the theme's");
+        let game_color_sub = tr!("Enter to type a hex value. Empty uses the theme's");
         match row {
             SettingRow::Fullscreen => (tr!("Start in fullscreen").into(), "", Toggle(self.settings.start_fullscreen)),
             SettingRow::Autostart => (tr!("Run at system startup").into(), tr!("Start YASAFF when you log in"), Toggle(self.autostart)),
@@ -35,9 +35,14 @@ impl App {
                 };
                 (tr!("Last played games first").into(), sub, Toggle(order.moves_played()))
             }
+            SettingRow::GalleryKeepAll => (
+                tr!("Keep every image in gallery, manage it manually").into(),
+                tr!("Off: a new image deletes the one it replaces, unless another tile style still shows it"),
+                Toggle(self.settings.gallery.keep_all),
+            ),
             SettingRow::OrderStatic => (
                 tr!("Static order").into(),
-                tr!("Every game stays in its slot; only swapping moves it. Turns off the options above"),
+                tr!("Every game stays in its slot. Only swapping moves it. Turns off the options above"),
                 Toggle(self.settings.order.static_order),
             ),
             SettingRow::AppStoreActive => {
@@ -56,15 +61,15 @@ impl App {
                 let i = self.profiles.iter().position(|p| *p == self.profile_pick).unwrap_or(0);
                 let (sub, value) = match (n, self.profile_pick == profiles::active()) {
                     (0 | 1, _) => (tr!("Create another profile below to switch between them"), self.profile_pick.clone()),
-                    (_, true) => (tr!("Left/Right picks a profile; Enter switches to it and restarts YASAFF"), tr!("{name} ({index} of {count})", name = self.profile_pick, index = i + 1, count = n)),
-                    (_, false) => (tr!("Press Enter to switch; YASAFF restarts"), tr!("{name} ({index} of {count})", name = self.profile_pick, index = i + 1, count = n)),
+                    (_, true) => (tr!("Left/Right picks a profile. Enter switches to it and restarts YASAFF"), tr!("{name} ({index} of {count})", name = self.profile_pick, index = i + 1, count = n)),
+                    (_, false) => (tr!("Press Enter to switch. YASAFF restarts"), tr!("{name} ({index} of {count})", name = self.profile_pick, index = i + 1, count = n)),
                 };
                 (tr!("Change profile").into(), sub, Choice(value))
             }
             SettingRow::ProfileRename => (tr!("Rename current profile").into(), tr!("YASAFF restarts"), Action(tr!("Edit…"))),
-            SettingRow::ProfileNew => (tr!("Create new profile").into(), tr!("An empty profile; YASAFF restarts into it"), Action(tr!("Create"))),
+            SettingRow::ProfileNew => (tr!("Create new profile").into(), tr!("An empty profile. YASAFF restarts into it"), Action(tr!("Create"))),
             SettingRow::ProfileExport => (tr!("Export current profile…").into(), tr!("Library, settings, themes, images and apps in one .zip (store API keys are left out)"), Action(tr!("Export"))),
-            SettingRow::ProfileImport => (tr!("Import profile…").into(), tr!("An exported .zip; added as a new profile, renamed if the name is taken"), Action(tr!("Import"))),
+            SettingRow::ProfileImport => (tr!("Import profile…").into(), tr!("An exported .zip. Added as a new profile, renamed if the name is taken"), Action(tr!("Import"))),
             SettingRow::ProfileReset => (tr!("Reset current profile").into(), tr!("Deletes this profile's library, settings, themes and apps"), Action(tr!("Reset…"))),
             SettingRow::AppReset => (tr!("Reset application").into(), tr!("Deletes every profile and all data, as on a fresh install"), Action(tr!("Reset…"))),
             SettingRow::AppStoreAdd => (tr!("Add another store…").into(), tr!("Each store has its own address"), Action(tr!("Add"))),
@@ -92,7 +97,7 @@ impl App {
             ),
             SettingRow::VirtualMouse => (
                 tr!("Enable virtual mouse on right analog stick").into(),
-                tr!("Right stick moves the cursor; RT or R3 clicks, LT right-clicks"),
+                tr!("Right stick moves the cursor. RT or R3 clicks, LT right-clicks"),
                 Toggle(self.settings.mouse.virtual_mouse),
             ),
             SettingRow::ControllerPrompts => {
@@ -104,7 +109,7 @@ impl App {
             }
             SettingRow::ControllerSwap => (
                 tr!("Swap {a} with {b} action", a = button_token(PadButton::South), b = button_token(PadButton::East)),
-                tr!("For those used to Nintendo Switch buttons; hidden while buttons are remapped"),
+                tr!("For those used to Nintendo Switch buttons. Hidden while buttons are remapped"),
                 Toggle(self.settings.controls.swap_ab),
             ),
             SettingRow::ControllerButton(button) => {
@@ -114,7 +119,7 @@ impl App {
                 } else if control == button.default_control() {
                     ""
                 } else {
-                    tr!("Changed; left/right picks what it does")
+                    tr!("Changed. Left/right picks what it does")
                 };
                 (button_token(button), sub, Choice(control.label().into()))
             }
@@ -140,7 +145,7 @@ impl App {
             SettingRow::MouseSpeed => (tr!("Virtual mouse speed").into(), tr!("At full tilt"), Choice(format!("{:.0}", self.settings.mouse.speed))),
             SettingRow::MouseCursor => (
                 tr!("Import cursor…").into(),
-                tr!("PNG with transparency works best; its top-left corner is the tip"),
+                tr!("PNG with transparency works best. Its top-left corner is the tip"),
                 if self.settings.mouse.cursor.is_empty() { Action(tr!("Import")) } else { RowValue::Summary(tr!("Custom").into()) },
             ),
             SettingRow::MouseCursorClear => (tr!("Use the default cursor").into(), tr!("Removes the imported cursor"), Action(tr!("Reset"))),
@@ -170,7 +175,7 @@ impl App {
                 (tr!("Title font").into(), sub, Choice(value))
             }
             SettingRow::Theme => {
-                let sub = if self.theme().is_builtin() { tr!("Built-in; it can't be deleted") } else { tr!("Left/Right switches between themes") };
+                let sub = if self.theme().is_builtin() { tr!("Built-in. It can't be deleted") } else { tr!("Left/Right switches between themes") };
                 (tr!("Theme").into(), sub, Choice(theme.name.clone()))
             }
             SettingRow::ThemeRename => (tr!("Rename theme").into(), "", Action(tr!("Edit…"))),
@@ -183,7 +188,7 @@ impl App {
             }
             SettingRow::ViewKind => (
                 tr!("Layout").into(),
-                tr!("Each layout keeps its own setup; switching back restores it"),
+                tr!("Each layout keeps its own setup. Switching back restores it"),
                 Choice(theme.view.label().into()),
             ),
             SettingRow::TileStyle => {
@@ -192,7 +197,7 @@ impl App {
             }
             SettingRow::BubbleSize => (
                 tr!("Bubble size").into(),
-                tr!("At 1080p; games that don't fit continue on the next page"),
+                tr!("At 1080p. Games that don't fit continue on the next page"),
                 px(theme.bubbles.size),
             ),
             SettingRow::BubbleVariance => (
@@ -208,7 +213,7 @@ impl App {
             SettingRow::BubbleShuffle => (tr!("Randomize bubbles").into(), tr!("Picks new random sizes and places"), Action(tr!("Shuffle"))),
             SettingRow::BubbleVideo => (
                 tr!("Play video on selected game").into(),
-                tr!("Set a video in the game's Options; needs ffmpeg installed"),
+                tr!("Set a video in the game's Options. Needs ffmpeg installed"),
                 Toggle(theme.bubbles.play_video),
             ),
             SettingRow::BubbleSound => (
@@ -233,9 +238,9 @@ impl App {
             ),
             SettingRow::BubbleSoundFile | SettingRow::SwapSoundFile => {
                 let sub = if self.theme().sound_file(row == SettingRow::BubbleSoundFile).is_some() {
-                    tr!("Copied into the theme's folder; WAV, MP3, OGG or FLAC")
+                    tr!("Copied into the theme's folder. WAV, MP3, OGG or FLAC")
                 } else {
-                    tr!("No sound selected; WAV, MP3, OGG or FLAC")
+                    tr!("No sound selected. WAV, MP3, OGG or FLAC")
                 };
                 (tr!("Custom sound").into(), sub, Action(tr!("Choose…")))
             }
@@ -245,9 +250,9 @@ impl App {
             }
             SettingRow::BoxWidth | SettingRow::BoxHeight | SettingRow::BoxDepth => {
                 let (label, sub, i) = match row {
-                    SettingRow::BoxWidth => (tr!("Width"), tr!("50–400 mm; Left/Right steps, Enter to type a value"), 0),
-                    SettingRow::BoxHeight => (tr!("Height"), tr!("50–400 mm; Left/Right steps, Enter to type a value"), 1),
-                    _ => (tr!("Depth"), tr!("5–100 mm; Left/Right steps, Enter to type a value"), 2),
+                    SettingRow::BoxWidth => (tr!("Width"), tr!("50–400 mm. Left/Right steps, Enter to type a value"), 0),
+                    SettingRow::BoxHeight => (tr!("Height"), tr!("50–400 mm. Left/Right steps, Enter to type a value"), 1),
+                    _ => (tr!("Depth"), tr!("5–100 mm. Left/Right steps, Enter to type a value"), 2),
                 };
                 (label.into(), sub, Choice(format!("{:.0} mm", boxes.size_mm()[i])))
             }
@@ -255,56 +260,69 @@ impl App {
             SettingRow::BoxSpineColor => (tr!("Spine color").into(), tr!("Enter to type a hex value"), RowValue::Color(boxes.spine_color)),
             SettingRow::BoxSpineText => (tr!("Spine text color").into(), tr!("Enter to type a hex value"), RowValue::Color(boxes.spine_text_color)),
             SettingRow::BoxTopColor => (tr!("Top color").into(), tr!("Enter to type a hex value"), RowValue::Color(boxes.top_color)),
-            SettingRow::GameCover => {
-                let sub = if has(|g| g.asset(AssetKind::Cover).is_some()) { tr!("The front of the box") } else { tr!("None; the name's initials are shown") };
+            SettingRow::StyleCover(style) => {
+                let sub = match game.and_then(|g| g.style_cover(style)) {
+                    Some(_) if style.is_box() => tr!("The front of the box"),
+                    Some(_) => tr!("Enter imports a new one or picks one from the gallery"),
+                    None => tr!("None of its own yet"),
+                };
                 (tr!("Cover image").into(), sub, Action(tr!("Choose…")))
             }
+            SettingRow::StyleAdjust(style) => {
+                let p = game.map(|g| g.style_placement(style)).unwrap_or_default();
+                (tr!("Size and position…").into(), tr!("Opens a before / after preview. Nothing changes until you accept"), RowValue::Summary(placement_summary(p)))
+            }
+            SettingRow::StyleAdjustReset(_) => (tr!("Reset size and position").into(), "", Action(tr!("Reset"))),
+            SettingRow::GalleryImage(i) => {
+                let uses = game.and_then(|g| Some(g.image_uses(g.gallery.get(i)?))).unwrap_or_default();
+                if uses.is_empty() {
+                    (tr!("Not used").into(), tr!("Enter deletes it"), Action(tr!("Remove")))
+                } else {
+                    let names: Vec<_> = uses.into_iter().map(slot_label).collect();
+                    (names.join(" · "), tr!("In use. Pick another image there to free it"), RowValue::Summary(tr!("In use").into()))
+                }
+            }
+            SettingRow::GalleryEmpty => (tr!("No images yet").into(), tr!("Images you import or fetch show up here"), RowValue::Summary(String::new())),
             SettingRow::GameBackground => {
-                let sub = if has(|g| g.asset(AssetKind::Background).is_some()) { tr!("Fills the screen while this game is selected") } else { tr!("None; the theme's background is shown") };
+                let sub = if has(|g| g.asset(AssetKind::Background).is_some()) { tr!("Fills the screen while this game is selected") } else { tr!("None. The theme's background is shown") };
                 (tr!("Background image").into(), sub, Action(tr!("Choose…")))
             }
             SettingRow::GameBackgroundClear => (tr!("Remove background image").into(), "", Action(tr!("Remove"))),
             SettingRow::GameSpine => {
                 let sub = if has(|g| g.asset(AssetKind::Spine).is_some()) {
-                    tr!("Runs down the spine; a wide image is turned to fit")
+                    tr!("Runs down the spine. A wide image is turned to fit")
                 } else {
-                    tr!("None; uses the spine color and label")
+                    tr!("None. Uses the spine color and label")
                 };
                 (tr!("Spine image").into(), sub, Action(tr!("Choose…")))
             }
             SettingRow::GameAdjust(kind) => {
                 let p = game.map(|g| g.placement(kind)).unwrap_or_default();
-                let value = format!(
-                    "{:.0} % · {} · {}",
-                    p.zoom * 100.0,
-                    position_label(p.x, tr!("Left"), tr!("Right")),
-                    position_label(p.y, tr!("Top"), tr!("Bottom"))
-                );
-                (tr!("Size and position…").into(), tr!("Opens a before / after preview; nothing changes until you accept"), RowValue::Summary(value))
+                (tr!("Size and position…").into(), tr!("Opens a before / after preview. Nothing changes until you accept"), RowValue::Summary(placement_summary(p)))
             }
             SettingRow::GameAdjustReset(_) => (tr!("Reset size and position").into(), "", Action(tr!("Reset"))),
             SettingRow::GameSpineClear => (tr!("Remove spine image").into(), "", Action(tr!("Remove"))),
             SettingRow::GameTop => {
-                let sub = if has(|g| g.asset(AssetKind::Top).is_some()) { tr!("Lies across the top of the box") } else { tr!("None; uses the top color") };
+                let sub = if has(|g| g.asset(AssetKind::Top).is_some()) { tr!("Lies across the top of the box") } else { tr!("None. Uses the top color") };
                 (tr!("Top image").into(), sub, Action(tr!("Choose…")))
             }
             SettingRow::GameTopClear => (tr!("Remove top image").into(), "", Action(tr!("Remove"))),
             SettingRow::GameBack => {
-                let sub = if has(|g| g.asset(AssetKind::Back).is_some()) { tr!("Seen while a 3D model box turns") } else { tr!("None; uses the spine color") };
+                let sub = if has(|g| g.asset(AssetKind::Back).is_some()) { tr!("Seen while a 3D model box turns") } else { tr!("None. Uses the spine color") };
                 (tr!("Back cover image").into(), sub, Action(tr!("Choose…")))
             }
             SettingRow::GameBackClear => (tr!("Remove back cover image").into(), "", Action(tr!("Remove"))),
             SettingRow::GameSide => {
                 let sub = if has(|g| g.asset(AssetKind::Side).is_some()) {
-                    tr!("The edge opposite the spine; seen while a 3D model box turns")
+                    tr!("The edge opposite the spine. Seen while a 3D model box turns")
                 } else {
-                    tr!("None; uses the top color")
+                    tr!("None. Uses the top color")
                 };
                 (tr!("Right side image").into(), sub, Action(tr!("Choose…")))
             }
             SettingRow::GameSideClear => (tr!("Remove right side image").into(), "", Action(tr!("Remove"))),
             SettingRow::GameBottom => {
-                let sub = if has(|g| g.asset(AssetKind::Bottom).is_some()) { tr!("Under the box; seen while editing it") } else { tr!("None; uses the top color") };
+                let sub = if has(|g| g.asset(AssetKind::Bottom).is_some()) { tr!("Under the box. Seen while editing it") } else { tr!("None. Uses the top color") };
                 (tr!("Bottom image").into(), sub, Action(tr!("Choose…")))
             }
             SettingRow::GameBottomClear => (tr!("Remove bottom image").into(), "", Action(tr!("Remove"))),
@@ -312,16 +330,16 @@ impl App {
                 let sub = if has(|g| g.asset(AssetKind::Booklet).is_some()) {
                     tr!("Inside the cover of a 3D opening case")
                 } else {
-                    tr!("None; the booklet shows the cover")
+                    tr!("None. The booklet shows the cover")
                 };
                 (tr!("Instruction booklet image").into(), sub, Action(tr!("Choose…")))
             }
             SettingRow::GameBookletClear => (tr!("Remove instruction booklet image").into(), "", Action(tr!("Remove"))),
             SettingRow::GameModel => {
                 let sub = if has(|g| g.asset(AssetKind::Model).is_some()) {
-                    tr!("STL, OBJ, PLY, glTF / GLB or 3MF; big models are simplified")
+                    tr!("STL, OBJ, PLY, glTF / GLB or 3MF. Big models are simplified")
                 } else {
-                    tr!("None; the name is shown in 3D letters")
+                    tr!("None. The name is shown in 3D letters")
                 };
                 (tr!("3D model").into(), sub, Action(tr!("Choose…")))
             }
@@ -332,7 +350,7 @@ impl App {
             ),
             SettingRow::GameModelClear => (tr!("Remove 3D model").into(), tr!("Shows the name in 3D letters again"), Action(tr!("Remove"))),
             SettingRow::GameVideo => {
-                let sub = if has(|g| g.asset(AssetKind::Video).is_some()) { tr!("Copied next to the game's images") } else { tr!("None; the cover is shown") };
+                let sub = if has(|g| g.asset(AssetKind::Video).is_some()) { tr!("Copied next to the game's images") } else { tr!("None. The cover is shown") };
                 (tr!("Preview video").into(), sub, Action(tr!("Choose…")))
             }
             SettingRow::GameVideoClear => (tr!("Remove preview video").into(), "", Action(tr!("Remove"))),
@@ -340,33 +358,33 @@ impl App {
                 let sub = if has(|g| g.asset(AssetKind::IdleVideo).is_some()) {
                     tr!("Plays on the CRT screen while the game is not selected")
                 } else {
-                    tr!("None; the cover is shown")
+                    tr!("None. The cover is shown")
                 };
                 (tr!("Idle video").into(), sub, Action(tr!("Choose…")))
             }
             SettingRow::GameIdleVideoClear => (tr!("Remove idle video").into(), "", Action(tr!("Remove"))),
             SettingRow::GameObjectColor => (
                 tr!("Object color").into(),
-                tr!("For the letters and models without colors; empty uses the theme's"),
+                tr!("For the letters and models without colors. Empty uses the theme's"),
                 game_color(o.object_color, theme.objects.color),
             ),
             SettingRow::DiscKind => (
                 tr!("Disc type").into(),
-                tr!("All are 120 mm; the shiny data side differs"),
+                tr!("All are 120 mm. The shiny data side differs"),
                 Choice(theme.discs.kind.label().into()),
             ),
             SettingRow::DiscAngle => {
                 let sub = if theme.discs.lying_flat() {
                     tr!("Set by the \"Flat, like in a drive\" spin")
                 } else {
-                    tr!("How far discs are tipped back; 0° faces you flat")
+                    tr!("How far discs are tipped back. 0° faces you flat")
                 };
                 (tr!("Angle").into(), sub, Choice(format!("{:.0}°", theme.discs.shown_angle())))
             }
             SettingRow::DiscSpin => (tr!("Spinning").into(), tr!("The selected disc spins"), Toggle(theme.discs.spin)),
             SettingRow::DiscSpinDirection => (
                 tr!("Spin").into(),
-                tr!("Flipping over also shows the data side; flat lays the disc down"),
+                tr!("Flipping over also shows the data side. Flat lays the disc down"),
                 Choice(theme.discs.spin_direction.label().into()),
             ),
             SettingRow::DiscSpinSpeed => (
@@ -374,8 +392,8 @@ impl App {
                 tr!("Turns per minute"),
                 Choice(format!("{:.0}", theme.discs.spin_speed)),
             ),
-            SettingRow::CrtWidth => (tr!("Screen width").into(), tr!("At 1080p; Left/Right steps, Enter to type a value"), px(theme.crt.size()[0])),
-            SettingRow::CrtHeight => (tr!("Screen height").into(), tr!("At 1080p; Left/Right steps, Enter to type a value"), px(theme.crt.size()[1])),
+            SettingRow::CrtWidth => (tr!("Screen width").into(), tr!("At 1080p. Left/Right steps, Enter to type a value"), px(theme.crt.size()[0])),
+            SettingRow::CrtHeight => (tr!("Screen height").into(), tr!("At 1080p. Left/Right steps, Enter to type a value"), px(theme.crt.size()[1])),
             SettingRow::CrtVideo => (
                 tr!("Play video on selected game").into(),
                 tr!("The game's preview video, on the selected screen"),
@@ -389,7 +407,7 @@ impl App {
             SettingRow::CrtFilter => (tr!("CRT filter").into(), tr!("Scanlines, flicker and a darker edge"), Toggle(theme.crt.filter)),
             SettingRow::ObjectColor => (
                 tr!("Object color").into(),
-                tr!("For the letters and models without colors; Enter to type a hex value"),
+                tr!("For the letters and models without colors. Enter to type a hex value"),
                 RowValue::Color(theme.objects.color),
             ),
             SettingRow::GameSpineLabel => {
@@ -404,11 +422,11 @@ impl App {
             SettingRow::GameTopColor => (tr!("Top color").into(), game_color_sub, game_color(o.top_color, boxes.top_color)),
             SettingRow::TileRows => (
                 tr!("Rows").into(),
-                tr!("Up to 4; tiles shrink if they don't fit the screen"),
+                tr!("Up to 4. Tiles shrink if they don't fit the screen"),
                 Choice(tiles.rows.to_string()),
             ),
-            SettingRow::TileSize => (tr!("Tile size").into(), tr!("At 1080p; scales with the window"), px(tiles.size)),
-            SettingRow::TileSpacing => (tr!("Space between tiles").into(), tr!("At 1080p; scales with the window"), px(tiles.spacing)),
+            SettingRow::TileSize => (tr!("Tile size").into(), tr!("At 1080p. Scales with the window"), px(tiles.size)),
+            SettingRow::TileSpacing => (tr!("Space between tiles").into(), tr!("At 1080p. Scales with the window"), px(tiles.spacing)),
             SettingRow::EnlargeSelected => (tr!("Enlarge the selected tile").into(), "", Toggle(tiles.enlarge_selected)),
             SettingRow::SelectedScale => (
                 tr!("Selected tile size").into(),
@@ -416,17 +434,17 @@ impl App {
                 Choice(format!("{:.0} %", tiles.selected_scale * 100.0)),
             ),
             SettingRow::TileBar => {
-                let sub = if tiles.rows > 1 { tr!("Only for a single row; set Rows to 1 to change it") } else { tr!("Only for a single row") };
+                let sub = if tiles.rows > 1 { tr!("Only for a single row. Set Rows to 1 to change it") } else { tr!("Only for a single row") };
                 (tr!("Tile row position").into(), sub, Choice(tiles.bar_position.label().into()))
             }
             SettingRow::GridColumns => (tr!("Columns").into(), tr!("Tiles grow to fill the page"), Choice(grid.columns.to_string())),
             SettingRow::GridRows => (tr!("Rows per page").into(), tr!("More games continue on the next page"), Choice(grid.rows.to_string())),
-            SettingRow::GridSpacing => (tr!("Space between tiles").into(), tr!("At 1080p; scales with the window"), px(grid.spacing)),
+            SettingRow::GridSpacing => (tr!("Space between tiles").into(), tr!("At 1080p. Scales with the window"), px(grid.spacing)),
             SettingRow::GridEnlarge => (tr!("Enlarge the selected tile").into(), "", Toggle(grid.enlarge_selected)),
             SettingRow::GridAlign => (tr!("Grid position").into(), tr!("When the grid is narrower than the screen"), Choice(grid.align.label().into())),
             SettingRow::GameArt => (
                 tr!("Use each game's background art").into(),
-                tr!("Changes with the selected game; off keeps the theme background"),
+                tr!("Changes with the selected game. Off keeps the theme background"),
                 Toggle(bg.game_art),
             ),
             SettingRow::BackgroundKind => {
@@ -459,17 +477,17 @@ impl App {
                     BarRow::Height => match self.bar_minimum(slot) {
                         Some((min, addon)) => (
                             tr!("Height · {addon} needs at least {px} px", addon = addon, px = format!("{min:.0}")),
-                            tr!("At 1080p; raised to what the addons in this bar need"),
+                            tr!("At 1080p. Raised to what the addons in this bar need"),
                             px(bar.height(slot).max(min)),
                         ),
-                        None => (tr!("Height").into(), tr!("At 1080p; the text inside stays centered"), px(bar.height(slot))),
+                        None => (tr!("Height").into(), tr!("At 1080p. The text inside stays centered"), px(bar.height(slot))),
                     },
                     BarRow::Kind => (tr!("Fill").into(), "", Choice(bar.kind.label().into())),
                     BarRow::Color => {
                         let sub = if bar.kind == BackgroundKind::Image {
                             tr!("Around and behind the image")
                         } else {
-                            tr!("Enter to type a hex value; #rrggbbaa makes it see-through")
+                            tr!("Enter to type a hex value. #rrggbbaa makes it see-through")
                         };
                         (tr!("Color").into(), sub, RowValue::Color(bar.color))
                     }
@@ -489,7 +507,7 @@ impl App {
             }
             SettingRow::ButtonStyle => (
                 tr!("Button look").into(),
-                tr!("Controller images follow the controller; drawn buttons take the colors below"),
+                tr!("Controller images follow the controller. Drawn buttons take the colors below"),
                 Choice(theme.buttons.style().label().into()),
             ),
             SettingRow::ButtonPick => (
@@ -515,7 +533,7 @@ impl App {
                     Some(c) => RowValue::Color(c),
                     None => RowValue::DefaultColor(default),
                 };
-                let color_sub = tr!("Enter to type a hex value; empty uses the default");
+                let color_sub = tr!("Enter to type a hex value. Empty uses the default");
                 match field {
                     ButtonRow::Icon => {
                         let sub = if self.theme().button_icon(button).is_some() {
@@ -539,7 +557,7 @@ impl App {
             SettingRow::AppStoreTest => (tr!("Test connection").into(), tr!("The Discover tile lists the store's apps once this works"), Action(tr!("Test"))),
             SettingRow::StoreEnabled(st) => (
                 tr!("Launch {store} games through {store}", store = st.short_name()),
-                tr!("Its window stays hidden; games start straight from YASAFF"),
+                tr!("Its window stays hidden. Games start straight from YASAFF"),
                 Toggle(self.settings.store(st).enabled),
             ),
             SettingRow::StoreBackground(st) => (
@@ -578,23 +596,23 @@ impl App {
             ),
             SettingRow::DeviceCreateFile => (
                 tr!("Create file").into(),
-                tr!("Saves this game's .yasaff file; burn it to the root of a disc or copy it to a USB stick"),
+                tr!("Saves this game's .yasaff file. Burn it to the root of a disc or copy it to a USB stick"),
                 Action(tr!("Save")),
             ),
             SettingRow::DeviceBurn => (tr!("Burn CD/DVD").into(), tr!("Burns this game's .yasaff file to a blank CD or DVD"), Action(tr!("Burn"))),
             SettingRow::DeviceInsertConfig => (
                 tr!("Insert YASAFF launch config into device").into(),
-                tr!("Writes this game's .yasaff file; plugging the device in then starts the game"),
+                tr!("Writes this game's .yasaff file. Plugging the device in then starts the game"),
                 Action(tr!("Insert")),
             ),
             SettingRow::DeviceCreateCatalog => (
                 tr!("Create backup catalog in device").into(),
-                tr!("YasaffSaves/<game> with a backup folder; saves are kept there"),
+                tr!("YasaffSaves/<game> with a backup folder. Saves are kept there"),
                 if self.picked_catalog().is_some_and(|c| c.is_dir()) { RowValue::Summary(tr!("Created").into()) } else { Action(tr!("Create")) },
             ),
             SettingRow::DeviceBackupNow => (
                 tr!("Backup current saves to device").into(),
-                tr!("Zips the save folder; the folder picker opens on the device"),
+                tr!("Zips the save folder. The folder picker opens on the device"),
                 Action(tr!("Back up")),
             ),
             SettingRow::DeviceKeepSaves => (
@@ -618,7 +636,7 @@ impl App {
             ),
             SettingRow::DeviceSetSaveFolder => (
                 tr!("Change save folder").into(),
-                tr!("Points YASAFF at the folder this game saves to; pick the files to back up below"),
+                tr!("Points YASAFF at the folder this game saves to. Pick the files to back up below"),
                 Action(tr!("Choose")),
             ),
             SettingRow::DeviceSavePath(i) => {
@@ -634,7 +652,7 @@ impl App {
             }
             SettingRow::DeviceSaveFolder => (
                 game.and_then(|g| g.save_dir.as_ref()).map(|d| d.display().to_string()).unwrap_or_default(),
-                tr!("The save folder from Change save folder; used until you add files or folders below"),
+                tr!("The save folder from Change save folder. Used until you add files or folders below"),
                 RowValue::Summary(tr!("Save folder").into()),
             ),
             SettingRow::DeviceAddFiles => (tr!("Add save files").into(), tr!("One or more files the game saves to"), Action(tr!("Add"))),
@@ -644,5 +662,49 @@ impl App {
                 Action(tr!("Add")),
             ),
         }
+    }
+}
+
+impl App {
+    /// The picture an Appearance row shows a thumbnail of.
+    pub(in crate::app) fn setting_row_image(&self, row: SettingRow) -> Option<PathBuf> {
+        let game = self.selected_game()?;
+        let path = match row {
+            SettingRow::StyleCover(style) => game.style_cover(style),
+            SettingRow::GalleryImage(i) => game.gallery.get(i).map(PathBuf::as_path),
+            SettingRow::GameBackground => game.asset(AssetKind::Background),
+            SettingRow::GameSpine => game.asset(AssetKind::Spine),
+            SettingRow::GameTop => game.asset(AssetKind::Top),
+            SettingRow::GameBack => game.asset(AssetKind::Back),
+            SettingRow::GameSide => game.asset(AssetKind::Side),
+            SettingRow::GameBottom => game.asset(AssetKind::Bottom),
+            SettingRow::GameBooklet => game.asset(AssetKind::Booklet),
+            _ => None,
+        };
+        path.map(Path::to_path_buf)
+    }
+}
+
+fn placement_summary(p: CoverPlacement) -> String {
+    format!("{:.0} % · {} · {}", p.zoom * 100.0, position_label(p.x, tr!("Left"), tr!("Right")), position_label(p.y, tr!("Top"), tr!("Bottom")))
+}
+
+/// Where an image is shown, as the gallery lists it.
+pub(in crate::app) fn slot_label(slot: ImageSlot) -> &'static str {
+    match slot {
+        ImageSlot::Cover(style) => style.label(),
+        ImageSlot::Asset(kind) => match kind {
+            AssetKind::Cover => tr!("Cover image"),
+            AssetKind::Background => tr!("Background image"),
+            AssetKind::Spine => tr!("Spine image"),
+            AssetKind::Top => tr!("Top image"),
+            AssetKind::Back => tr!("Back cover image"),
+            AssetKind::Side => tr!("Right side image"),
+            AssetKind::Bottom => tr!("Bottom image"),
+            AssetKind::Booklet => tr!("Instruction booklet image"),
+            AssetKind::Model => tr!("3D model"),
+            AssetKind::Video => tr!("Preview video"),
+            AssetKind::IdleVideo => tr!("Idle video"),
+        },
     }
 }

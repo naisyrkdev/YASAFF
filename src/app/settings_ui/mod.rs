@@ -11,6 +11,7 @@ mod rows;
 mod screen;
 
 use super::*;
+pub(super) use content::slot_label;
 
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum SettingRow {
@@ -19,6 +20,7 @@ pub(super) enum SettingRow {
     Language,
     OrderLastPlayed,
     OrderStatic,
+    GalleryKeepAll,
     ProfileActive,
     ProfileRename,
     ProfileNew,
@@ -128,7 +130,10 @@ pub(super) enum SettingRow {
     DeviceSaveFolder,
     DeviceAddFiles,
     DeviceAddFolders,
-    GameCover,
+    /// The cover a tile style shows.
+    StyleCover(TileStyle),
+    StyleAdjust(TileStyle),
+    StyleAdjustReset(TileStyle),
     GameBackground,
     GameBackgroundClear,
     GameAdjust(AssetKind),
@@ -158,6 +163,9 @@ pub(super) enum SettingRow {
     GameSpineText,
     GameTopColor,
     GameTitleFont,
+    /// An image in the game's gallery, by its index there.
+    GalleryImage(usize),
+    GalleryEmpty,
     AddonManager,
     AboutApp,
     AboutSource,
@@ -198,7 +206,11 @@ impl SettingRow {
     pub(super) fn page(self) -> Page {
         use SettingRow as R;
         match self {
-            R::GameCover
+            R::StyleCover(_)
+            | R::StyleAdjust(_)
+            | R::StyleAdjustReset(_)
+            | R::GalleryImage(_)
+            | R::GalleryEmpty
             | R::GameBackground
             | R::GameBackgroundClear
             | R::GameAdjust(_)

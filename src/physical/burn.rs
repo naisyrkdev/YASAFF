@@ -243,7 +243,7 @@ fn burn_in(job: &BurnJob, tool: Tool, work: &Path, progress: &mut impl FnMut(Pro
                     return Err(first.explain());
                 }
                 log::warn!("burn: {program} failed before writing; retrying in SAO mode at 4x");
-                progress(Progress::stage(tr!("Calibration failed; trying again at a slower speed")));
+                progress(Progress::stage(tr!("Calibration failed. Trying again at a slower speed")));
                 let last = args.pop().unwrap();
                 args.extend(["-dao", "speed=4", last]);
                 run(program, &args, report!()).map_err(|f| f.explain())?;
@@ -294,7 +294,7 @@ impl Failure {
         } else if self.says("not blank") || self.says("disk is not empty") || self.says("not writeable") {
             tr!("The disc isn't blank. Insert a blank CD or DVD.")
         } else if self.says("buffer underrun") || self.says("write error") || self.says("input/output error") {
-            tr!("Writing failed partway; this disc is probably unusable now. Try a new one at a lower speed.")
+            tr!("Writing failed partway. This disc is probably unusable now. Try a new one at a lower speed.")
         } else {
             ""
         };

@@ -131,6 +131,16 @@ pub(super) fn paint_spine_text(ui: &Ui, text: &str, font: egui::FontFamily, colo
     painter.add(Shape::mesh(mesh));
 }
 
+/// Paints the whole image inside `rect`, keeping its proportions.
+pub(super) fn paint_image_contained(ctx: &Context, painter: &Painter, path: &Path, rect: Rect) {
+    let Ok(egui::load::TexturePoll::Ready { texture }) = egui::Image::new(file_uri(path)).load_for_size(ctx, rect.size()) else {
+        return;
+    };
+    let scale = (rect.width() / texture.size.x).min(rect.height() / texture.size.y);
+    let fitted = Rect::from_center_size(rect.center(), texture.size * scale);
+    painter.image(texture.id, fitted, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+}
+
 pub(super) fn paint_image_cover(ui: &Ui, path: &Path, rect: Rect, alpha: f32, radius: u8) {
     paint_image_placed(ui, path, rect, alpha, radius, CoverPlacement::default());
 }

@@ -7,6 +7,7 @@ mod device_ui;
 mod dialogs;
 mod discs;
 mod font_ui;
+mod gallery_ui;
 mod home;
 mod keyboard;
 mod menus;
@@ -31,7 +32,7 @@ use crate::initial;
 use crate::global_mouse::GlobalMouse;
 use crate::input::{Action, Control, GLOBAL_MOUSE_BUTTONS, Input, PadButton, PadFamily};
 use crate::launcher;
-use crate::library::{AssetKind, CoverPlacement, Game, Library};
+use crate::library::{AssetKind, CoverPlacement, Game, ImageSlot, Library};
 use crate::metadata::{self, Fetcher};
 use crate::object3d::{self, Objects};
 use crate::profiles;
@@ -41,7 +42,7 @@ use crate::settings::{DiscAction, Language, MouseSettings, Settings};
 use crate::stores::Store;
 use crate::video::{self, Videos};
 use crate::theme::{
-    self, BackgroundKind, BarPosition, BarSlot, BarStyle, BoxCase, BubbleSettings, ButtonShape, ButtonStyle, DiscKind, DiscSettings, DiscSpin, GradientDirection, GridAlign, GridSettings,
+    self, BackgroundKind, BarPosition, BarSlot, BarStyle, BoxCase, BubbleSettings, CoverShape, ButtonShape, ButtonStyle, DiscKind, DiscSettings, DiscSpin, GradientDirection, GridAlign, GridSettings,
     CrtSettings, ImageFit, SpineLabel, Theme, ThemeKind, TileSettings, TileStyle, ViewKind,
 };
 use egui::{
@@ -158,6 +159,9 @@ enum Mode {
     DiscChooser { name: String, candidates: Vec<String>, cursor: usize, volume: Volume },
     DiscNotFound { name: String },
     CoverEditor(CoverEditor),
+    /// Choosing between importing a new image for `slot` and reusing one from the gallery.
+    ImageSource { slot: ImageSlot, back: SettingRow, cursor: usize },
+    GalleryPick { slot: ImageSlot, back: SettingRow, cursor: usize },
     FontManager { cursor: usize, armed: bool },
     AddonManager(AddonManager),
     Burn(BurnDialog),
@@ -245,7 +249,8 @@ impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, settings: Settings, startup_warnings: Vec<String>, fullscreen: bool, disc: Option<PathBuf>) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
-        let (library, warning) = Library::load();
+        let (mut library, warning) = Library::load();
+        library.prune_gallery = !settings.gallery.keep_all;
         let (themes, theme_warnings) = Theme::load_all();
 
         let (disc_tx, discs) = mpsc::channel();
@@ -532,6 +537,8 @@ impl App {
             Mode::Prompt { .. } => self.handle_prompt(action),
             Mode::Settings { .. } => self.handle_settings(action),
             Mode::CoverEditor(_) => self.handle_cover_editor(action),
+            Mode::ImageSource { .. } => self.handle_image_source(action),
+            Mode::GalleryPick { .. } => self.handle_gallery_pick(action),
             Mode::Launching(_) => {
                 if action == Action::Back {
                     self.mode = Mode::Home;
@@ -657,6 +664,8 @@ impl eframe::App for App {
         self.draw_disc_chooser(ui, screen, s);
         self.draw_disc_not_found(ui, screen, s);
         self.draw_profile_imported(ui, screen, s);
+        self.draw_image_source(ui, screen, s);
+        self.draw_gallery_pick(ui, screen, s);
         self.draw_burn(ui, screen, s);
         self.draw_device_sync(ui, screen, s);
         self.draw_setup(&painter, screen, s);

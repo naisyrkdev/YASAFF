@@ -314,7 +314,7 @@ impl App {
                 if game.app_id.is_some() {
                     (tr!("Uninstall \"{name}\"?", name = game.name), tr!("Its files are deleted. Its saved data and settings are kept for a reinstall."))
                 } else {
-                    (tr!("Remove \"{name}\"?", name = game.name), tr!("Only the library entry and its images are removed; game files stay untouched."))
+                    (tr!("Remove \"{name}\"?", name = game.name), tr!("Only the library entry and its images are removed. Game files stay untouched."))
                 }
             }
             Removal::Theme => (
@@ -343,7 +343,7 @@ impl App {
             ),
             Removal::StaticOrder => (
                 tr!("Mark all games static?").to_owned(),
-                tr!("Each stays in its current slot; you place games yourself with Swap position."),
+                tr!("Each stays in its current slot. You place games yourself with Swap position."),
             ),
         };
         let painter = ui.painter();

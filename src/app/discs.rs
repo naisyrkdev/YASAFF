@@ -90,7 +90,7 @@ impl App {
             return;
         }
         if self.device_sync_running() {
-            self.notify(tr!("Disc inserted: {name}. Saves are still being copied; insert it again afterwards.", name = name));
+            self.notify(tr!("Disc inserted: {name}. Saves are still being copied. Insert it again afterwards.", name = name));
             return;
         }
 
@@ -339,8 +339,8 @@ impl App {
             }
 
             let (status, detail) = match &b.result {
-                None => (b.progress.status.clone(), tr!("Don't open the tray. B hides this screen; burning carries on.").to_owned()),
-                Some(Ok(())) => (tr!("Disc burned").to_owned(), tr!("Take it out; inserting it again starts the game.").to_owned()),
+                None => (b.progress.status.clone(), tr!("Don't open the tray. B hides this screen. Burning carries on.").to_owned()),
+                Some(Ok(())) => (tr!("Disc burned").to_owned(), tr!("Take it out. Inserting it again starts the game.").to_owned()),
                 Some(Err(e)) => (tr!("Burning failed").to_owned(), e.clone()),
             };
             let btn = Rect::from_center_size(panel.center_bottom() - vec2(0.0, 50.0 * s), vec2(200.0 * s, 54.0 * s));
@@ -365,7 +365,7 @@ impl App {
 
         let top = panel.top() + 130.0 * s;
         if dialog.burners.is_empty() {
-            let text = tr!("No CD/DVD burner found. Connect one (USB burners work too); it shows up here.");
+            let text = tr!("No CD/DVD burner found. Connect one (USB burners work too). It shows up here.");
             painter.text(pos2(panel.center().x, top + 80.0 * s), Align2::CENTER_CENTER, text, FontId::proportional(19.0 * s), Color32::from_gray(150));
         }
         let row_h = 82.0 * s;

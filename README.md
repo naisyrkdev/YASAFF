@@ -111,7 +111,10 @@ You don't have to close a game or app to get back to YASAFF. Press **Guide** and
 Press **Menu** (or **Tab**) on a game to open its options:
 
 - **Start**, **Close game** / **Close application**, and **Update** for store apps.
-- **Appearance**: cover image and its size and position, background image, spine, top, back, side and bottom images, the instruction booklet, a 3D model, preview and idle videos, colors and the title font, all for this game only.
+- **Appearance**: one section per tile style (square cards, game covers, the box styles, 3D objects, discs and CRT screens), each with its own cover image and its own size and position. A style without a cover of its own copies the one shown before it when you switch to it. Then the box sides (spine, top, back, side, bottom, booklet, colors), the background, preview and idle videos, the title font, and the **Gallery**.
+  - Choosing an image asks whether to **Import new** or **Use from gallery**, so images the game already has can be reused.
+  - The **Gallery** lists every image the game has, imported or fetched, and where each one is used. Images nothing uses can be deleted there.
+  - **Settings → General → Keep every image in gallery, manage it manually** is on by default. Turn it off and a new image deletes the one it replaces, unless another tile style still shows it.
 - **Fetch artwork**, **Rename**, **Edit launch command**.
 - **Swap position with another game** (or **Swap with other bubble**), and **Lock position**, an On/Off switch that keeps the game in its slot.
 - **Physical Devices**: the game's launch file and save backups. See [Discs, USB sticks and SD cards](#discs-usb-sticks-and-sd-cards) and [Saves](#saves).

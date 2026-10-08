@@ -148,7 +148,7 @@ impl App {
                 ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
             }
         } else if elapsed >= LAUNCH_TIMEOUT {
-            let msg = tr!("{name} hasn't opened a window yet; it may still be starting.", name = l.name);
+            let msg = tr!("{name} hasn't opened a window yet. It may still be starting.", name = l.name);
             self.mode = Mode::Home;
             self.notify(msg);
         }
@@ -192,7 +192,7 @@ impl App {
         };
         painter.text(pos2(x, y), Align2::CENTER_TOP, status, FontId::proportional(18.0 * s), Color32::from_gray(150));
         if secs >= 10 {
-            painter.text(pos2(x, y + 30.0 * s), Align2::CENTER_TOP, tr!("Taking a while? Press B to hide this screen; the game keeps starting."), FontId::proportional(16.0 * s), Color32::from_gray(120));
+            painter.text(pos2(x, y + 30.0 * s), Align2::CENTER_TOP, tr!("Taking a while? Press B to hide this screen. The game keeps starting."), FontId::proportional(16.0 * s), Color32::from_gray(120));
         }
     }
 }

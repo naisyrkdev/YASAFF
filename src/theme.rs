@@ -80,6 +80,11 @@ impl TileStyle {
         }
     }
 
+    /// Whether tiles of this style show the cover image; 3D objects show a model instead.
+    pub fn shows_cover(self) -> bool {
+        self != Self::Object
+    }
+
     pub fn is_box(self) -> bool {
         matches!(self, Self::FlatBox | Self::Model | Self::Case)
     }

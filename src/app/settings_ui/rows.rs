@@ -26,49 +26,67 @@ impl App {
         }
         if page == Page::GameBox {
             let game = self.selected_game();
-            let mut rows = vec![R::GameAdjust(AssetKind::Cover)];
-            if game.is_some_and(|g| !g.placement(AssetKind::Cover).is_default()) {
-                rows.push(R::GameAdjustReset(AssetKind::Cover));
+            let has = |kind: AssetKind| game.is_some_and(|g| g.asset(kind).is_some());
+            let mut rows = Vec::new();
+            for style in TileStyle::ALL {
+                if style.shows_cover() {
+                    rows.push(R::StyleCover(style));
+                    if let Some(game) = game.filter(|g| g.style_cover(style).is_some()) {
+                        rows.push(R::StyleAdjust(style));
+                        if !game.style_placement(style).is_default() {
+                            rows.push(R::StyleAdjustReset(style));
+                        }
+                    }
+                }
+                if style == TileStyle::Case {
+                    // The box sides are shared by every box style.
+                    for (kind, pick, clear) in [
+                        (AssetKind::Spine, R::GameSpine, R::GameSpineClear),
+                        (AssetKind::Top, R::GameTop, R::GameTopClear),
+                        (AssetKind::Back, R::GameBack, R::GameBackClear),
+                        (AssetKind::Side, R::GameSide, R::GameSideClear),
+                        (AssetKind::Bottom, R::GameBottom, R::GameBottomClear),
+                        (AssetKind::Booklet, R::GameBooklet, R::GameBookletClear),
+                    ] {
+                        rows.push(pick);
+                        let Some(game) = game.filter(|g| g.asset(kind).is_some()) else { continue };
+                        rows.push(R::GameAdjust(kind));
+                        if !game.placement(kind).is_default() {
+                            rows.push(R::GameAdjustReset(kind));
+                        }
+                        rows.push(clear);
+                    }
+                    rows.extend([R::GameSpineLabel, R::GameSpineColor, R::GameSpineText, R::GameTopColor]);
+                }
+                if style == TileStyle::Object {
+                    rows.push(R::GameModel);
+                    if has(AssetKind::Model) {
+                        rows.extend([R::GameModelUp, R::GameModelClear]);
+                    }
+                    rows.push(R::GameObjectColor);
+                }
             }
-            rows.push(R::GameCover);
             rows.push(R::GameBackground);
-            if game.is_some_and(|g| g.asset(AssetKind::Background).is_some()) {
+            if has(AssetKind::Background) {
                 rows.push(R::GameBackgroundClear);
             }
-            for (kind, pick, clear) in [
-                (AssetKind::Spine, R::GameSpine, R::GameSpineClear),
-                (AssetKind::Top, R::GameTop, R::GameTopClear),
-                (AssetKind::Back, R::GameBack, R::GameBackClear),
-                (AssetKind::Side, R::GameSide, R::GameSideClear),
-                (AssetKind::Bottom, R::GameBottom, R::GameBottomClear),
-                (AssetKind::Booklet, R::GameBooklet, R::GameBookletClear),
-            ] {
-                rows.push(pick);
-                let Some(game) = game.filter(|g| g.asset(kind).is_some()) else { continue };
-                rows.push(R::GameAdjust(kind));
-                if !game.placement(kind).is_default() {
-                    rows.push(R::GameAdjustReset(kind));
-                }
-                rows.push(clear);
-            }
-            rows.push(R::GameModel);
-            if game.is_some_and(|g| g.asset(AssetKind::Model).is_some()) {
-                rows.extend([R::GameModelUp, R::GameModelClear]);
-            }
             rows.push(R::GameVideo);
-            if game.is_some_and(|g| g.asset(AssetKind::Video).is_some()) {
+            if has(AssetKind::Video) {
                 rows.push(R::GameVideoClear);
             }
             rows.push(R::GameIdleVideo);
-            if game.is_some_and(|g| g.asset(AssetKind::IdleVideo).is_some()) {
+            if has(AssetKind::IdleVideo) {
                 rows.push(R::GameIdleVideoClear);
             }
-            rows.push(R::GameObjectColor);
-            rows.extend([R::GameSpineLabel, R::GameSpineColor, R::GameSpineText, R::GameTopColor, R::GameTitleFont]);
+            rows.push(R::GameTitleFont);
+            match game.map_or(0, |g| g.gallery.len()) {
+                0 => rows.push(R::GalleryEmpty),
+                n => rows.extend((0..n).map(R::GalleryImage)),
+            }
             return rows;
         }
         let theme = &self.theme().settings;
-        let mut rows = vec![R::Fullscreen, R::Autostart, R::Language, R::OrderLastPlayed, R::OrderStatic];
+        let mut rows = vec![R::Fullscreen, R::Autostart, R::Language, R::GalleryKeepAll, R::OrderLastPlayed, R::OrderStatic];
         rows.extend([R::ProfileActive, R::ProfileRename, R::ProfileNew, R::ProfileExport, R::ProfileImport, R::ProfileReset]);
         rows.extend([R::ViewKind, R::TileStyle]);
         let bubbles = theme.kind == ThemeKind::Bubbles;
@@ -258,21 +276,21 @@ impl App {
             SettingRow::Theme => Some((tr!("Theme"), Some((tr!("{count} installed", count = self.themes.len()), Color32::from_gray(140))))),
             SettingRow::ViewKind => Some((tr!("Home screen"), None)),
             SettingRow::BoxCase => {
-                Some((tr!("Boxes"), Some((tr!("Defaults; each game can change them in its Options").to_owned(), Color32::from_gray(140)))))
+                Some((tr!("Boxes"), Some((tr!("Defaults. Each game can change them in its Options").to_owned(), Color32::from_gray(140)))))
             }
-            SettingRow::GameAdjust(AssetKind::Cover) => {
-                Some((tr!("Cover in its tile"), Some((tr!("Squares, game covers and box fronts").to_owned(), Color32::from_gray(140)))))
-            }
-            SettingRow::GameCover => Some((tr!("Images"), None)),
-            SettingRow::GameSpineLabel => {
-                Some((tr!("Spine and top"), Some((tr!("Used where there is no spine / top image").to_owned(), Color32::from_gray(140)))))
-            }
+            SettingRow::StyleCover(style) => Some((style.label(), Some(self.style_status(style)))),
+            SettingRow::GameSpine => Some((
+                tr!("Box sides"),
+                Some((tr!("Shared by every box style. Colors and the label are used where there is no image").to_owned(), Color32::from_gray(140))),
+            )),
+            SettingRow::GameBackground => Some((tr!("Background"), None)),
+            SettingRow::GalleryImage(0) | SettingRow::GalleryEmpty => Some(self.gallery_heading()),
             SettingRow::GameArt => Some((tr!("Background"), None)),
             SettingRow::Bar(slot, BarRow::Enabled) => Some((slot.label(), None)),
             SettingRow::ButtonStyle => Some(self.buttons_heading()),
             SettingRow::TileIcon(special) if special == Special::ALL[0] => Some((
                 tr!("Tile icons"),
-                Some((tr!("SVG icons for the Discover, Add game and Settings tiles; saved and exported with the theme").to_owned(), Color32::from_gray(140))),
+                Some((tr!("SVG icons for the Discover, Add game and Settings tiles. Saved and exported with the theme").to_owned(), Color32::from_gray(140))),
             )),
             SettingRow::DiscKind => Some((tr!("Discs"), Some((tr!("Covers are printed on the label side").to_owned(), Color32::from_gray(140))))),
             SettingRow::ObjectColor => Some((
@@ -288,9 +306,12 @@ impl App {
                 });
                 Some((tr!("Bubbles"), sub))
             }
-            SettingRow::GameVideo => Some((tr!("Videos"), Some((tr!("For bubbles and CRT screens; needs ffmpeg installed").to_owned(), Color32::from_gray(140))))),
+            SettingRow::GameVideo => Some((tr!("Videos"), Some((tr!("For bubbles and CRT screens. Needs ffmpeg installed").to_owned(), Color32::from_gray(140))))),
             SettingRow::CrtWidth => Some((tr!("CRT screens"), Some((tr!("Videos are set in each game's Options").to_owned(), Color32::from_gray(140))))),
-            SettingRow::GameModel => Some((tr!("3D object"), Some((tr!("For the 3D objects tile style").to_owned(), Color32::from_gray(140))))),
+            SettingRow::GameModel => Some((
+                TileStyle::Object.label(),
+                Some((tr!("Shows the 3D model, or the name in 3D letters without one").to_owned(), Color32::from_gray(140))),
+            )),
             SettingRow::GameTitleFont => Some((tr!("Title"), None)),
             SettingRow::StoreEnabled(store) => {
                 let status = match self.settings.store_command(store) {
@@ -305,7 +326,7 @@ impl App {
             SettingRow::DeviceTarget => Some((
                 tr!("Device"),
                 Some(match self.devices.len() {
-                    0 => (tr!("Plug in a USB stick or SD card; it shows up here").to_owned(), PAD_Y),
+                    0 => (tr!("Plug in a USB stick or SD card. It shows up here").to_owned(), PAD_Y),
                     n => (tr_n!(n, "{n} USB stick or SD card plugged in", "{n} USB sticks or SD cards plugged in"), Color32::from_gray(140)),
                 }),
             )),
@@ -335,6 +356,28 @@ impl App {
             Some(n) => (tr_n!(n, "{n} tracked", "{n} tracked"), Color32::from_gray(140)),
         };
         (tr!("Save files"), Some(status))
+    }
+
+    fn style_status(&self, style: TileStyle) -> (String, Color32) {
+        let gray = Color32::from_gray(140);
+        let Some(game) = self.selected_game() else { return (String::new(), gray) };
+        if style == self.theme().settings.tile_style {
+            (tr!("The tile style shown now").to_owned(), ACCENT)
+        } else if game.style_cover(style).is_some() {
+            (tr!("Has its own cover and placement").to_owned(), gray)
+        } else {
+            (tr!("No cover of its own. It copies the one shown before it when you switch to it").to_owned(), gray)
+        }
+    }
+
+    fn gallery_heading(&self) -> (&'static str, Option<(String, Color32)>) {
+        let n = self.selected_game().map_or(0, |g| g.gallery.len());
+        let status = if self.settings.gallery.keep_all {
+            tr_n!(n, "{n} image · replaced images stay here until you remove them", "{n} images · replaced images stay here until you remove them")
+        } else {
+            tr_n!(n, "{n} image · replaced images are deleted when nothing uses them", "{n} images · replaced images are deleted when nothing uses them")
+        };
+        (tr!("Gallery"), Some((status, Color32::from_gray(140))))
     }
 
     pub(in crate::app) fn addons_heading(&self) -> (&'static str, Option<(String, Color32)>) {
