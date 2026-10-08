@@ -199,8 +199,13 @@ impl App {
                 self.settings.discs.keep_saves ^= true;
                 self.save_settings();
             }
+            SettingRow::DeviceCreateFile => self.create_disc_file(),
+            SettingRow::DeviceBurn => self.open_burner(),
             SettingRow::DeviceInsertConfig => self.insert_launch_config(),
             SettingRow::DeviceCreateCatalog => self.create_save_catalog(),
+            SettingRow::DeviceBackupNow => self.backup_saves(),
+            SettingRow::DeviceOpenSaveFolder => self.open_save_dir(),
+            SettingRow::DeviceSetSaveFolder => self.pick_save_dir(),
             SettingRow::DeviceSavePath(i) => self.remove_device_save_path(i),
             SettingRow::DeviceSaveFolder => {}
             SettingRow::DeviceAddFiles => self.add_device_save_paths(false),
@@ -359,12 +364,13 @@ impl App {
                 self.mode = Mode::Prompt { kind: PromptKind::BoxSize(row), buffer };
             }
             SettingRow::GameCover => self.pick_asset(AssetKind::Cover),
+            SettingRow::GameBackground => self.pick_asset(AssetKind::Background),
             SettingRow::GameAdjustReset(kind) => {
                 *self.library.games[self.selected].placement_mut(kind) = CoverPlacement::default();
                 self.save();
                 self.mode = self.settings_at(SettingRow::GameAdjust(kind));
             }
-            SettingRow::GameAdjust(kind) => self.open_cover_editor(kind, false),
+            SettingRow::GameAdjust(kind) => self.open_cover_editor(kind),
             SettingRow::GameSpine => self.pick_asset(AssetKind::Spine),
             SettingRow::GameTop => self.pick_asset(AssetKind::Top),
             SettingRow::GameBack => self.pick_asset(AssetKind::Back),
@@ -386,6 +392,7 @@ impl App {
             | SettingRow::GameSideClear
             | SettingRow::GameBottomClear
             | SettingRow::GameBookletClear
+            | SettingRow::GameBackgroundClear
             | SettingRow::GameModelClear
             | SettingRow::GameVideoClear
             | SettingRow::GameIdleVideoClear => {
@@ -397,6 +404,7 @@ impl App {
                     SettingRow::GameSideClear => (AssetKind::Side, SettingRow::GameSide),
                     SettingRow::GameBottomClear => (AssetKind::Bottom, SettingRow::GameBottom),
                     SettingRow::GameBookletClear => (AssetKind::Booklet, SettingRow::GameBooklet),
+                    SettingRow::GameBackgroundClear => (AssetKind::Background, SettingRow::GameBackground),
                     SettingRow::GameModelClear => (AssetKind::Model, SettingRow::GameModel),
                     _ => (AssetKind::Back, SettingRow::GameBack),
                 };

@@ -6,12 +6,20 @@ impl App {
     pub(in crate::app) fn setting_rows(&self, page: Page) -> Vec<SettingRow> {
         use SettingRow as R;
         if page == Page::GameDevice {
-            let mut rows = vec![R::DeviceTarget, R::DeviceInsertConfig, R::DeviceCreateCatalog, R::DeviceKeepSaves, R::DeviceRecovery];
-            if let Some(game) = self.selected_game() {
-                rows.extend((0..game.device_saves.paths.len()).map(R::DeviceSavePath));
-                if game.device_saves.paths.is_empty() && game.save_dir.is_some() {
-                    rows.push(R::DeviceSaveFolder);
-                }
+            let mut rows = vec![R::DeviceTarget, R::DeviceCreateFile, R::DeviceBurn, R::DeviceInsertConfig];
+            let Some(game) = self.selected_game().filter(|g| g.app_id.is_none()) else { return rows };
+            rows.push(R::DeviceCreateCatalog);
+            if game.save_dir.is_some() {
+                rows.push(R::DeviceBackupNow);
+            }
+            rows.extend([R::DeviceKeepSaves, R::DeviceRecovery]);
+            if game.save_dir.is_some() {
+                rows.push(R::DeviceOpenSaveFolder);
+            }
+            rows.push(R::DeviceSetSaveFolder);
+            rows.extend((0..game.device_saves.paths.len()).map(R::DeviceSavePath));
+            if game.device_saves.paths.is_empty() && game.save_dir.is_some() {
+                rows.push(R::DeviceSaveFolder);
             }
             rows.extend([R::DeviceAddFiles, R::DeviceAddFolders]);
             return rows;
@@ -23,6 +31,10 @@ impl App {
                 rows.push(R::GameAdjustReset(AssetKind::Cover));
             }
             rows.push(R::GameCover);
+            rows.push(R::GameBackground);
+            if game.is_some_and(|g| g.asset(AssetKind::Background).is_some()) {
+                rows.push(R::GameBackgroundClear);
+            }
             for (kind, pick, clear) in [
                 (AssetKind::Spine, R::GameSpine, R::GameSpineClear),
                 (AssetKind::Top, R::GameTop, R::GameTopClear),
@@ -291,16 +303,20 @@ impl App {
                 Some((tr!("Physical Devices"), Some((tr!("A disc or USB stick with a .yasaff file").to_owned(), Color32::from_gray(140)))))
             }
             SettingRow::DeviceTarget => Some((
-                tr!("Launch device"),
+                tr!("Device"),
                 Some(match self.devices.len() {
                     0 => (tr!("Plug in a USB stick or SD card; it shows up here").to_owned(), PAD_Y),
                     n => (tr_n!(n, "{n} USB stick or SD card plugged in", "{n} USB sticks or SD cards plugged in"), Color32::from_gray(140)),
                 }),
             )),
-            SettingRow::DeviceKeepSaves => Some((
-                tr!("Saves on device"),
+            SettingRow::DeviceCreateFile => Some((
+                tr!("YASAFF Launching File"),
+                Some((tr!("A .yasaff file on a disc, USB stick or SD card starts this game").to_owned(), Color32::from_gray(140))),
+            )),
+            SettingRow::DeviceCreateCatalog => Some((
+                tr!("Backups"),
                 Some(if self.settings.discs.keep_saves {
-                    (tr!("Copied when the game closes, if it was started from a USB stick or SD card").to_owned(), Color32::from_gray(140))
+                    (tr!("Saves are copied when the game closes, if it was started from a USB stick or SD card").to_owned(), Color32::from_gray(140))
                 } else {
                     (tr!("Also turn on \"Keep saves on the launch device\" in Settings › Physical Devices").to_owned(), PAD_Y)
                 }),

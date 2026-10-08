@@ -7,8 +7,6 @@ pub(super) struct CoverEditor {
     pub(super) draft: CoverPlacement,
     pub(super) cursor: usize,
     pub(super) button: EditorButton,
-    /// Opened from the game's Options menu rather than its box appearance page; closing returns there.
-    pub(super) from_menu: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -86,30 +84,26 @@ impl CoverSlider {
 }
 
 impl App {
-    pub(super) fn open_cover_editor(&mut self, kind: AssetKind, from_menu: bool) {
+    pub(super) fn open_cover_editor(&mut self, kind: AssetKind) {
         let Some(game) = self.selected_game() else { return };
         let draft = game.placement(kind);
-        self.mode = Mode::CoverEditor(CoverEditor { kind, draft, cursor: 0, button: EditorButton::Accept, from_menu });
+        self.mode = Mode::CoverEditor(CoverEditor { kind, draft, cursor: 0, button: EditorButton::Accept });
     }
 
     pub(super) fn close_cover_editor(&mut self, accept: bool) {
         let Mode::CoverEditor(editor) = &self.mode else { return };
-        let (kind, from_menu) = (editor.kind, editor.from_menu);
+        let kind = editor.kind;
         if accept && let Some(game) = self.library.games.get_mut(self.selected) {
             *game.placement_mut(kind) = editor.draft;
             self.save();
         }
-        self.mode = if from_menu {
-            Mode::Options { cursor: self.menu_index(MenuItem::AdjustCover) }
-        } else {
-            self.settings_at(SettingRow::GameAdjust(kind))
-        };
+        self.mode = self.settings_at(SettingRow::GameAdjust(kind));
     }
 
     pub(super) fn draw_cover_editor(&mut self, ui: &Ui, screen: Rect, s: f32) {
         let Mode::CoverEditor(editor) = &self.mode else { return };
         let Some(game) = self.selected_game() else { return };
-        let (kind, mut draft, mut cursor, mut button, from_menu) = (editor.kind, editor.draft, editor.cursor, editor.button, editor.from_menu);
+        let (kind, mut draft, mut cursor, mut button) = (editor.kind, editor.draft, editor.cursor, editor.button);
         let before = game.placement(kind);
         let painter = ui.painter();
         painter.rect_filled(screen, 0, Color32::from_black_alpha(190));
@@ -205,7 +199,7 @@ impl App {
             }
         }
 
-        self.mode = Mode::CoverEditor(CoverEditor { kind, draft, cursor, button, from_menu });
+        self.mode = Mode::CoverEditor(CoverEditor { kind, draft, cursor, button });
         if let Some(accept) = accept {
             self.close_cover_editor(accept);
         }

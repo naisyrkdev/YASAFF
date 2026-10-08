@@ -9,7 +9,7 @@ impl App {
         let sections = self.setting_sections(&rows);
         let title = match (page, self.selected_game()) {
             (Page::GameBox, Some(game)) => tr!("Appearance · {name}", name = game.name),
-            (Page::GameDevice, Some(game)) => tr!("SD and USB · {name}", name = game.name),
+            (Page::GameDevice, Some(game)) => tr!("Physical Devices · {name}", name = game.name),
             _ => tr!("Settings").to_owned(),
         };
         let cursor = cursor.min(rows.len() - 1);
@@ -215,8 +215,8 @@ impl App {
         if close {
             self.mode = match page {
                 Page::App => Mode::Home,
-                Page::GameBox => Mode::Options { cursor: self.menu_index(MenuItem::BoxAppearance) },
-                Page::GameDevice => Mode::Options { cursor: self.menu_index(MenuItem::DeviceSaves) },
+                Page::GameBox => Mode::Options { cursor: self.menu_index(MenuItem::Appearance) },
+                Page::GameDevice => Mode::Options { cursor: self.menu_index(MenuItem::PhysicalDevices) },
             }
         }
     }

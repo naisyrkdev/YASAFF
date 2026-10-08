@@ -179,8 +179,7 @@ impl App {
             self.mode = Mode::Home;
             self.notify(tr!("Added {name}", name = entry.name));
         } else {
-            let item = if self.theme().settings.tile_style.is_box() { MenuItem::BoxAppearance } else { MenuItem::SetCover };
-            self.mode = Mode::Options { cursor: self.menu_index(item) };
+            self.mode = Mode::Options { cursor: self.menu_index(MenuItem::Appearance) };
         }
     }
 
@@ -282,7 +281,7 @@ impl App {
     pub(super) fn draw_add_menu(&mut self, ui: &Ui, screen: Rect, s: f32) {
         let Mode::AddMenu { cursor } = &mut self.mode else { return };
         let rows: Vec<_> = ADD_MENU.iter().map(|(_, label, sub)| (i18n::tr(label), Some(i18n::tr(sub)))).collect();
-        if let Some(i) = side_panel(ui, screen, s, tr!("Add game"), &rows, cursor) {
+        if let Some(i) = side_panel(ui, screen, s, tr!("Add game"), &rows, &[], cursor) {
             self.run_add_source(ADD_MENU[i].0);
         }
     }

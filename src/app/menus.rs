@@ -7,41 +7,27 @@ pub(super) enum MenuItem {
     Start,
     CloseApp,
     Update,
-    SetCover,
-    AdjustCover,
-    SetBackground,
     FetchArtwork,
-    BoxAppearance,
+    Appearance,
     Rename,
     SwapBubble,
     SwapTile,
-    FixSlot,
+    LockSlot,
     EditCommand,
-    SaveFolder,
-    OpenSaveFolder,
-    BackupSaves,
-    DeviceSaves,
-    CreateDisc,
-    BurnDisc,
+    PhysicalDevices,
     Remove,
 }
 
-pub(super) const MENU: [(MenuItem, &str); 16] = [
+pub(super) const MENU: [(MenuItem, &str); 10] = [
     (MenuItem::Start, tr_key!("Start")),
-    (MenuItem::BoxAppearance, tr_key!("Tile and box appearance…")),
-    (MenuItem::SetCover, tr_key!("Set cover image")),
-    (MenuItem::AdjustCover, tr_key!("Reposition cover image…")),
-    (MenuItem::SetBackground, tr_key!("Set background image")),
+    (MenuItem::Appearance, tr_key!("Appearance")),
     (MenuItem::FetchArtwork, tr_key!("Fetch artwork")),
     (MenuItem::Rename, tr_key!("Rename")),
     (MenuItem::SwapBubble, tr_key!("Swap with other bubble")),
-    (MenuItem::SwapTile, tr_key!("Swap position with another game…")),
-    (MenuItem::FixSlot, tr_key!("Mark this position as static for this game")),
+    (MenuItem::SwapTile, tr_key!("Swap position with another game")),
+    (MenuItem::LockSlot, tr_key!("Lock position")),
     (MenuItem::EditCommand, tr_key!("Edit launch command")),
-    (MenuItem::SaveFolder, tr_key!("Set save folder…")),
-    (MenuItem::DeviceSaves, tr_key!("SD and USB Yasaff settings…")),
-    (MenuItem::CreateDisc, tr_key!("Create disc file…")),
-    (MenuItem::BurnDisc, tr_key!("Burn to CD/DVD…")),
+    (MenuItem::PhysicalDevices, tr_key!("Physical Devices")),
     (MenuItem::Remove, tr_key!("Remove from library")),
 ];
 
@@ -80,7 +66,6 @@ impl App {
         let store_app = game.is_some_and(|g| g.app_id.is_some());
         let running = store_app && self.app_running_at(self.selected);
         let game_running = !store_app && self.game_index() == Some(self.selected);
-        let boxes = self.theme().settings.tile_style.is_box();
         let mut menu = Vec::new();
         for &(item, label) in &MENU {
             match item {
@@ -92,16 +77,9 @@ impl App {
                     menu.push((item, tr!("Switch to game").to_owned()));
                     menu.push((MenuItem::CloseApp, tr!("Close game").to_owned()));
                 }
-                MenuItem::SaveFolder | MenuItem::DeviceSaves if store_app => {}
                 MenuItem::SwapBubble if !self.is_bubbles() => {}
                 MenuItem::SwapTile if self.is_bubbles() || self.library.games.len() < 2 => {}
-                MenuItem::FixSlot if self.is_bubbles() || self.settings.order.static_order => {}
-                MenuItem::FixSlot if game.is_some_and(|g| g.fixed_slot.is_some()) => {
-                    menu.push((item, tr!("Unmark static position (slot {slot})", slot = self.selected + 1)));
-                }
-                MenuItem::FixSlot => menu.push((item, tr!("Mark this position as static for this game (slot {slot})", slot = self.selected + 1))),
-                MenuItem::SetCover if boxes => {}
-                MenuItem::AdjustCover if boxes || game.is_none_or(|g| g.asset(AssetKind::Cover).is_none()) => {}
+                MenuItem::LockSlot if self.is_bubbles() || self.settings.order.static_order => {}
                 MenuItem::EditCommand | MenuItem::FetchArtwork if store_app => {}
                 MenuItem::Remove if store_app => menu.push((item, tr!("Uninstall").to_owned())),
                 _ => menu.push((item, i18n::tr(label).to_owned())),
@@ -111,12 +89,16 @@ impl App {
             {
                 menu.push((MenuItem::Update, tr!("Update to {version}", version = update.latest.version)));
             }
-            if item == MenuItem::SaveFolder && game.is_some_and(|g| g.save_dir.is_some()) {
-                menu.push((MenuItem::OpenSaveFolder, tr!("Open save folder").to_owned()));
-                menu.push((MenuItem::BackupSaves, tr!("Back up saves…").to_owned()));
-            }
         }
         menu
+    }
+
+    /// The On/Off shown at the end of a menu row that toggles something.
+    pub(super) fn menu_toggle(&self, item: MenuItem) -> Option<bool> {
+        match item {
+            MenuItem::LockSlot => Some(self.selected_game()?.fixed_slot.is_some()),
+            _ => None,
+        }
     }
 
     pub(super) fn menu_index(&self, item: MenuItem) -> usize {
@@ -132,20 +114,14 @@ impl App {
             }
             MenuItem::CloseApp if game.app_id.is_some() => self.close_running(),
             MenuItem::CloseApp => self.close_game(),
-            MenuItem::SaveFolder => self.pick_save_dir(),
-            MenuItem::OpenSaveFolder => self.open_save_dir(),
-            MenuItem::BackupSaves => self.backup_saves(),
-            MenuItem::DeviceSaves => self.open_device_settings(),
+            MenuItem::PhysicalDevices => self.open_device_settings(),
             MenuItem::Update => self.update_selected(),
-            MenuItem::SetCover => self.pick_asset(AssetKind::Cover),
-            MenuItem::AdjustCover => self.open_cover_editor(AssetKind::Cover, true),
-            MenuItem::SetBackground => self.pick_asset(AssetKind::Background),
             MenuItem::FetchArtwork => {
                 let id = game.id.clone();
                 self.mode = Mode::Home;
                 self.fetch_artwork(&[id]);
             }
-            MenuItem::BoxAppearance => self.mode = Mode::Settings { cursor: 0, page: Page::GameBox, in_rows: false },
+            MenuItem::Appearance => self.mode = Mode::Settings { cursor: 0, page: Page::GameBox, in_rows: false },
             MenuItem::Rename => {
                 self.mode = Mode::Prompt { kind: PromptKind::Rename, buffer: game.name.clone() };
             }
@@ -154,7 +130,7 @@ impl App {
                 self.mode = Mode::SwapBubble { from: self.selected, target };
             }
             MenuItem::SwapTile => self.mode = Mode::SwapTile { from: self.selected },
-            MenuItem::FixSlot => {
+            MenuItem::LockSlot => {
                 let fixed = game.fixed_slot.is_none();
                 self.library.set_fixed(self.selected, fixed);
                 self.save();
@@ -164,14 +140,11 @@ impl App {
                 } else {
                     tr!("Slot {slot} is no longer static", slot = slot)
                 });
-                self.mode = Mode::Home;
             }
             MenuItem::EditCommand => {
                 let buffer = apps::join_command(&game.target, &game.args);
                 self.mode = Mode::Prompt { kind: PromptKind::EditCommand, buffer };
             }
-            MenuItem::CreateDisc => self.create_disc_file(),
-            MenuItem::BurnDisc => self.open_burner(),
             MenuItem::Remove => self.mode = Mode::ConfirmRemove { what: Removal::Game, yes: false },
         }
     }
@@ -324,10 +297,11 @@ impl App {
     pub(super) fn draw_options(&mut self, ui: &Ui, screen: Rect, s: f32) {
         let title = self.selected_game().map(|g| g.name.clone()).unwrap_or_default();
         let menu = self.menu();
+        let toggles: Vec<_> = menu.iter().map(|&(item, _)| self.menu_toggle(item)).collect();
         let Mode::Options { cursor } = &mut self.mode else { return };
         *cursor = (*cursor).min(menu.len() - 1);
         let rows: Vec<_> = menu.iter().map(|(_, label)| (label.as_str(), None)).collect();
-        if let Some(i) = side_panel(ui, screen, s, &title, &rows, cursor) {
+        if let Some(i) = side_panel(ui, screen, s, &title, &rows, &toggles, cursor) {
             self.run_menu_item(menu[i].0);
         }
     }

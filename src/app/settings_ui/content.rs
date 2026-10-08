@@ -259,6 +259,11 @@ impl App {
                 let sub = if has(|g| g.asset(AssetKind::Cover).is_some()) { tr!("The front of the box") } else { tr!("None; the name's initials are shown") };
                 (tr!("Cover image").into(), sub, Action(tr!("Choose…")))
             }
+            SettingRow::GameBackground => {
+                let sub = if has(|g| g.asset(AssetKind::Background).is_some()) { tr!("Fills the screen while this game is selected") } else { tr!("None; the theme's background is shown") };
+                (tr!("Background image").into(), sub, Action(tr!("Choose…")))
+            }
+            SettingRow::GameBackgroundClear => (tr!("Remove background image").into(), "", Action(tr!("Remove"))),
             SettingRow::GameSpine => {
                 let sub = if has(|g| g.asset(AssetKind::Spine).is_some()) {
                     tr!("Runs down the spine; a wide image is turned to fit")
@@ -563,7 +568,7 @@ impl App {
             ),
             SettingRow::DiscKeepSaves => (
                 tr!("Keep saves on the launch device").into(),
-                tr!("Games with it on in Options › SD and USB Yasaff settings copy their saves to the stick they were started from"),
+                tr!("Games with it on in Options › Physical Devices copy their saves to the stick they were started from"),
                 Toggle(self.settings.discs.keep_saves),
             ),
             SettingRow::DeviceTarget => (
@@ -571,15 +576,26 @@ impl App {
                 tr!("Left/Right picks a plugged-in USB stick or SD card"),
                 Choice(self.picked_device().map_or_else(|| tr!("None plugged in").to_owned(), volume_name)),
             ),
+            SettingRow::DeviceCreateFile => (
+                tr!("Create file").into(),
+                tr!("Saves this game's .yasaff file; burn it to the root of a disc or copy it to a USB stick"),
+                Action(tr!("Save")),
+            ),
+            SettingRow::DeviceBurn => (tr!("Burn CD/DVD").into(), tr!("Burns this game's .yasaff file to a blank CD or DVD"), Action(tr!("Burn"))),
             SettingRow::DeviceInsertConfig => (
                 tr!("Insert YASAFF launch config into device").into(),
                 tr!("Writes this game's .yasaff file; plugging the device in then starts the game"),
                 Action(tr!("Insert")),
             ),
             SettingRow::DeviceCreateCatalog => (
-                tr!("Create a YasaffSaves catalog for this game on device").into(),
+                tr!("Create backup catalog in device").into(),
                 tr!("YasaffSaves/<game> with a backup folder; saves are kept there"),
                 if self.picked_catalog().is_some_and(|c| c.is_dir()) { RowValue::Summary(tr!("Created").into()) } else { Action(tr!("Create")) },
+            ),
+            SettingRow::DeviceBackupNow => (
+                tr!("Backup current saves to device").into(),
+                tr!("Zips the save folder; the folder picker opens on the device"),
+                Action(tr!("Back up")),
             ),
             SettingRow::DeviceKeepSaves => (
                 tr!("Keep saves on device that was used to launch this game").into(),
@@ -595,6 +611,16 @@ impl App {
                     Choice(value),
                 )
             }
+            SettingRow::DeviceOpenSaveFolder => (
+                tr!("Open save folder").into(),
+                tr!("Shows the save folder in the file manager"),
+                Action(tr!("Open")),
+            ),
+            SettingRow::DeviceSetSaveFolder => (
+                tr!("Change save folder").into(),
+                tr!("Points YASAFF at the folder this game saves to; pick the files to back up below"),
+                Action(tr!("Choose")),
+            ),
             SettingRow::DeviceSavePath(i) => {
                 let path = game.and_then(|g| g.device_saves.paths.get(i)).cloned().unwrap_or_default();
                 let sub = if path.is_dir() {
@@ -608,12 +634,12 @@ impl App {
             }
             SettingRow::DeviceSaveFolder => (
                 game.and_then(|g| g.save_dir.as_ref()).map(|d| d.display().to_string()).unwrap_or_default(),
-                tr!("The save folder from Set save folder…; used until you add files or folders below"),
+                tr!("The save folder from Change save folder; used until you add files or folders below"),
                 RowValue::Summary(tr!("Save folder").into()),
             ),
-            SettingRow::DeviceAddFiles => (tr!("Add save files…").into(), tr!("One or more files the game saves to"), Action(tr!("Add"))),
+            SettingRow::DeviceAddFiles => (tr!("Add save files").into(), tr!("One or more files the game saves to"), Action(tr!("Add"))),
             SettingRow::DeviceAddFolders => (
-                tr!("Add save folders…").into(),
+                tr!("Add save folders").into(),
                 tr!("Each folder is copied with everything in it, subfolders too"),
                 Action(tr!("Add")),
             ),

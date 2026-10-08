@@ -115,15 +115,22 @@ pub(super) enum SettingRow {
     DiscRemovable,
     DiscKeepSaves,
     DeviceTarget,
+    DeviceCreateFile,
+    DeviceBurn,
     DeviceInsertConfig,
     DeviceCreateCatalog,
+    DeviceBackupNow,
     DeviceKeepSaves,
     DeviceRecovery,
+    DeviceOpenSaveFolder,
+    DeviceSetSaveFolder,
     DeviceSavePath(usize),
     DeviceSaveFolder,
     DeviceAddFiles,
     DeviceAddFolders,
     GameCover,
+    GameBackground,
+    GameBackgroundClear,
     GameAdjust(AssetKind),
     GameAdjustReset(AssetKind),
     GameSpine,
@@ -192,6 +199,8 @@ impl SettingRow {
         use SettingRow as R;
         match self {
             R::GameCover
+            | R::GameBackground
+            | R::GameBackgroundClear
             | R::GameAdjust(_)
             | R::GameAdjustReset(_)
             | R::GameSpine
@@ -220,10 +229,15 @@ impl SettingRow {
             | R::GameTopColor
             | R::GameTitleFont => Page::GameBox,
             R::DeviceTarget
+            | R::DeviceCreateFile
+            | R::DeviceBurn
             | R::DeviceInsertConfig
             | R::DeviceCreateCatalog
+            | R::DeviceBackupNow
             | R::DeviceKeepSaves
             | R::DeviceRecovery
+            | R::DeviceOpenSaveFolder
+            | R::DeviceSetSaveFolder
             | R::DeviceSavePath(_)
             | R::DeviceSaveFolder
             | R::DeviceAddFiles
@@ -237,7 +251,7 @@ impl SettingRow {
 pub(super) enum Page {
     App,
     GameBox,
-    /// A game's SD and USB settings.
+    /// A game's Physical Devices page: its launch file, and backing its saves up to a device.
     GameDevice,
 }
 

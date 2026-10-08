@@ -234,7 +234,7 @@ impl App {
             Some(_) => self.burning = None,
             None => {}
         }
-        self.mode = Mode::Home;
+        self.mode = self.settings_at(SettingRow::DeviceBurn);
     }
 
     pub(super) fn draw_disc_chooser(&mut self, ui: &Ui, screen: Rect, s: f32) {

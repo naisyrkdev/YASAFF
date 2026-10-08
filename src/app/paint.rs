@@ -12,14 +12,24 @@ pub(super) fn paint_checkbox(painter: &Painter, rect: Rect, checked: bool, s: f3
     }
 }
 
-pub(super) fn side_panel(ui: &Ui, screen: Rect, s: f32, title: &str, rows: &[(&str, Option<&str>)], cursor: &mut usize) -> Option<usize> {
+/// `toggles` puts an On/Off pill at the end of a row; rows past its end have none.
+pub(super) fn side_panel(
+    ui: &Ui,
+    screen: Rect,
+    s: f32,
+    title: &str,
+    rows: &[(&str, Option<&str>)],
+    toggles: &[Option<bool>],
+    cursor: &mut usize,
+) -> Option<usize> {
     let painter = ui.painter();
     let text_w = |text: &str, size: f32| painter.layout_no_wrap(text.to_owned(), FontId::proportional(size * s), Color32::WHITE).size().x;
     // Grow past the default width so labels fit, but never cover more than 60% of the screen;
     // anything still too long is shrunk to fit below.
+    let pill_w = if toggles.iter().any(Option::is_some) { 104.0 * s } else { 0.0 };
     let needed = rows
         .iter()
-        .flat_map(|(label, sub)| [text_w(label, 24.0), sub.map_or(0.0, |sub| text_w(sub, 16.0))])
+        .flat_map(|(label, sub)| [text_w(label, 24.0) + pill_w, sub.map_or(0.0, |sub| text_w(sub, 16.0))])
         .fold(text_w(title, 30.0), f32::max)
         + 80.0 * s;
     let width = needed.clamp(520.0 * s, (screen.width() * 0.6).max(520.0 * s));
@@ -47,6 +57,12 @@ pub(super) fn side_panel(ui: &Ui, screen: Rect, s: f32, title: &str, rows: &[(&s
             painter.rect_filled(Rect::from_min_size(row.min, vec2(5.0 * s, row.height())), 0, ACCENT);
         }
         let color = if active { Color32::WHITE } else { Color32::from_gray(180) };
+        if let Some(&Some(on)) = toggles.get(i) {
+            let pill = Rect::from_center_size(pos2(row.right() - 82.0 * s, row.center().y), vec2(84.0 * s, 32.0 * s));
+            painter.rect_filled(pill, (16.0 * s) as u8, if on { ACCENT } else { Color32::from_white_alpha(25) });
+            let text = if on { tr!("On") } else { tr!("Off") };
+            painter.text(pill.center(), Align2::CENTER_CENTER, text, FontId::proportional(17.0 * s), Color32::WHITE);
+        }
         let x = row.left() + 40.0 * s;
         match sub {
             Some(sub) => {

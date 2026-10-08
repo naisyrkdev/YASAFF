@@ -13,14 +13,13 @@ impl App {
             let name = app.library.games[i].name.clone();
             app.library.games[i].save_dir = Some(dir.clone());
             app.save();
-            app.mode = Mode::Home;
+            app.mode = app.settings_at(SettingRow::DeviceSetSaveFolder);
             app.notify(tr!("Saves of {name}: {folder}", name = name, folder = dir.display()));
         });
     }
 
     pub(super) fn open_save_dir(&mut self) {
         let Some(dir) = self.selected_game().and_then(|g| g.save_dir.clone()) else { return };
-        self.mode = Mode::Home;
         if let Err(e) = open::that_detached(&dir) {
             self.notify(tr!("Could not open {folder}: {error}", folder = dir.display(), error = e));
         }
@@ -34,7 +33,8 @@ impl App {
         }
         let name = game.name.clone();
         let mut dialog = rfd::FileDialog::new().set_title(tr!("Choose where to save the backup of {name}", name = name));
-        if let Some(dir) = self.settings.backup_dir.as_ref().filter(|d| d.is_dir()) {
+        let on_device = self.picked_device().map(|v| self.picked_catalog().filter(|c| c.is_dir()).unwrap_or_else(|| v.root.clone()));
+        if let Some(dir) = on_device.or_else(|| self.settings.backup_dir.clone()).filter(|d| d.is_dir()) {
             dialog = dialog.set_directory(dir);
         }
         self.ask_path(dialog, Pick::Folder, move |app, dest| app.start_backup(name, save_dir, dest));
@@ -44,7 +44,6 @@ impl App {
         if self.backup.is_some() {
             return self.notify(tr!("A backup is already being made"));
         }
-        self.mode = Mode::Home;
         self.settings.backup_dir = Some(dest.clone());
         self.save_settings();
 

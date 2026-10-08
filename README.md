@@ -111,13 +111,10 @@ You don't have to close a game or app to get back to YASAFF. Press **Guide** and
 Press **Menu** (or **Tab**) on a game to open its options:
 
 - **Start**, **Close game** / **Close application**, and **Update** for store apps.
-- **Tile and box appearance…**: cover, spine, top, back, side and bottom images, the instruction booklet, a 3D model, preview and idle videos, colors and the title font, all for this game only.
-- **Set cover image**, **Reposition cover image…**, **Set background image**, **Fetch artwork**.
-- **Rename**, **Edit launch command**.
-- **Swap position with another game…** (or **Swap with other bubble**), and **Mark this position as static for this game**.
-- **Set save folder…**, **Open save folder**, **Back up saves…**.
-- **SD and USB Yasaff settings…**: see [Discs, USB sticks and SD cards](#discs-usb-sticks-and-sd-cards).
-- **Create disc file…**, **Burn to CD/DVD…**.
+- **Appearance**: cover image and its size and position, background image, spine, top, back, side and bottom images, the instruction booklet, a 3D model, preview and idle videos, colors and the title font, all for this game only.
+- **Fetch artwork**, **Rename**, **Edit launch command**.
+- **Swap position with another game** (or **Swap with other bubble**), and **Lock position**, an On/Off switch that keeps the game in its slot.
+- **Physical Devices**: the game's launch file and save backups. See [Discs, USB sticks and SD cards](#discs-usb-sticks-and-sd-cards) and [Saves](#saves).
 - **Remove from library**: removes only the library entry and its images. The game files stay.
 
 ## Customization
@@ -173,14 +170,14 @@ A **disc file** is a small JSON file with the `.yasaff` extension that tells YAS
 
 `id` or at least one entry in `ids` is required. When the `id` matches, that game starts. Otherwise YASAFF looks for the store IDs and lets you choose when more than one game matches.
 
-- **Create disc file…** in a game's options writes the file. **Burn to CD/DVD…** burns it to a disc.
+- In a game's **Physical Devices**, under **YASAFF Launching File**, **Create file** writes the file and **Burn CD/DVD** burns it to a disc.
 - In **Settings → Physical Devices** you choose what happens **when a disc is inserted** (*Start the game*, *Ask first* or *Do nothing*). You can also check the drive when YASAFF starts and turn on USB stick and SD card support, so those work like discs.
-- In a game's **SD and USB Yasaff settings…** you can pick a plugged-in device and **Insert YASAFF launch config into device**. After that, plugging the device in starts the game.
+- On the same page you can pick a plugged-in device and **Insert YASAFF launch config into device**. After that, plugging the device in starts the game.
 
 ## Saves
 
-- **Set save folder…** tells YASAFF where a game keeps its saves. **Back up saves…** copies them to a timestamped backup.
-- **Saves on a launch device:** turn on **Keep saves on the launch device** in **Settings → Physical Devices**, and **Keep saves on device that was used to launch this game** in the game's SD and USB settings. When the game closes, its saves are copied to `YasaffSaves/<game>/` on the USB stick or SD card it was started from. **Disaster Recovery Count** sets how many older timestamped copies are kept. You can track the whole save folder, or only some files and folders.
+- The **Backups** section of a game's **Physical Devices** holds everything about its saves: **Change save folder** tells YASAFF where the game keeps them, **Open save folder** shows them, **Create backup catalog in device** makes `YasaffSaves/<game>/` on the picked device, and **Backup current saves to device** zips the save folder into a timestamped backup, with the folder picker opening on that device.
+- **Saves on a launch device:** turn on **Keep saves on the launch device** in **Settings → Physical Devices**, and **Keep saves on device that was used to launch this game** in the game's Physical Devices. When the game closes, its saves are copied to `YasaffSaves/<game>/` on the USB stick or SD card it was started from. **Disaster Recovery Count** sets how many older timestamped copies are kept. You can track the whole save folder, or only some files and folders.
 
 Each copy is written to a temporary folder first and then renamed, so pulling the device out never leaves a half-written save.
 
