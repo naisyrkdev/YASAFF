@@ -77,60 +77,6 @@ pub(super) fn side_panel(
     clicked
 }
 
-pub(super) fn paint_image_quad(ui: &Ui, path: &Path, quad: [Pos2; 4], tint: Color32, placement: CoverPlacement) -> bool {
-    let size = vec2(quad[0].distance(quad[1]), quad[0].distance(quad[3]));
-    let texture = match egui::Image::new(file_uri(path)).load_for_size(ui.ctx(), size) {
-        Ok(egui::load::TexturePoll::Ready { texture }) => texture,
-        _ => return false,
-    };
-    let turn = box3d::turns_to_fit(texture.size, size);
-    let (part, uv) = box3d::place_turned(texture.size, size, placement, turn);
-    if !part.is_positive() {
-        return true;
-    }
-    let at = |p: Pos2| quad[0].lerp(quad[1], p.x).lerp(quad[3].lerp(quad[2], p.x), p.y);
-    let corners = [part.left_top(), part.right_top(), part.right_bottom(), part.left_bottom()].map(at);
-    let mut mesh = Mesh::with_texture(texture.id);
-    for (pos, uv) in corners.into_iter().zip(uv) {
-        mesh.vertices.push(egui::epaint::Vertex { pos, uv, color: tint });
-    }
-    mesh.add_triangle(0, 1, 2);
-    mesh.add_triangle(0, 2, 3);
-    ui.painter().add(Shape::mesh(mesh));
-    true
-}
-
-pub(super) fn paint_spine_text(ui: &Ui, text: &str, font: egui::FontFamily, color: Color32, b: &BoxShape) {
-    let painter = ui.painter();
-    let width = b.depth.length();
-    let max_len = b.front.height() * 0.88;
-    let mut size = width * 0.5;
-    let mut galley = painter.layout_no_wrap(text.to_owned(), FontId::new(size, font.clone()), color);
-    if galley.size().x > max_len {
-        size *= max_len / galley.size().x;
-        galley = painter.layout_no_wrap(text.to_owned(), FontId::new(size.max(1.0), font), color);
-    }
-    let center = b.front.left_center() + b.depth / 2.0;
-    let (down, back) = (vec2(0.0, 1.0), b.depth / width);
-    let half = galley.size() / 2.0;
-    let [w, h] = ui.ctx().fonts(|f| f.font_image_size());
-    let uv_scale = vec2(1.0 / w as f32, 1.0 / h as f32);
-    let mut mesh = Mesh::default();
-    for row in &galley.rows {
-        let first = mesh.vertices.len() as u32;
-        mesh.indices.extend(row.visuals.mesh.indices.iter().map(|i| i + first));
-        mesh.vertices.extend(row.visuals.mesh.vertices.iter().map(|v| {
-            let p = row.pos.to_vec2() + v.pos.to_vec2() - half;
-            egui::epaint::Vertex {
-                pos: center + down * p.x + back * p.y,
-                uv: (v.uv.to_vec2() * uv_scale).to_pos2(),
-                color: if v.color == Color32::PLACEHOLDER { color } else { v.color },
-            }
-        }));
-    }
-    painter.add(Shape::mesh(mesh));
-}
-
 /// Paints the whole image inside `rect`, keeping its proportions.
 pub(super) fn paint_image_contained(ctx: &Context, painter: &Painter, path: &Path, rect: Rect) {
     let Ok(egui::load::TexturePoll::Ready { texture }) = egui::Image::new(file_uri(path)).load_for_size(ctx, rect.size()) else {

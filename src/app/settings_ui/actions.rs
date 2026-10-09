@@ -23,6 +23,8 @@ impl App {
             SettingRow::BoxSpineText => Some(&mut boxes.spine_text_color),
             SettingRow::BoxTopColor => Some(&mut boxes.top_color),
             SettingRow::ObjectColor => Some(&mut objects.color),
+            SettingRow::AxisTextColor => Some(&mut settings.double_axis.text_color),
+            SettingRow::AxisGlowColor => Some(&mut settings.double_axis.glow_color),
             _ => None,
         }
     }
@@ -75,7 +77,7 @@ impl App {
     }
 
     pub(in crate::app) fn activate_setting(&mut self, row: SettingRow) {
-        if row.page() != Page::App && self.selected_game().is_none() {
+        if row.page().is_game() && self.selected_game().is_none() {
             return;
         }
         match row {
@@ -270,7 +272,7 @@ impl App {
             }
             SettingRow::ThemeDelete => {
                 if self.theme().is_builtin() {
-                    self.notify(tr!("Bubbles is a built-in theme and can't be deleted."));
+                    self.notify(tr!("{name} is a built-in theme and can't be deleted.", name = self.theme().settings.name));
                 } else if !theme::deletable(&self.themes, self.theme) {
                     self.notify(tr!("This is your only own theme. Create another one before deleting it."));
                 } else {
@@ -350,7 +352,9 @@ impl App {
             | SettingRow::BoxSpineColor
             | SettingRow::BoxSpineText
             | SettingRow::BoxTopColor
-            | SettingRow::ObjectColor => {
+            | SettingRow::ObjectColor
+            | SettingRow::AxisTextColor
+            | SettingRow::AxisGlowColor => {
                 let buffer = self.color_slot(row).map(|c| theme::to_hex(*c)).unwrap_or_default();
                 self.mode = Mode::Prompt { kind: PromptKind::Color(row), buffer };
             }
@@ -393,6 +397,49 @@ impl App {
             SettingRow::GameModel => self.pick_asset(AssetKind::Model),
             SettingRow::GameVideo => self.pick_asset(AssetKind::Video),
             SettingRow::GameIdleVideo => self.pick_asset(AssetKind::IdleVideo),
+            SettingRow::AxisWidth | SettingRow::AxisHeight | SettingRow::AxisFontSize if self.setting_enabled(row) => {
+                let axis = &self.theme().settings.double_axis;
+                let value = match row {
+                    SettingRow::AxisWidth => axis.size()[0],
+                    SettingRow::AxisHeight => axis.size()[1],
+                    _ => axis.font_size(),
+                };
+                self.mode = Mode::Prompt { kind: PromptKind::AxisNumber(row), buffer: format!("{value:.0}") };
+            }
+            // Disabled: dynamic size is on.
+            SettingRow::AxisWidth | SettingRow::AxisHeight | SettingRow::AxisFontSize => {}
+            SettingRow::AxisImages => self.mode = Mode::Settings { cursor: 0, page: Page::CategoryImages, in_rows: true },
+            SettingRow::AxisImage(slot) => {
+                let dialog = rfd::FileDialog::new().set_title(tr!("Select category image")).add_filter(tr!("Images"), IMAGE_EXTS);
+                self.ask_path(dialog, Pick::File, move |app, path| {
+                    let Some(column) = axis_slot_column(&app.library, slot) else { return };
+                    if let Err(e) = app.themes[app.theme].set_axis_image(column, &path) {
+                        app.notify(tr!("Could not set image: {error}", error = format!("{e:#}")));
+                    }
+                });
+            }
+            SettingRow::AxisImageClear(slot) => {
+                if let Some(column) = axis_slot_column(&self.library, slot)
+                    && let Err(e) = self.themes[self.theme].clear_axis_image(column)
+                {
+                    self.notify(tr!("Could not save theme: {error}", error = format!("{e:#}")));
+                }
+                self.mode = self.settings_at(SettingRow::AxisImage(slot));
+            }
+            SettingRow::CategoryAdd => self.mode = Mode::Prompt { kind: PromptKind::CategoryName(None), buffer: String::new() },
+            SettingRow::Category(i) => {
+                let buffer = self.library.categories.get(i).cloned().unwrap_or_default();
+                self.mode = Mode::Prompt { kind: PromptKind::CategoryName(Some(i)), buffer };
+            }
+            SettingRow::GameMainCategory | SettingRow::GameCategory(_) => self.adjust_setting(row, 1),
+            SettingRow::GameNoCategories => {}
+            SettingRow::GameAxisImage => self.choose_image(ImageSlot::Asset(AssetKind::Axis), row),
+            SettingRow::GameAxisImageClear => {
+                self.library.clear_asset(self.selected, AssetKind::Axis);
+                self.library.games[self.selected].axis_seeded = true;
+                self.save();
+                self.mode = self.settings_at(SettingRow::GameAxisImage);
+            }
             SettingRow::BubbleShuffle => {
                 let bubbles = &mut self.themes[self.theme].settings.bubbles;
                 let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
@@ -470,6 +517,11 @@ impl App {
             | SettingRow::BubbleCustomSound
             | SettingRow::SwapSound
             | SettingRow::SwapCustomSound
+            | SettingRow::AxisFont
+            | SettingRow::AxisBorder
+            | SettingRow::AxisDynamicFont
+            | SettingRow::AxisGlowIntensity
+            | SettingRow::AxisTitleInfo
             | SettingRow::Bar(..) => self.adjust_setting(row, 1),
         }
     }
@@ -483,6 +535,12 @@ impl App {
         }
         if row.page() == Page::GameDevice {
             return self.adjust_device_setting(row, delta);
+        }
+        if row.page() == Page::GameDetails {
+            return self.adjust_details_setting(row, delta);
+        }
+        if row.page() == Page::CategoryImages {
+            return;
         }
         match row {
             SettingRow::ControllerSwap | SettingRow::OrderLastPlayed | SettingRow::OrderStatic | SettingRow::GalleryKeepAll => {
@@ -512,6 +570,12 @@ impl App {
                 *place = cycle(&[None, Some(BarSlot::Top), Some(BarSlot::Bottom)], *place, delta);
                 self.clamp_selection();
                 return self.save_settings();
+            }
+            SettingRow::Category(i) => {
+                let to = self.library.move_category(i, delta);
+                self.save();
+                self.mode = self.settings_at(SettingRow::Category(to));
+                return;
             }
             _ => {}
         }
@@ -592,6 +656,39 @@ impl App {
                 b.size_variance = step(b.size_variance, 5.0 * d, BubbleSettings::VARIANCE_RANGE);
             }
             SettingRow::BubbleVideo => settings.bubbles.play_video ^= true,
+            SettingRow::AxisWidth | SettingRow::AxisHeight | SettingRow::AxisFontSize => {
+                let axis = &mut settings.double_axis;
+                let [w, h] = axis.size();
+                match row {
+                    SettingRow::AxisWidth => axis.width = step(w, 10.0 * d, DoubleAxisSettings::WIDTH_RANGE),
+                    SettingRow::AxisHeight => axis.height = step(h, 10.0 * d, DoubleAxisSettings::HEIGHT_RANGE),
+                    _ => axis.font_size = step(axis.font_size(), 2.0 * d, DoubleAxisSettings::FONT_SIZE_RANGE),
+                }
+            }
+            SettingRow::AxisBorder => settings.double_axis.border ^= true,
+            SettingRow::AxisDynamicFont => settings.double_axis.dynamic_font ^= true,
+            SettingRow::AxisGlowIntensity => {
+                let axis = &mut settings.double_axis;
+                axis.glow_intensity = snap(step(axis.glow(), 0.1 * d, DoubleAxisSettings::GLOW_RANGE));
+            }
+            SettingRow::AxisTitleInfo => {
+                let axis = &mut settings.double_axis;
+                axis.title_info = cycle(&TitleInfo::ALL, axis.title_info, delta);
+            }
+            SettingRow::AxisTextColor | SettingRow::AxisGlowColor => {
+                let Some(color) = self.color_slot(row) else { return };
+                *color = match theme::LIGHT_PRESETS.iter().position(|c| c == color) {
+                    Some(_) => cycle(theme::LIGHT_PRESETS, *color, delta),
+                    None if delta < 0 => *theme::LIGHT_PRESETS.last().unwrap(),
+                    None => theme::LIGHT_PRESETS[0],
+                };
+            }
+            SettingRow::AxisFont => {
+                let choices: Vec<Option<String>> = std::iter::once(None).chain(self.fonts.iter().cloned().map(Some)).collect();
+                let font = &mut settings.double_axis.font;
+                let i = choices.iter().position(|f| f == font).unwrap_or(0) as i32;
+                *font = choices[(i + delta).rem_euclid(choices.len() as i32) as usize].clone();
+            }
             SettingRow::CrtWidth | SettingRow::CrtHeight => {
                 let [w, h] = settings.crt.size();
                 let px = if row == SettingRow::CrtWidth { w } else { h } + 10.0 * d;
@@ -731,6 +828,37 @@ impl App {
                 let Some(slot) = self.game_color_slot(row) else { return };
                 *slot = cycle_or_default(theme::COLOR_PRESETS, *slot, delta);
             }
+            _ => return,
+        }
+        self.save();
+    }
+
+    pub(in crate::app) fn set_axis_number(&mut self, row: SettingRow, value: f32) {
+        let axis = &mut self.themes[self.theme].settings.double_axis;
+        let value = value.round();
+        match row {
+            SettingRow::AxisWidth => axis.width = value.clamp(DoubleAxisSettings::WIDTH_RANGE.0, DoubleAxisSettings::WIDTH_RANGE.1),
+            SettingRow::AxisHeight => axis.height = value.clamp(DoubleAxisSettings::HEIGHT_RANGE.0, DoubleAxisSettings::HEIGHT_RANGE.1),
+            SettingRow::AxisFontSize => axis.font_size = value.clamp(DoubleAxisSettings::FONT_SIZE_RANGE.0, DoubleAxisSettings::FONT_SIZE_RANGE.1),
+            _ => return,
+        }
+        self.save_theme();
+    }
+
+    pub(in crate::app) fn adjust_details_setting(&mut self, row: SettingRow, delta: i32) {
+        let n = self.library.categories.len();
+        let Some(game) = self.selected_game().filter(|_| n > 0) else { return };
+        match row {
+            SettingRow::GameMainCategory => {
+                let current = game.main_category.as_deref().and_then(|m| self.library.categories.iter().position(|c| c == m));
+                let next = match current {
+                    Some(i) => (i as i32 + delta).rem_euclid(n as i32) as usize,
+                    None if delta < 0 => n - 1,
+                    None => 0,
+                };
+                self.library.set_main_category(self.selected, next);
+            }
+            SettingRow::GameCategory(i) if i < n => self.library.toggle_category(self.selected, i),
             _ => return,
         }
         self.save();

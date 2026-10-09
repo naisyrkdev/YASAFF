@@ -73,6 +73,23 @@ pub(super) enum SettingRow {
     BubbleSound,
     BubbleCustomSound,
     BubbleSoundFile,
+    AxisWidth,
+    AxisHeight,
+    AxisBorder,
+    AxisFont,
+    AxisFontSize,
+    AxisDynamicFont,
+    AxisTextColor,
+    AxisGlowColor,
+    AxisGlowIntensity,
+    AxisTitleInfo,
+    AxisImages,
+    /// A category's image, on the category images page.
+    AxisImage(AxisSlot),
+    AxisImageClear(AxisSlot),
+    CategoryAdd,
+    /// A category in Settings, by its index in the library's list.
+    Category(usize),
     SwapSound,
     SwapCustomSound,
     SwapSoundFile,
@@ -163,6 +180,12 @@ pub(super) enum SettingRow {
     GameSpineText,
     GameTopColor,
     GameTitleFont,
+    GameAxisImage,
+    GameAxisImageClear,
+    GameMainCategory,
+    /// Whether the game is in a category, by the category's index in the library's list.
+    GameCategory(usize),
+    GameNoCategories,
     /// An image in the game's gallery, by its index there.
     GalleryImage(usize),
     GalleryEmpty,
@@ -170,6 +193,22 @@ pub(super) enum SettingRow {
     AboutApp,
     AboutSource,
     AboutServer,
+}
+
+/// A column of the Double axis theme, as the category images page names it.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum AxisSlot {
+    Category(usize),
+    Uncategorized,
+    Main,
+}
+
+pub(super) fn axis_slot_column(library: &Library, slot: AxisSlot) -> Option<theme::AxisColumn<'_>> {
+    match slot {
+        AxisSlot::Category(i) => library.categories.get(i).map(|name| theme::AxisColumn::Category(name)),
+        AxisSlot::Uncategorized => Some(theme::AxisColumn::Uncategorized),
+        AxisSlot::Main => Some(theme::AxisColumn::Main),
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -239,7 +278,11 @@ impl SettingRow {
             | R::GameSpineColor
             | R::GameSpineText
             | R::GameTopColor
-            | R::GameTitleFont => Page::GameBox,
+            | R::GameTitleFont
+            | R::GameAxisImage
+            | R::GameAxisImageClear => Page::GameBox,
+            R::GameMainCategory | R::GameCategory(_) | R::GameNoCategories => Page::GameDetails,
+            R::AxisImage(_) | R::AxisImageClear(_) => Page::CategoryImages,
             R::DeviceTarget
             | R::DeviceCreateFile
             | R::DeviceBurn
@@ -265,6 +308,17 @@ pub(super) enum Page {
     GameBox,
     /// A game's Physical Devices page: its launch file, and backing its saves up to a device.
     GameDevice,
+    /// A game's categories.
+    GameDetails,
+    /// The Double axis theme's category images.
+    CategoryImages,
+}
+
+impl Page {
+    /// Whether the page changes the selected game.
+    pub(super) fn is_game(self) -> bool {
+        matches!(self, Page::GameBox | Page::GameDevice | Page::GameDetails)
+    }
 }
 
 pub(super) struct SettingSection {

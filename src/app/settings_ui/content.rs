@@ -183,7 +183,7 @@ impl App {
             SettingRow::ThemeExport => (tr!("Export theme…").into(), tr!("Copies the theme folder, images included, to a folder you pick"), Action(tr!("Export"))),
             SettingRow::ThemeImport => (tr!("Import theme…").into(), tr!("Select an exported theme folder (with themeSettings.json)"), Action(tr!("Import"))),
             SettingRow::ThemeDelete => (tr!("Delete theme").into(), "", Action(tr!("Delete…"))),
-            SettingRow::ViewKind if theme.kind == ThemeKind::Bubbles => {
+            SettingRow::ViewKind if theme.kind != ThemeKind::Standard => {
                 (tr!("Layout").into(), tr!("Not available in this pre-defined theme"), Choice(theme.kind.label().into()))
             }
             SettingRow::ViewKind => (
@@ -192,9 +192,113 @@ impl App {
                 Choice(theme.view.label().into()),
             ),
             SettingRow::TileStyle => {
-                let sub = if theme.kind == ThemeKind::Bubbles { tr!("Not available in this pre-defined theme") } else { tr!("How games are drawn, in either layout") };
+                let sub = if theme.kind != ThemeKind::Standard { tr!("Not available in this pre-defined theme") } else { tr!("How games are drawn, in either layout") };
                 (tr!("Tile style").into(), sub, Choice(theme.tile_style.label().into()))
             }
+            SettingRow::AxisWidth => (tr!("Category width").into(), tr!("At 1080p. Left/Right steps, Enter to type a value"), px(theme.double_axis.size()[0])),
+            SettingRow::AxisHeight => (tr!("Category height").into(), tr!("At 1080p. Left/Right steps, Enter to type a value"), px(theme.double_axis.size()[1])),
+            SettingRow::AxisBorder => (
+                tr!("Border around categories").into(),
+                tr!("Off shows only the name, centered in the size above"),
+                Toggle(theme.double_axis.border),
+            ),
+            SettingRow::AxisTextColor => (
+                tr!("Text color").into(),
+                tr!("Category and game names. Enter to type a hex value"),
+                RowValue::Color(theme.double_axis.text_color),
+            ),
+            SettingRow::AxisGlowColor => (
+                tr!("Glow color").into(),
+                tr!("Around the selected category and game. Enter to type a hex value"),
+                RowValue::Color(theme.double_axis.glow_color),
+            ),
+            SettingRow::AxisGlowIntensity => {
+                let value = match theme.double_axis.glow() {
+                    0.0 => tr!("Off").to_owned(),
+                    glow => format!("{:.0} %", glow * 100.0),
+                };
+                (tr!("Glow intensity").into(), tr!("How bright and wide the glow is"), Choice(value))
+            }
+            SettingRow::AxisTitleInfo => (
+                tr!("Show game names next to images").into(),
+                tr!("A game without an image always shows its name"),
+                Choice(theme.double_axis.title_info.label().into()),
+            ),
+            SettingRow::AxisFont => {
+                let value = match theme.double_axis.font.as_deref().filter(|f| self.fonts.iter().any(|l| l == f)) {
+                    Some(file) => fonts::display_name(file).to_owned(),
+                    None => tr!("Game title font").to_owned(),
+                };
+                let sub = if self.fonts.is_empty() { tr!("Import fonts in Settings › Fonts to choose one") } else { tr!("Left/Right switches between imported fonts") };
+                (tr!("Category font").into(), sub, Choice(value))
+            }
+            SettingRow::AxisFontSize => {
+                let sub = if theme.double_axis.dynamic_font {
+                    tr!("Off while dynamic size is on")
+                } else {
+                    tr!("The biggest size. Longer names shrink to fit their box")
+                };
+                (tr!("Category font size").into(), sub, px(theme.double_axis.font_size()))
+            }
+            SettingRow::AxisDynamicFont => (
+                tr!("Dynamic font size").into(),
+                tr!("Each name takes the biggest size that fits its box"),
+                Toggle(theme.double_axis.dynamic_font),
+            ),
+            SettingRow::AxisImages => {
+                let n = theme.double_axis.images.len();
+                (
+                    tr!("Category images…").into(),
+                    tr!("An image shown instead of a category's name"),
+                    RowValue::Summary(tr_n!(n, "{n} image", "{n} images")),
+                )
+            }
+            SettingRow::AxisImage(slot) => {
+                let column = axis_slot_column(&self.library, slot);
+                let name = match column {
+                    Some(theme::AxisColumn::Category(name)) => name.to_owned(),
+                    Some(builtin) => builtin_column_name(builtin).to_owned(),
+                    None => String::new(),
+                };
+                let sub = if column.is_some_and(|c| self.theme().axis_image(c).is_some()) {
+                    tr!("Copied into the theme's images folder")
+                } else {
+                    tr!("None. The name is shown")
+                };
+                (name, sub, Action(tr!("Choose…")))
+            }
+            SettingRow::AxisImageClear(_) => (tr!("Remove image").into(), tr!("Shows the name again"), Action(tr!("Remove"))),
+            SettingRow::CategoryAdd => (tr!("Add category…").into(), tr!("For example Racing, Shooters or Kids"), Action(tr!("Add"))),
+            SettingRow::Category(i) => {
+                let name = self.library.categories.get(i).cloned().unwrap_or_default();
+                let n = self.library.games.iter().filter(|g| g.categories.contains(&name)).count();
+                (name, tr!("Enter renames, or deletes it saved empty · Left/Right moves it"), RowValue::Summary(tr_n!(n, "{n} game", "{n} games")))
+            }
+            SettingRow::GameMainCategory => {
+                let value = game.and_then(|g| g.main_category.clone()).unwrap_or_else(|| tr!("None").to_owned());
+                (tr!("Main category").into(), tr!("Left/Right picks it. The game joins it if it isn't in it yet"), Choice(value))
+            }
+            SettingRow::GameCategory(i) => {
+                let name = self.library.categories.get(i).cloned().unwrap_or_default();
+                let main = game.is_some_and(|g| g.main_category.as_ref() == Some(&name));
+                let sub = if main { tr!("Main category") } else { "" };
+                let on = game.is_some_and(|g| g.categories.contains(&name));
+                (name, sub, Toggle(on))
+            }
+            SettingRow::GameNoCategories => (
+                tr!("No categories yet").into(),
+                tr!("Add them in Settings › Categories"),
+                RowValue::Summary(String::new()),
+            ),
+            SettingRow::GameAxisImage => {
+                let sub = if has(|g| g.asset(AssetKind::Axis).is_some()) {
+                    tr!("Shown in the game list. Starts as a copy of the cover")
+                } else {
+                    tr!("None. The game's name is shown")
+                };
+                (tr!("List image").into(), sub, Action(tr!("Choose…")))
+            }
+            SettingRow::GameAxisImageClear => (tr!("Remove list image").into(), tr!("Shows the game's name instead"), Action(tr!("Remove"))),
             SettingRow::BubbleSize => (
                 tr!("Bubble size").into(),
                 tr!("At 1080p. Games that don't fit continue on the next page"),
@@ -668,6 +772,9 @@ impl App {
 impl App {
     /// The picture an Appearance row shows a thumbnail of.
     pub(in crate::app) fn setting_row_image(&self, row: SettingRow) -> Option<PathBuf> {
+        if let SettingRow::AxisImage(slot) = row {
+            return self.theme().axis_image(axis_slot_column(&self.library, slot)?);
+        }
         let game = self.selected_game()?;
         let path = match row {
             SettingRow::StyleCover(style) => game.style_cover(style),
@@ -679,6 +786,7 @@ impl App {
             SettingRow::GameSide => game.asset(AssetKind::Side),
             SettingRow::GameBottom => game.asset(AssetKind::Bottom),
             SettingRow::GameBooklet => game.asset(AssetKind::Booklet),
+            SettingRow::GameAxisImage => game.asset(AssetKind::Axis),
             _ => None,
         };
         path.map(Path::to_path_buf)
@@ -705,6 +813,7 @@ pub(in crate::app) fn slot_label(slot: ImageSlot) -> &'static str {
             AssetKind::Model => tr!("3D model"),
             AssetKind::Video => tr!("Preview video"),
             AssetKind::IdleVideo => tr!("Idle video"),
+            AssetKind::Axis => tr!("Double axis image"),
         },
     }
 }

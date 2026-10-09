@@ -382,7 +382,6 @@ impl App {
                         ui.painter().rect_stroke(rect, radius, stroke, StrokeKind::Inside);
                         continue;
                     }
-                    TileStyle::FlatBox => BoxShape::fit(rect, size).outline().to_vec(),
                     TileStyle::Model => box3d::outline(rect, size, box3d::REST_YAW),
                     TileStyle::Case => case3d::outline(rect, size, case3d::Pose::CLOSED),
                     TileStyle::Disc => disc3d::outline(rect, self.disc_pose(usize::MAX)),
@@ -767,33 +766,13 @@ impl App {
         match self.selected_game() {
             Some(game) => {
                 shadow_text_font(painter, pos2(x, y), Align2::LEFT_TOP, &game.name, self.game_title_font(game, 46.0 * s), Color32::WHITE);
-                let sub = match game.last_played.and_then(|t| chrono::DateTime::from_timestamp(t as i64, 0)) {
-                    Some(t) => tr!("Last played {date}", date = t.with_timezone(&chrono::Local).format(tr!("%d %b %Y, %H:%M"))),
-                    None => tr!("Never played").to_owned(),
-                };
-                let sub = match self.artwork.status(&game.id) {
-                    Some(metadata::Status::Done(at, _)) if at.elapsed() >= metadata::DONE_BADGE => sub,
-                    Some(status) => format!("{sub}  ·  {}", status.describe()),
-                    None => sub,
-                };
-                let sub = if let Mode::SwapTile { from } = self.mode {
+                if let Mode::SwapTile { from } = self.mode {
                     let name = self.library.games.get(from).map_or("", |g| g.name.as_str());
                     let text = tr!("Pick a game to swap places with {name}", name = name);
                     shadow_text(painter, pos2(x, y + 62.0 * s), Align2::LEFT_TOP, &text, 22.0 * s, SWAP_GLOW);
                     return false;
-                } else if self.is_active(self.selected) {
-                    tr!("Running").to_owned()
-                } else if let Some(update) = self.game_update(game) {
-                    tr!("{status}  ·  Update to {version} in Options", status = sub, version = update.latest.version)
-                } else {
-                    sub
-                };
-                let sub = match game.fixed_slot {
-                    Some(_) if !self.is_bubbles() && !self.settings.order.static_order => {
-                        tr!("{status}  ·  Static position: slot {slot}", status = sub, slot = self.selected + 1)
-                    }
-                    _ => sub,
-                };
+                }
+                let sub = self.game_status(game);
                 shadow_text(painter, pos2(x, y + 62.0 * s), Align2::LEFT_TOP, &sub, 22.0 * s, Color32::from_gray(190));
                 if start_button {
                     let btn = Rect::from_min_size(pos2(x, y + 110.0 * s), vec2(220.0 * s, 56.0 * s));
@@ -805,17 +784,40 @@ impl App {
             }
             None => {
                 let special = self.special(self.selected).unwrap_or(Special::Settings);
-                let sub = match special {
-                    Special::Store => tr!("Apps, games and themes from YASAFF Discover, installed and updated right here"),
-                    Special::Add => tr!("Scan for installed games, or add an app, a .desktop/shortcut file, or a command or URL"),
-                    Special::Settings => tr!("Change theme, appearance, set discover server and more"),
-                };
+                let sub = special_description(special);
                 let title = special.name();
                 shadow_text(painter, pos2(x, y), Align2::LEFT_TOP, title, 46.0 * s, Color32::WHITE);
                 shadow_text(painter, pos2(x, y + 62.0 * s), Align2::LEFT_TOP, sub, 22.0 * s, Color32::from_gray(190));
             }
         }
         clicked
+    }
+
+    /// The line under the selected game's name: when it was played, and what is going on with it.
+    pub(super) fn game_status(&self, game: &Game) -> String {
+        let sub = match game.last_played.and_then(|t| chrono::DateTime::from_timestamp(t as i64, 0)) {
+            Some(t) => tr!("Last played {date}", date = t.with_timezone(&chrono::Local).format(tr!("%d %b %Y, %H:%M"))),
+            None => tr!("Never played").to_owned(),
+        };
+        let sub = match self.artwork.status(&game.id) {
+            Some(metadata::Status::Done(at, _)) if at.elapsed() >= metadata::DONE_BADGE => sub,
+            Some(status) => format!("{sub}  ·  {}", status.describe()),
+            None => sub,
+        };
+        let index = self.library.position(&game.id);
+        let sub = if index.is_some_and(|i| self.is_active(i)) {
+            tr!("Running").to_owned()
+        } else if let Some(update) = self.game_update(game) {
+            tr!("{status}  ·  Update to {version} in Options", status = sub, version = update.latest.version)
+        } else {
+            sub
+        };
+        match (game.fixed_slot, index) {
+            (Some(_), Some(i)) if self.is_standard() && !self.settings.order.static_order => {
+                tr!("{status}  ·  Static position: slot {slot}", status = sub, slot = i + 1)
+            }
+            _ => sub,
+        }
     }
 
     pub(super) fn click_tile(&mut self, i: usize) {
@@ -840,6 +842,8 @@ impl App {
             Action::Left | Action::Right | Action::Up | Action::Down => {
                 if self.is_bubbles() {
                     self.navigate_bubbles(action);
+                } else if self.is_double_axis() {
+                    self.navigate_axis(action);
                 } else {
                     let before = self.selected;
                     self.selected = navigate(self.home_layout(), self.selected, self.tile_count(), action);

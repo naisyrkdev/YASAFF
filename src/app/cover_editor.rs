@@ -269,6 +269,7 @@ impl App {
             ImageSlot::Asset(AssetKind::Side) => tr!("Select right side image (the edge opposite the spine)"),
             ImageSlot::Asset(AssetKind::Bottom) => tr!("Select box bottom image"),
             ImageSlot::Asset(AssetKind::Booklet) => tr!("Select instruction booklet image"),
+            ImageSlot::Asset(AssetKind::Axis) => tr!("Select image for the Double axis list"),
             ImageSlot::Asset(AssetKind::Model | AssetKind::Video | AssetKind::IdleVideo) => unreachable!(),
         };
         let dialog = rfd::FileDialog::new().set_title(title).add_filter(tr!("Images"), IMAGE_EXTS);

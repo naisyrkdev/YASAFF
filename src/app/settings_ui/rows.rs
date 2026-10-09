@@ -5,6 +5,25 @@ use super::*;
 impl App {
     pub(in crate::app) fn setting_rows(&self, page: Page) -> Vec<SettingRow> {
         use SettingRow as R;
+        if page == Page::GameDetails {
+            if self.library.categories.is_empty() {
+                return vec![R::GameNoCategories];
+            }
+            let mut rows = vec![R::GameMainCategory];
+            rows.extend((0..self.library.categories.len()).map(R::GameCategory));
+            return rows;
+        }
+        if page == Page::CategoryImages {
+            let mut rows = Vec::new();
+            let slots = (0..self.library.categories.len()).map(AxisSlot::Category).chain([AxisSlot::Uncategorized, AxisSlot::Main]);
+            for slot in slots {
+                rows.push(R::AxisImage(slot));
+                if axis_slot_column(&self.library, slot).is_some_and(|c| self.theme().axis_image(c).is_some()) {
+                    rows.push(R::AxisImageClear(slot));
+                }
+            }
+            return rows;
+        }
         if page == Page::GameDevice {
             let mut rows = vec![R::DeviceTarget, R::DeviceCreateFile, R::DeviceBurn, R::DeviceInsertConfig];
             let Some(game) = self.selected_game().filter(|g| g.app_id.is_none()) else { return rows };
@@ -78,6 +97,10 @@ impl App {
             if has(AssetKind::IdleVideo) {
                 rows.push(R::GameIdleVideoClear);
             }
+            rows.push(R::GameAxisImage);
+            if has(AssetKind::Axis) {
+                rows.push(R::GameAxisImageClear);
+            }
             rows.push(R::GameTitleFont);
             match game.map_or(0, |g| g.gallery.len()) {
                 0 => rows.push(R::GalleryEmpty),
@@ -88,9 +111,10 @@ impl App {
         let theme = &self.theme().settings;
         let mut rows = vec![R::Fullscreen, R::Autostart, R::Language, R::GalleryKeepAll, R::OrderLastPlayed, R::OrderStatic];
         rows.extend([R::ProfileActive, R::ProfileRename, R::ProfileNew, R::ProfileExport, R::ProfileImport, R::ProfileReset]);
+        rows.push(R::CategoryAdd);
+        rows.extend((0..self.library.categories.len()).map(R::Category));
         rows.extend([R::ViewKind, R::TileStyle]);
-        let bubbles = theme.kind == ThemeKind::Bubbles;
-        if bubbles {
+        if theme.kind == ThemeKind::Bubbles {
             rows.extend([R::BubbleSize, R::BubbleVariance, R::BubbleFill, R::BubbleShuffle, R::BubbleVideo, R::BubbleSound]);
             if theme.bubbles.sound {
                 rows.push(R::BubbleCustomSound);
@@ -100,6 +124,11 @@ impl App {
             }
         } else {
             match theme.view {
+            _ if theme.kind == ThemeKind::DoubleAxis => {
+                rows.extend([R::AxisWidth, R::AxisHeight, R::AxisBorder, R::AxisFont, R::AxisFontSize, R::AxisDynamicFont]);
+                rows.push(R::AxisTextColor);
+                rows.extend([R::AxisGlowColor, R::AxisGlowIntensity, R::AxisTitleInfo, R::AxisImages]);
+            }
             ViewKind::Row => {
                 rows.push(R::TileRows);
                 if theme.tile_style != TileStyle::Crt {
@@ -171,7 +200,7 @@ impl App {
         if theme::deletable(&self.themes, self.theme) {
             rows.push(R::ThemeDelete);
         }
-        let tiles_used = !bubbles;
+        let tiles_used = theme.kind == ThemeKind::Standard;
         if tiles_used && (theme.tile_style.is_box() || theme.tile_style == TileStyle::Cover) {
             rows.push(R::BoxCase);
             if theme.boxes.case == BoxCase::Custom {
@@ -232,8 +261,9 @@ impl App {
     pub(in crate::app) fn setting_enabled(&self, row: SettingRow) -> bool {
         match row {
             SettingRow::TileBar => self.theme().settings.tiles.rows <= 1,
-            SettingRow::ViewKind | SettingRow::TileStyle => !self.is_bubbles(),
+            SettingRow::ViewKind | SettingRow::TileStyle => self.is_standard(),
             SettingRow::DiscAngle => !self.theme().settings.discs.lying_flat(),
+            SettingRow::AxisFontSize => !self.theme().settings.double_axis.dynamic_font,
             SettingRow::OrderLastPlayed => !self.settings.order.static_order,
             SettingRow::SpecialPlace(special) => self.special_button(special).is_some(),
             _ => true,
@@ -270,11 +300,33 @@ impl App {
                 Some((tr!("Assign each a controller button above, then place it in the top or bottom bar").to_owned(), Color32::from_gray(140))),
             )),
             SettingRow::FontTitle => Some((tr!("Fonts"), Some((tr!("{count} imported", count = self.fonts.len()), Color32::from_gray(140))))),
-            SettingRow::Theme if self.is_bubbles() => {
+            SettingRow::Theme if !self.is_standard() => {
                 Some((tr!("Theme"), Some((tr!("Custom theme · Not all options are available in this pre-defined theme").to_owned(), PAD_Y))))
             }
             SettingRow::Theme => Some((tr!("Theme"), Some((tr!("{count} installed", count = self.themes.len()), Color32::from_gray(140))))),
             SettingRow::ViewKind => Some((tr!("Home screen"), None)),
+            SettingRow::CategoryAdd => {
+                let n = self.library.categories.len();
+                let status = tr_n!(n, "{n} category · Games pick theirs in Options › Details", "{n} categories · Games pick theirs in Options › Details");
+                Some((tr!("Categories"), Some((status, Color32::from_gray(140)))))
+            }
+            SettingRow::AxisWidth => Some((
+                tr!("Double axis mode"),
+                Some((tr!("Categories side by side, the games of the selected one below it").to_owned(), Color32::from_gray(140))),
+            )),
+            SettingRow::AxisImage(AxisSlot::Category(0)) => Some((tr!("Your categories"), None)),
+            SettingRow::AxisImage(AxisSlot::Uncategorized) => Some((
+                tr!("Built-in"),
+                Some((tr!("Games holds the games without a category. Main holds Settings, Discover and Add game").to_owned(), Color32::from_gray(140))),
+            )),
+            SettingRow::GameMainCategory | SettingRow::GameNoCategories => Some((
+                tr!("Categories"),
+                Some((tr!("The game shows in each of its categories. The main one is the first it joined, unless you pick another").to_owned(), Color32::from_gray(140))),
+            )),
+            SettingRow::GameAxisImage => Some((
+                tr!("Double axis"),
+                Some((tr!("Without an image the list shows the game's name").to_owned(), Color32::from_gray(140))),
+            )),
             SettingRow::BoxCase => {
                 Some((tr!("Boxes"), Some((tr!("Defaults. Each game can change them in its Options").to_owned(), Color32::from_gray(140)))))
             }

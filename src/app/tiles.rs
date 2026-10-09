@@ -175,40 +175,6 @@ pub(super) fn initials(name: &str) -> String {
     initials.to_uppercase()
 }
 
-pub(super) struct BoxShape {
-    pub(super) front: Rect,
-    pub(super) depth: Vec2,
-}
-
-impl BoxShape {
-    pub(super) const RECEDE: Vec2 = vec2(-0.8, -0.6);
-
-    pub(super) fn fit(rect: Rect, [w, h, d]: [f32; 3]) -> Self {
-        let (aspect, depth_ratio) = (w / h, d / h);
-        let extra = -Self::RECEDE * depth_ratio;
-        let h = (rect.height() / (1.0 + extra.y)).min(rect.width() / (aspect + extra.x));
-        let depth = Self::RECEDE * depth_ratio * h;
-        let size = vec2(h * aspect, h);
-        let corner = rect.center() - (size - depth) / 2.0;
-        BoxShape { front: Rect::from_min_size(corner - depth, size), depth }
-    }
-
-    pub(super) fn spine(&self) -> [Pos2; 4] {
-        let f = self.front;
-        [f.left_top() + self.depth, f.left_top(), f.left_bottom(), f.left_bottom() + self.depth]
-    }
-
-    pub(super) fn top(&self) -> [Pos2; 4] {
-        let f = self.front;
-        [f.left_top() + self.depth, f.right_top() + self.depth, f.right_top(), f.left_top()]
-    }
-
-    pub(super) fn outline(&self) -> [Pos2; 6] {
-        let (f, d) = (self.front, self.depth);
-        [f.left_bottom(), f.left_bottom() + d, f.left_top() + d, f.right_top() + d, f.right_top(), f.right_bottom()]
-    }
-}
-
 impl App {
     pub(super) fn paint_tile(&self, ui: &Ui, i: usize, rect: Rect, radius: u8, s: f32, focus: f32) {
         self.paint_running_glow(ui, i, rect, s);
@@ -231,7 +197,6 @@ impl App {
     pub(super) fn paint_tile_art(&self, ui: &Ui, i: usize, rect: Rect, radius: u8, s: f32, focus: f32) {
         match self.theme().settings.tile_style {
             TileStyle::Flat | TileStyle::Cover => self.paint_flat(ui, i, rect, radius, s, focus),
-            TileStyle::FlatBox => self.paint_box(ui, i, rect, s, focus),
             TileStyle::Model => self.paint_model(ui, i, rect, s, focus),
             TileStyle::Object => self.paint_object(ui, i, rect, s, focus),
             TileStyle::Disc => self.paint_disc(ui, i, rect, s, focus),
@@ -275,50 +240,6 @@ impl App {
         if i == self.selected {
             let stroke = Stroke::new(3.0 * s, Color32::WHITE.gamma_multiply(focus.max(0.4)));
             painter.rect_stroke(rect, radius, stroke, StrokeKind::Outside);
-        }
-    }
-
-    pub(super) fn paint_box(&self, ui: &Ui, i: usize, rect: Rect, s: f32, focus: f32) {
-        let game = self.library.games.get(i);
-        let defaults = &self.theme().settings.boxes;
-        let look = game.map_or_else(|| defaults.clone(), |g| defaults.with(&g.box_style));
-        let b = BoxShape::fit(rect, look.size_mm());
-        let painter = ui.painter();
-        let outline = b.outline();
-
-        let shadow: Vec<Pos2> = outline.iter().map(|p| *p + vec2(0.0, 8.0 * s)).collect();
-        painter.add(Shape::convex_polygon(shadow, Color32::from_black_alpha(90), Stroke::NONE));
-
-        const TOP_SHADE: f32 = 0.9;
-        const SPINE_SHADE: f32 = 0.75;
-        let face_image = |kind: AssetKind, quad: [Pos2; 4], color: Color32, shade: f32| {
-            painter.add(Shape::convex_polygon(quad.to_vec(), box3d::shade(color, shade), Stroke::NONE));
-            game.and_then(|g| Some((g.asset(kind)?, g.placement(kind))))
-                .is_some_and(|(path, placement)| paint_image_quad(ui, path, quad, box3d::shade(Color32::WHITE, shade), placement))
-        };
-        face_image(AssetKind::Top, b.top(), look.top_color, TOP_SHADE);
-        if !face_image(AssetKind::Spine, b.spine(), look.spine_color, SPINE_SHADE) && look.spine_label == SpineLabel::Name {
-            let (name, font) = match game {
-                Some(g) => (g.name.as_str(), self.game_font(g)),
-                None => (self.special(i).map_or("", Special::name), egui::FontFamily::Proportional),
-            };
-            paint_spine_text(ui, name, font, look.spine_text_color, &b);
-        }
-        match game {
-            Some(game) => draw_game_tile(ui, game, b.front, 0),
-            None => {
-                painter.rect_filled(b.front, 0, Color32::from_rgb(0x2a, 0x2d, 0x34));
-                self.paint_special_mark(painter, self.special(i), b.front.center(), b.front.width() * 0.45);
-            }
-        }
-
-        let edge = Stroke::new(1.0, Color32::from_black_alpha(110));
-        painter.line_segment([b.front.left_top() + b.depth, b.front.left_top()], Stroke::new(1.0, Color32::from_white_alpha(40)));
-        painter.line_segment([b.front.left_top(), b.front.left_bottom()], edge);
-        painter.line_segment([b.front.left_top(), b.front.right_top()], edge);
-        if i == self.selected {
-            let stroke = Stroke::new(3.0 * s, Color32::WHITE.gamma_multiply(focus.max(0.4)));
-            painter.add(Shape::closed_line(outline.to_vec(), stroke));
         }
     }
 

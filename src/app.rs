@@ -6,6 +6,7 @@ mod cover_editor;
 mod device_ui;
 mod dialogs;
 mod discs;
+mod double_axis;
 mod font_ui;
 mod gallery_ui;
 mod home;
@@ -43,7 +44,7 @@ use crate::stores::Store;
 use crate::video::{self, Videos};
 use crate::theme::{
     self, BackgroundKind, BarPosition, BarSlot, BarStyle, BoxCase, BubbleSettings, CoverShape, ButtonShape, ButtonStyle, DiscKind, DiscSettings, DiscSpin, GradientDirection, GridAlign, GridSettings,
-    CrtSettings, ImageFit, SpineLabel, Theme, ThemeKind, TileSettings, TileStyle, ViewKind,
+    CrtSettings, DoubleAxisSettings, ImageFit, TitleInfo, SpineLabel, Theme, ThemeKind, TileSettings, TileStyle, ViewKind,
 };
 use egui::{
     Align2, Color32, Context, FontId, Id, Mesh, Painter, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, TextureHandle, TextureOptions,
@@ -62,6 +63,7 @@ use buttons::*;
 use cover_editor::*;
 use device_ui::*;
 use discs::*;
+use double_axis::*;
 use home::*;
 use menus::*;
 use paint::*;
@@ -127,8 +129,8 @@ impl Special {
     fn icon(self) -> Option<egui::ImageSource<'static>> {
         match self {
             Special::Store => Some(egui::include_image!("../assets/ui/squares-plus.svg")),
+            Special::Add => Some(egui::include_image!("../assets/ui/plus.svg")),
             Special::Settings => Some(egui::include_image!("../assets/ui/gears.svg")),
-            Special::Add => None,
         }
     }
 
@@ -196,6 +198,9 @@ pub struct App {
     toast: Option<(String, Instant)>,
     bubble_layout: Option<BubbleLayout>,
     bubble_empty: Option<usize>,
+    /// The Double axis column moved to last, by its image key, and the tile last selected in each.
+    axis_column: Option<String>,
+    axis_rows: std::collections::HashMap<String, usize>,
     sounds: Sounds,
     videos: RefCell<Videos>,
     crt_visible: Vec<usize>,
@@ -290,6 +295,8 @@ impl App {
             toast: None,
             bubble_layout: None,
             bubble_empty: None,
+            axis_column: None,
+            axis_rows: Default::default(),
             sounds: Sounds::default(),
             videos: RefCell::default(),
             crt_visible: Vec::new(),
@@ -609,6 +616,7 @@ impl eframe::App for App {
             self.fonts = loaded;
         }
         self.sync_cover_shapes();
+        self.sync_axis_images();
         self.poll_discs(&ctx);
         self.poll_scan();
         self.poll_burn();
@@ -643,6 +651,7 @@ impl eframe::App for App {
         self.draw_widgets(&painter, screen, s);
         match self.theme().settings.view {
             _ if self.is_bubbles() => self.draw_bubbles(ui, screen, s),
+            _ if self.is_double_axis() => self.draw_double_axis(ui, screen, s),
             ViewKind::Row => self.draw_row(ui, screen, s),
             ViewKind::Grid => self.draw_grid(ui, screen, s),
         }

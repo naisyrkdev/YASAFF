@@ -1,4 +1,8 @@
 # YASAFF Launcher
+
+![Rust Percentage](https://img.shields.io/github/languages/top/naisyrkdev/yasaff?logo=rust&logoColor=white)
+[![License](https://img.shields.io/github/license/naisyrkdev/yasaff)](LICENSE)
+
 Yasaff launcher is kind of "layer" that should allow your PC to behave more like console. Trying aim to seamless experience for users.
 
 Trying to make it fully customizable ;)
@@ -27,7 +31,7 @@ YASAFF is a console-style game launcher for PC, made to be used with a controlle
 - A fullscreen library you use with a controller. Keyboard and mouse work too.
 - Finds installed games in **Steam**, **Heroic Games Launcher** and desktop shortcuts, and uses their artwork.
 - Starts games directly or through their store. YASAFF follows the game process, so it knows when the game is running and comes back when the game closes.
-- Two layouts (**Row view** and **Grid view**), a **Bubbles** theme and eight tile styles, from flat cards to 3D boxes, opening cases, spinning discs and CRT screens.
+- Two layouts (**Row view** and **Grid view**), a **Bubbles** theme, a **Double axis** theme with game categories, and eight tile styles, from flat cards to 3D boxes, opening cases, spinning discs and CRT screens.
 - Themes with their own backgrounds, bars, button looks, icons, fonts and sounds. You can export and import them.
 - **Physical games:** insert a disc, USB stick or SD card that holds a `.yasaff` file and its game starts, like on a console. YASAFF can also burn that file to a CD or DVD.
 - Save backups, and save syncing to the USB stick or SD card a game was started from.
@@ -111,10 +115,11 @@ You don't have to close a game or app to get back to YASAFF. Press **Guide** and
 Press **Menu** (or **Tab**) on a game to open its options:
 
 - **Start**, **Close game** / **Close application**, and **Update** for store apps.
-- **Appearance**: one section per tile style (square cards, game covers, the box styles, 3D objects, discs and CRT screens), each with its own cover image and its own size and position. A style without a cover of its own copies the one shown before it when you switch to it. Then the box sides (spine, top, back, side, bottom, booklet, colors), the background, preview and idle videos, the title font, and the **Gallery**.
+- **Appearance**: one section per tile style (square cards, game covers, the box styles, 3D objects, discs and CRT screens), each with its own cover image and its own size and position. A style without a cover of its own copies the one shown before it when you switch to it. Then the box sides (spine, top, back, side, bottom, booklet, colors), the background, preview and idle videos, the **Double axis** list image, the title font, and the **Gallery**.
   - Choosing an image asks whether to **Import new** or **Use from gallery**, so images the game already has can be reused.
   - The **Gallery** lists every image the game has, imported or fetched, and where each one is used. Images nothing uses can be deleted there.
   - **Settings → General → Keep every image in gallery, manage it manually** is on by default. Turn it off and a new image deletes the one it replaces, unless another tile style still shows it.
+- **Details**: the game's categories. A game can be in several; one of them is its main category.
 - **Fetch artwork**, **Rename**, **Edit launch command**.
 - **Swap position with another game** (or **Swap with other bubble**), and **Lock position**, an On/Off switch that keeps the game in its slot.
 - **Physical Devices**: the game's launch file and save backups. See [Discs, USB sticks and SD cards](#discs-usb-sticks-and-sd-cards) and [Saves](#saves).
@@ -124,12 +129,21 @@ Press **Menu** (or **Tab**) on a game to open its options:
 
 ![YASAFF customization](assets/for_docs/customization_1.gif)
 
-Everything about the look is part of a **theme**. Open **Settings → Theme** to switch themes, create one (it starts as a copy of the current one), rename, export, import or delete it. A theme is a folder with `themeSettings.json` and its images, so you can share it. The built-in themes can't be deleted, and the pre-defined **Bubbles** theme offers fewer options.
+Everything about the look is part of a **theme**. Open **Settings → Theme** to switch themes, create one (it starts as a copy of the current one), rename, export, import or delete it. A theme is a folder with `themeSettings.json` and its images, so you can share it. The built-in themes can't be deleted, and the pre-defined **Bubbles** and **Double axis** themes offer fewer options.
+
+**Pre-defined themes** (click a picture to open it full size)
+
+| Theme | Description | View |
+| --- | --- | --- |
+| **Bubbles** | Games float as bubbles of different sizes, with empty bubbles filling the screen, a preview video and a swap sound. | <a href="assets/for_docs/custom_themes/bubbles.png"><img src="assets/for_docs/custom_themes/bubbles.png" alt="Bubbles theme" width="320"></a> |
+| **Double axis** | Double axis menus. Categories run along the top, the games of the selected one below it. | <a href="assets/for_docs/custom_themes/double_axis.png"><img src="assets/for_docs/custom_themes/double_axis.png" alt="Double axis theme" width="320"></a> |
+
+**Categories:** add, rename, reorder and delete them in **Settings → Categories**. Saving a category with an empty name deletes it; its games stay in the library.
 
 **Home screen**
 
 - **Layout:** *Row view* or *Grid view*. Each layout keeps its own setup.
-- **Tile style:** *Square cards*, *Game covers*, *Flat 3D boxes*, *3D model boxes*, *3D objects*, *3D discs*, *3D opening cases* or *CRT screens*.
+- **Tile style:** *Square cards*, *Game covers*, *3D model boxes*, *3D objects*, *3D discs*, *3D opening cases* or *CRT screens*.
 - **Row view:** up to 4 rows, tile size, space between tiles, a bigger selected tile, and the row position (top, middle or bottom).
 - **Grid view:** columns, rows per page, spacing, a bigger selected tile and the grid position.
 
@@ -140,6 +154,7 @@ Everything about the look is part of a **theme**. Open **Settings → Theme** to
 - **3D objects:** a game shows its own 3D model (STL, OBJ, PLY, glTF/GLB or 3MF), or its name in 3D letters.
 - **CRT screens:** screen size, a CRT filter (scanlines, flicker, darker edges), and preview and idle videos.
 - **Bubbles:** bubble size, random size difference, empty bubbles that fill the screen, shuffling, preview video, and a swap sound.
+- **Double axis:** a menu like the PlayStation 3's. The categories run along the top. Left/Right picks a category, and Up/Down picks a game in it. Games without a category are under **Games**. The last category, **Main**, holds Settings, Discover and Add game. Categories are shown as text: you can set the size of the area the name fits in (a long name shrinks to fit, centered and justified), an optional border, the font, its largest size (or a dynamic size that always takes the biggest that fits) and color, and an image for each category. The selected category and game glow; you pick the glow's color and intensity. A game shows its name in the list, or its own list image. Next to images, names show for the selected game only, always, or never. That image starts as a copy of its square or cover image and can be changed in **Appearance**.
 
 **Background:** each game's own background art, or a solid color, gradient or image (fill, fit, stretch, repeat, repeat mirrored or center).
 

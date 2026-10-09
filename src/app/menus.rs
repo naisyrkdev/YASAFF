@@ -9,6 +9,7 @@ pub(super) enum MenuItem {
     Update,
     FetchArtwork,
     Appearance,
+    Details,
     Rename,
     SwapBubble,
     SwapTile,
@@ -18,9 +19,10 @@ pub(super) enum MenuItem {
     Remove,
 }
 
-pub(super) const MENU: [(MenuItem, &str); 10] = [
+pub(super) const MENU: [(MenuItem, &str); 11] = [
     (MenuItem::Start, tr_key!("Start")),
     (MenuItem::Appearance, tr_key!("Appearance")),
+    (MenuItem::Details, tr_key!("Details")),
     (MenuItem::FetchArtwork, tr_key!("Fetch artwork")),
     (MenuItem::Rename, tr_key!("Rename")),
     (MenuItem::SwapBubble, tr_key!("Swap with other bubble")),
@@ -42,6 +44,10 @@ pub(super) enum PromptKind {
     Color(SettingRow),
     BoxSize(SettingRow),
     CrtSize(SettingRow),
+    /// A Double axis size, in pixels.
+    AxisNumber(SettingRow),
+    /// Naming a new category (`None`) or renaming one; a category saved empty is deleted.
+    CategoryName(Option<usize>),
     ProfileName,
     ProfileNew,
 }
@@ -78,8 +84,8 @@ impl App {
                     menu.push((MenuItem::CloseApp, tr!("Close game").to_owned()));
                 }
                 MenuItem::SwapBubble if !self.is_bubbles() => {}
-                MenuItem::SwapTile if self.is_bubbles() || self.library.games.len() < 2 => {}
-                MenuItem::LockSlot if self.is_bubbles() || self.settings.order.static_order => {}
+                MenuItem::SwapTile if !self.is_standard() || self.library.games.len() < 2 => {}
+                MenuItem::LockSlot if !self.is_standard() || self.settings.order.static_order => {}
                 MenuItem::EditCommand | MenuItem::FetchArtwork if store_app => {}
                 MenuItem::Remove if store_app => menu.push((item, tr!("Uninstall").to_owned())),
                 _ => menu.push((item, i18n::tr(label).to_owned())),
@@ -122,6 +128,7 @@ impl App {
                 self.fetch_artwork(&[id]);
             }
             MenuItem::Appearance => self.mode = Mode::Settings { cursor: 0, page: Page::GameBox, in_rows: false },
+            MenuItem::Details => self.mode = Mode::Settings { cursor: 0, page: Page::GameDetails, in_rows: true },
             MenuItem::Rename => {
                 self.mode = Mode::Prompt { kind: PromptKind::Rename, buffer: game.name.clone() };
             }
@@ -232,6 +239,14 @@ impl App {
                 }
                 self.mode = self.settings_at(row);
             }
+            PromptKind::AxisNumber(row) => {
+                match text.trim_end_matches("px").trim().replace(',', ".").parse::<f32>() {
+                    Ok(px) if px.is_finite() => self.set_axis_number(row, px),
+                    _ => self.notify(tr!("\"{text}\" is not a number of pixels", text = text)),
+                }
+                self.mode = self.settings_at(row);
+            }
+            PromptKind::CategoryName(index) => self.commit_category_name(index, text.to_owned()),
             PromptKind::BoxSize(row) => {
                 let Some((_, (min, max), _)) = Self::box_size_slot(row) else { return };
                 match text.trim_end_matches("mm").trim().replace(',', ".").parse::<f32>() {
@@ -289,7 +304,10 @@ impl App {
             Mode::Prompt { kind: PromptKind::ProfileName, .. } => self.settings_at(SettingRow::ProfileRename),
             Mode::Prompt { kind: PromptKind::ProfileNew, .. } => self.settings_at(SettingRow::ProfileNew),
             Mode::Prompt { kind: PromptKind::AppStoreUrl, .. } => self.settings_at(SettingRow::AppStoreUrl),
-            Mode::Prompt { kind: PromptKind::Color(row) | PromptKind::BoxSize(row) | PromptKind::CrtSize(row), .. } => self.settings_at(*row),
+            Mode::Prompt { kind: PromptKind::Color(row) | PromptKind::BoxSize(row) | PromptKind::CrtSize(row) | PromptKind::AxisNumber(row), .. } => {
+                self.settings_at(*row)
+            }
+            Mode::Prompt { kind: PromptKind::CategoryName(index), .. } => self.settings_at(index.map_or(SettingRow::CategoryAdd, SettingRow::Category)),
             _ => Mode::Home,
         };
     }
@@ -404,6 +422,18 @@ impl App {
                 if *row == SettingRow::CrtWidth { tr!("Screen width (px)") } else { tr!("Screen height (px)") },
                 Some(tr!("Pixels at 1080p, from 80 to 600. Scales with the window.")),
             ),
+            PromptKind::AxisNumber(row) => (
+                match row {
+                    SettingRow::AxisWidth => tr!("Category width (px)"),
+                    SettingRow::AxisHeight => tr!("Category height (px)"),
+                    _ => tr!("Category font size (px)"),
+                },
+                Some(tr!("Pixels at 1080p. Scales with the window.")),
+            ),
+            PromptKind::CategoryName(index) => (
+                if index.is_some() { tr!("Rename category") } else { tr!("New category") },
+                index.map(|_| tr!("Save it empty to delete the category. Its games stay in the library.")),
+            ),
             PromptKind::BoxSize(row) => (
                 match row {
                     SettingRow::BoxWidth => tr!("Box width (mm)"),
@@ -426,6 +456,8 @@ impl App {
                     SettingRow::BoxSpineText | SettingRow::GameSpineText => tr!("Spine text color"),
                     SettingRow::BoxTopColor | SettingRow::GameTopColor => tr!("Top color"),
                     SettingRow::ObjectColor | SettingRow::GameObjectColor => tr!("Object color"),
+                    SettingRow::AxisTextColor => tr!("Text color"),
+                    SettingRow::AxisGlowColor => tr!("Glow color"),
                     _ => tr!("Background color"),
                 },
                 Some(if row.page() == Page::GameBox {
@@ -479,6 +511,45 @@ impl App {
         } else if cancel || modal.should_close() {
             self.cancel_prompt();
         }
+    }
+
+    /// Adds, renames or (named empty) deletes a category. Every theme's image for it follows.
+    fn commit_category_name(&mut self, index: Option<usize>, name: String) {
+        let result = match index {
+            None if name.is_empty() => Ok(None),
+            None => self.library.add_category(&name).map(|()| Some(SettingRow::Category(self.library.categories.len() - 1))),
+            Some(i) if name.is_empty() => {
+                let old = self.library.categories[i].clone();
+                self.library.remove_category(i);
+                for theme in &mut self.themes {
+                    let _ = theme.clear_axis_image(theme::AxisColumn::Category(&old));
+                }
+                self.notify(tr!("Deleted category {name}", name = old));
+                Ok(Some(SettingRow::CategoryAdd))
+            }
+            Some(i) => {
+                let old = self.library.categories[i].clone();
+                self.library.rename_category(i, &name).map(|()| {
+                    for theme in &mut self.themes {
+                        if let Err(e) = theme.rename_axis_image(&old, &name) {
+                            log::warn!("could not keep the image of category {old}: {e:#}");
+                        }
+                    }
+                    Some(SettingRow::Category(i))
+                })
+            }
+        };
+        let back = match result {
+            Ok(row) => {
+                self.save();
+                row
+            }
+            Err(e) => {
+                self.notify(tr!("Could not save category: {error}", error = format!("{e:#}")));
+                None
+            }
+        };
+        self.mode = self.settings_at(back.or(index.map(SettingRow::Category)).unwrap_or(SettingRow::CategoryAdd));
     }
 
     pub(super) fn remove_selected(&mut self) {

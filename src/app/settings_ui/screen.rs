@@ -10,6 +10,8 @@ impl App {
         let title = match (page, self.selected_game()) {
             (Page::GameBox, Some(game)) => tr!("Appearance · {name}", name = game.name),
             (Page::GameDevice, Some(game)) => tr!("Physical Devices · {name}", name = game.name),
+            (Page::GameDetails, Some(game)) => tr!("Details · {name}", name = game.name),
+            (Page::CategoryImages, _) => tr!("Category images").to_owned(),
             _ => tr!("Settings").to_owned(),
         };
         let cursor = cursor.min(rows.len() - 1);
@@ -224,6 +226,8 @@ impl App {
                 Page::App => Mode::Home,
                 Page::GameBox => Mode::Options { cursor: self.menu_index(MenuItem::Appearance) },
                 Page::GameDevice => Mode::Options { cursor: self.menu_index(MenuItem::PhysicalDevices) },
+                Page::GameDetails => Mode::Options { cursor: self.menu_index(MenuItem::Details) },
+                Page::CategoryImages => self.settings_at(SettingRow::AxisImages),
             }
         }
     }

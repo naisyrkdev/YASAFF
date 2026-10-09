@@ -48,6 +48,15 @@ pub struct Game {
     /// Keeping the saves on the USB stick or SD card the game is started from.
     #[serde(default, skip_serializing_if = "DeviceSaves::is_default")]
     pub device_saves: DeviceSaves,
+    /// Names from `Library::categories`. The game shows in each one in the Double axis theme.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub categories: Vec<String>,
+    /// One of `categories`; set whenever the game has any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub main_category: Option<String>,
+    /// The Double axis image was started from the cover once; it is not copied again after that.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub axis_seeded: bool,
 }
 
 /// The cover image and placement of every tile style. The shown style's live in `Assets` (what
@@ -256,6 +265,8 @@ struct AssetFields {
     idle_video: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     background: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    axis: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
     cover_placement: CoverPlacement,
     #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
@@ -286,6 +297,7 @@ impl AssetFields {
             AssetKind::Model => &mut self.model,
             AssetKind::Video => &mut self.video,
             AssetKind::IdleVideo => &mut self.idle_video,
+            AssetKind::Axis => &mut self.axis,
         }
     }
 
@@ -366,11 +378,13 @@ pub enum AssetKind {
     Model,
     Video,
     IdleVideo,
+    /// The game's picture in the Double axis theme's list.
+    Axis,
 }
 
 impl AssetKind {
     /// The kinds that are pictures, and so go in the gallery.
-    pub const IMAGES: [AssetKind; 8] = [
+    pub const IMAGES: [AssetKind; 9] = [
         AssetKind::Cover,
         AssetKind::Background,
         AssetKind::Spine,
@@ -379,13 +393,14 @@ impl AssetKind {
         AssetKind::Side,
         AssetKind::Bottom,
         AssetKind::Booklet,
+        AssetKind::Axis,
     ];
 
     pub fn is_image(self) -> bool {
         Self::IMAGES.contains(&self)
     }
 
-    pub const ALL: [AssetKind; 11] = [
+    pub const ALL: [AssetKind; 12] = [
         AssetKind::Cover,
         AssetKind::Background,
         AssetKind::Spine,
@@ -397,6 +412,7 @@ impl AssetKind {
         AssetKind::Model,
         AssetKind::Video,
         AssetKind::IdleVideo,
+        AssetKind::Axis,
     ];
 
     /// The surface whose placement this asset uses: the box faces have their own, everything
@@ -421,6 +437,7 @@ impl AssetKind {
             AssetKind::Model => "model",
             AssetKind::Video => "video",
             AssetKind::IdleVideo => "idle-video",
+            AssetKind::Axis => "axis",
         }
     }
 }
@@ -428,6 +445,9 @@ impl AssetKind {
 #[derive(Serialize, Deserialize, Default)]
 pub struct Library {
     pub games: Vec<Game>,
+    /// Category names, in the order the Double axis theme shows them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub categories: Vec<String>,
     #[serde(skip)]
     data_dir: PathBuf,
     /// `library.json` could be neither read nor moved aside; saving would destroy it.
@@ -467,6 +487,7 @@ impl Library {
         };
         lib.data_dir = data_dir;
         lib.arrange();
+        lib.tidy_categories();
         for game in &mut lib.games {
             game.adopt_images();
         }
@@ -544,9 +565,111 @@ impl Library {
             gallery: Vec::new(),
             fixed_slot: None,
             device_saves: DeviceSaves::default(),
+            categories: Vec::new(),
+            main_category: None,
+            axis_seeded: false,
         });
         self.arrange();
         self.games.iter().position(|g| g.id == id).unwrap()
+    }
+
+    /// Drops category names the library doesn't have, and makes sure a game with categories has a
+    /// main one among them.
+    fn tidy_categories(&mut self) {
+        let mut seen = std::collections::HashSet::new();
+        self.categories.retain(|c| !c.trim().is_empty() && seen.insert(c.to_lowercase()));
+        let known = self.categories.clone();
+        for game in &mut self.games {
+            game.categories.retain(|c| known.contains(c));
+            game.categories.dedup();
+            if game.main_category.as_ref().is_none_or(|m| !game.categories.contains(m)) {
+                game.main_category = game.categories.first().cloned();
+            }
+        }
+    }
+
+    /// The category named `name`, ignoring case.
+    pub fn category(&self, name: &str) -> Option<usize> {
+        let name = name.trim().to_lowercase();
+        self.categories.iter().position(|c| c.to_lowercase() == name)
+    }
+
+    pub fn add_category(&mut self, name: &str) -> Result<()> {
+        let name = name.trim();
+        anyhow::ensure!(!name.is_empty(), "a category needs a name");
+        anyhow::ensure!(self.category(name).is_none(), "there is already a category named {name}");
+        self.categories.push(name.to_owned());
+        Ok(())
+    }
+
+    pub fn rename_category(&mut self, index: usize, name: &str) -> Result<()> {
+        let name = name.trim();
+        anyhow::ensure!(!name.is_empty(), "a category needs a name");
+        anyhow::ensure!(self.category(name).is_none_or(|i| i == index), "there is already a category named {name}");
+        let old = std::mem::replace(&mut self.categories[index], name.to_owned());
+        for game in &mut self.games {
+            for c in game.categories.iter_mut().chain(game.main_category.as_mut()).filter(|c| **c == old) {
+                *c = name.to_owned();
+            }
+        }
+        Ok(())
+    }
+
+    pub fn remove_category(&mut self, index: usize) {
+        self.categories.remove(index);
+        self.tidy_categories();
+    }
+
+    /// Moves a category one place to the left (`-1`) or right (`1`).
+    pub fn move_category(&mut self, index: usize, delta: i32) -> usize {
+        let to = (index as i32 + delta).clamp(0, self.categories.len() as i32 - 1) as usize;
+        self.categories.swap(index, to);
+        to
+    }
+
+    /// Puts the game in the category or takes it out. The first category becomes the main one,
+    /// and taking out the main one makes the next the main one.
+    pub fn toggle_category(&mut self, game: usize, category: usize) {
+        let name = self.categories[category].clone();
+        let game = &mut self.games[game];
+        match game.categories.iter().position(|c| *c == name) {
+            Some(i) => {
+                game.categories.remove(i);
+            }
+            None => game.categories.push(name),
+        }
+        let known = &self.categories;
+        game.categories.sort_by_key(|c| known.iter().position(|k| k == c));
+        if game.main_category.as_ref().is_none_or(|m| !game.categories.contains(m)) {
+            game.main_category = game.categories.first().cloned();
+        }
+    }
+
+    /// Makes the category the game's main one, adding the game to it.
+    pub fn set_main_category(&mut self, game: usize, category: usize) {
+        let name = self.categories[category].clone();
+        if !self.games[game].categories.contains(&name) {
+            self.toggle_category(game, category);
+        }
+        self.games[game].main_category = Some(name);
+    }
+
+    /// Starts a game's Double axis image as a copy of its square cover, or else its tall cover. Done
+    /// once per game, so removing the image leaves the name shown. Returns whether anything changed.
+    pub fn seed_axis_image(&mut self, index: usize) -> bool {
+        let game = &self.games[index];
+        if game.axis_seeded || game.asset(AssetKind::Axis).is_some() {
+            return false;
+        }
+        let Some(src) = [TileStyle::Flat, TileStyle::Cover].into_iter().find_map(|s| game.style_cover(s)).map(Path::to_path_buf) else {
+            return false;
+        };
+        match self.copy_asset(index, AssetKind::Axis.slug(), &src) {
+            Ok(dest) => self.set_image(index, ImageSlot::Asset(AssetKind::Axis), dest),
+            Err(e) => log::warn!("could not copy {} for the Double axis theme: {e:#}", src.display()),
+        }
+        self.games[index].axis_seeded = true;
+        true
     }
 
     pub fn position(&self, id: &str) -> Option<usize> {
@@ -848,6 +971,26 @@ mod tests {
     fn library(names: &[&str]) -> Library {
         let games = names.iter().map(|n| serde_json::from_str(&format!(r#"{{"id":"{n}","name":"{n}","target":"/{n}"}}"#)).unwrap()).collect();
         Library { games, ..Library::default() }
+    }
+
+    #[test]
+    fn a_game_with_categories_always_has_a_main_one() {
+        let mut lib = library(&["a"]);
+        for name in ["Racing", "Kids"] {
+            lib.add_category(name).unwrap();
+        }
+        assert!(lib.add_category("racing").is_err());
+        let main = |lib: &Library| lib.games[0].main_category.clone();
+        lib.toggle_category(0, 1);
+        assert_eq!(main(&lib).as_deref(), Some("Kids"));
+        lib.set_main_category(0, 0);
+        assert_eq!((lib.games[0].categories.clone(), main(&lib).as_deref()), (vec!["Racing".to_owned(), "Kids".to_owned()], Some("Racing")));
+        lib.rename_category(0, "Cars").unwrap();
+        assert_eq!(main(&lib).as_deref(), Some("Cars"));
+        lib.remove_category(0);
+        assert_eq!((lib.games[0].categories.clone(), main(&lib).as_deref()), (vec!["Kids".to_owned()], Some("Kids")));
+        lib.toggle_category(0, 0);
+        assert_eq!((lib.games[0].categories.len(), main(&lib)), (0, None));
     }
 
     fn order(lib: &Library) -> String {

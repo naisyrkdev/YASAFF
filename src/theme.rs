@@ -12,6 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const SETTINGS_FILE: &str = "themeSettings.json";
 const IMAGES_DIR: &str = "images";
 pub const BUBBLES_ID: &str = "bubbles";
+pub const DOUBLE_AXIS_ID: &str = "double-axis";
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug, Default)]
 #[serde(rename_all = "lowercase")]
@@ -38,6 +39,8 @@ pub enum ThemeKind {
     #[default]
     Standard,
     Bubbles,
+    #[serde(rename = "double-axis")]
+    DoubleAxis,
 }
 
 impl ThemeKind {
@@ -45,6 +48,7 @@ impl ThemeKind {
         match self {
             Self::Standard => tr!("Standard"),
             Self::Bubbles => tr!("Bubbles"),
+            Self::DoubleAxis => tr!("Double axis"),
         }
     }
 }
@@ -55,8 +59,8 @@ pub enum TileStyle {
     #[default]
     Flat,
     Cover,
-    #[serde(rename = "box")]
-    FlatBox,
+    /// Older settings saved the removed flat box style as "box".
+    #[serde(alias = "box")]
     Model,
     Object,
     Disc,
@@ -65,13 +69,12 @@ pub enum TileStyle {
 }
 
 impl TileStyle {
-    pub const ALL: [Self; 8] = [Self::Flat, Self::Cover, Self::FlatBox, Self::Model, Self::Case, Self::Object, Self::Disc, Self::Crt];
+    pub const ALL: [Self; 7] = [Self::Flat, Self::Cover, Self::Model, Self::Case, Self::Object, Self::Disc, Self::Crt];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Flat => tr!("Square cards"),
             Self::Cover => tr!("Game covers"),
-            Self::FlatBox => tr!("Flat 3D boxes"),
             Self::Model => tr!("3D model boxes"),
             Self::Object => tr!("3D objects"),
             Self::Disc => tr!("3D discs"),
@@ -86,7 +89,7 @@ impl TileStyle {
     }
 
     pub fn is_box(self) -> bool {
-        matches!(self, Self::FlatBox | Self::Model | Self::Case)
+        matches!(self, Self::Model | Self::Case)
     }
 
     pub fn aspect(self, [w, h, _]: [f32; 3]) -> f32 {
@@ -99,7 +102,7 @@ impl TileStyle {
     /// The shape of cover image this style shows; each shape can have its own image.
     pub fn cover_shape(self) -> CoverShape {
         match self {
-            Self::Cover | Self::FlatBox | Self::Model | Self::Case => CoverShape::Tall,
+            Self::Cover | Self::Model | Self::Case => CoverShape::Tall,
             Self::Flat | Self::Object | Self::Disc | Self::Crt => CoverShape::Square,
         }
     }
@@ -558,6 +561,115 @@ fn unit_hash(key: &str, seed: u32) -> f32 {
     (h >> 40) as f32 / (1u64 << 24) as f32
 }
 
+/// When the Double axis list shows a game's name and status next to its image.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TitleInfo {
+    #[default]
+    Selected,
+    Always,
+    Never,
+}
+
+impl TitleInfo {
+    pub const ALL: [Self; 3] = [Self::Selected, Self::Always, Self::Never];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Selected => tr!("Selected game only"),
+            Self::Always => tr!("Always"),
+            Self::Never => tr!("Never"),
+        }
+    }
+}
+
+/// The Double axis theme: categories side by side, the games of the selected one below it.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(default)]
+pub struct DoubleAxisSettings {
+    /// The size of a category's box, at 1080p. Its name is fitted inside.
+    pub width: f32,
+    pub height: f32,
+    /// An outline around each category's box.
+    pub border: bool,
+    /// An imported font file; `None` uses the game title font.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
+    pub font_size: f32,
+    /// Each name takes the biggest size that fits its box; `font_size` is not used.
+    pub dynamic_font: bool,
+    #[serde(with = "hex")]
+    pub text_color: Color32,
+    /// The glow around the selected category and game.
+    #[serde(with = "hex")]
+    pub glow_color: Color32,
+    /// From 0 (no glow) to 1.
+    pub glow_intensity: f32,
+    pub title_info: TitleInfo,
+    /// Category images keyed by [`axis_image_key`]; file names in the images folder.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub images: BTreeMap<String, String>,
+}
+
+impl Default for DoubleAxisSettings {
+    fn default() -> Self {
+        Self {
+            width: 220.0,
+            height: 120.0,
+            border: false,
+            font: None,
+            font_size: 28.0,
+            dynamic_font: false,
+            text_color: Color32::WHITE,
+            glow_color: Color32::from_rgb(0x8f, 0xc8, 0xff),
+            glow_intensity: 0.6,
+            title_info: TitleInfo::Selected,
+            images: BTreeMap::new(),
+        }
+    }
+}
+
+impl DoubleAxisSettings {
+    pub const WIDTH_RANGE: (f32, f32) = (80.0, 600.0);
+    pub const HEIGHT_RANGE: (f32, f32) = (40.0, 400.0);
+    pub const FONT_SIZE_RANGE: (f32, f32) = (10.0, 80.0);
+    pub const GLOW_RANGE: (f32, f32) = (0.0, 1.0);
+
+    pub fn glow(&self) -> f32 {
+        if self.glow_intensity.is_finite() { self.glow_intensity.clamp(0.0, 1.0) } else { Self::default().glow_intensity }
+    }
+
+    pub fn size(&self) -> [f32; 2] {
+        let clamp = |v: f32, (min, max): (f32, f32), default: f32| if v.is_finite() { v.clamp(min, max) } else { default };
+        let d = Self::default();
+        [clamp(self.width, Self::WIDTH_RANGE, d.width), clamp(self.height, Self::HEIGHT_RANGE, d.height)]
+    }
+
+    pub fn font_size(&self) -> f32 {
+        let (min, max) = Self::FONT_SIZE_RANGE;
+        if self.font_size.is_finite() { self.font_size.clamp(min, max) } else { Self::default().font_size }
+    }
+}
+
+/// A column of the Double axis theme. Images are keyed by name, so an exported theme fits any profile
+/// whose categories are named the same.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum AxisColumn<'a> {
+    Category(&'a str),
+    /// Games without a category.
+    Uncategorized,
+    /// The built-in last column: Settings, Discover and Add game.
+    Main,
+}
+
+pub fn axis_image_key(column: AxisColumn) -> String {
+    match column {
+        AxisColumn::Category(name) => format!("category:{name}"),
+        AxisColumn::Uncategorized => "builtin:uncategorized".to_owned(),
+        AxisColumn::Main => "builtin:main".to_owned(),
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct Background {
@@ -798,6 +910,7 @@ pub struct ThemeSettings {
     pub discs: DiscSettings,
     pub crt: CrtSettings,
     pub bubbles: BubbleSettings,
+    pub double_axis: DoubleAxisSettings,
     pub swap: SwapSound,
     pub background: Background,
     pub top_bar: BarStyle,
@@ -823,10 +936,25 @@ impl ThemeSettings {
         }
     }
 
+    pub fn double_axis_preset() -> Self {
+        Self {
+            name: "Double axis".to_owned(),
+            kind: ThemeKind::DoubleAxis,
+            background: Background {
+                game_art: true,
+                gradient_from: Color32::from_rgb(0x1a, 0x1a, 0x2e),
+                gradient_to: Color32::from_rgb(0x00, 0x00, 0x00),
+                ..Background::default()
+            },
+            ..Self::default()
+        }
+    }
+
     pub fn disabled_options(&self) -> &'static [&'static str] {
         match self.kind {
-            ThemeKind::Bubbles => &["view", "tiles", "grid", "tile_style", "boxes", "objects", "discs", "crt", "swap"],
-            ThemeKind::Standard => &["bubbles"],
+            ThemeKind::Bubbles => &["view", "tiles", "grid", "tile_style", "boxes", "objects", "discs", "crt", "swap", "double_axis"],
+            ThemeKind::DoubleAxis => &["view", "tiles", "grid", "tile_style", "boxes", "objects", "discs", "crt", "bubbles"],
+            ThemeKind::Standard => &["bubbles", "double_axis"],
         }
     }
 
@@ -878,6 +1006,7 @@ impl Default for ThemeSettings {
             discs: DiscSettings::default(),
             crt: CrtSettings::default(),
             bubbles: BubbleSettings::default(),
+            double_axis: DoubleAxisSettings::default(),
             swap: SwapSound::default(),
             background: Background::default(),
             top_bar: BarStyle::default(),
@@ -915,10 +1044,13 @@ impl Theme {
                 Err(e) => warnings.push(tr!("Skipping theme: {error}", error = format!("{e:#}"))),
             }
         }
-        if !themes.iter().any(|t| t.id == BUBBLES_ID) {
-            let theme = Theme { id: BUBBLES_ID.to_owned(), dir: Self::themes_dir().join(BUBBLES_ID), settings: ThemeSettings::bubbles_preset() };
+        for (id, preset) in [(BUBBLES_ID, ThemeSettings::bubbles_preset as fn() -> ThemeSettings), (DOUBLE_AXIS_ID, ThemeSettings::double_axis_preset)] {
+            if themes.iter().any(|t| t.id == id) {
+                continue;
+            }
+            let theme = Theme { id: id.to_owned(), dir: Self::themes_dir().join(id), settings: preset() };
             if let Err(e) = theme.save() {
-                warnings.push(tr!("Could not create the Bubbles theme: {error}", error = format!("{e:#}")));
+                warnings.push(tr!("Could not create the {theme} theme: {error}", theme = theme.settings.name, error = format!("{e:#}")));
             }
             themes.push(theme);
         }
@@ -950,7 +1082,7 @@ impl Theme {
     }
 
     pub fn is_builtin(&self) -> bool {
-        self.id == BUBBLES_ID
+        self.id == BUBBLES_ID || self.id == DOUBLE_AXIS_ID
     }
 
     pub fn images_dir(&self) -> PathBuf {
@@ -1081,6 +1213,44 @@ impl Theme {
 
     fn remove_tile_icon_file(&self, key: &str) {
         if let Some(old) = self.tile_icon(key) {
+            let _ = fs::remove_file(old);
+        }
+    }
+
+    pub fn axis_image(&self, column: AxisColumn) -> Option<PathBuf> {
+        let name = self.settings.double_axis.images.get(&axis_image_key(column))?;
+        is_plain_file_name(name).then(|| self.images_dir().join(name))
+    }
+
+    pub fn set_axis_image(&mut self, column: AxisColumn, src: &Path) -> Result<()> {
+        let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("png").to_lowercase();
+        let name = format!("category-{}-{}.{ext}", uuid::Uuid::new_v4().simple(), now_secs());
+        fs::create_dir_all(self.images_dir())?;
+        fs::copy(src, self.images_dir().join(&name)).with_context(|| format!("copying {}", src.display()))?;
+        self.remove_axis_image_file(column);
+        self.settings.double_axis.images.insert(axis_image_key(column), name);
+        self.save()
+    }
+
+    pub fn clear_axis_image(&mut self, column: AxisColumn) -> Result<()> {
+        if !self.settings.double_axis.images.contains_key(&axis_image_key(column)) {
+            return Ok(());
+        }
+        self.remove_axis_image_file(column);
+        self.settings.double_axis.images.remove(&axis_image_key(column));
+        self.save()
+    }
+
+    /// Keeps a renamed category's image.
+    pub fn rename_axis_image(&mut self, old: &str, new: &str) -> Result<()> {
+        let images = &mut self.settings.double_axis.images;
+        let Some(name) = images.remove(&axis_image_key(AxisColumn::Category(old))) else { return Ok(()) };
+        images.insert(axis_image_key(AxisColumn::Category(new)), name);
+        self.save()
+    }
+
+    fn remove_axis_image_file(&self, column: AxisColumn) {
+        if let Some(old) = self.axis_image(column) {
             let _ = fs::remove_file(old);
         }
     }
@@ -1268,6 +1438,20 @@ mod hex_opt {
     }
 }
 
+/// Colors for text and glows, which show on dark backgrounds.
+pub const LIGHT_PRESETS: &[Color32] = &[
+    Color32::WHITE,
+    Color32::from_gray(0xc8),
+    Color32::from_rgb(0x8f, 0xc8, 0xff),
+    Color32::from_rgb(0x2f, 0x7d, 0xf6),
+    Color32::from_rgb(0x7e, 0xe0, 0xc0),
+    Color32::from_rgb(0x5c, 0xb8, 0x3c),
+    Color32::from_rgb(0xff, 0xd8, 0x6b),
+    Color32::from_rgb(0xff, 0x9a, 0x3c),
+    Color32::from_rgb(0xff, 0x7a, 0x8a),
+    Color32::from_rgb(0xc8, 0x8c, 0xff),
+];
+
 pub const COLOR_PRESETS: &[Color32] = &[
     Color32::from_rgb(0x00, 0x00, 0x00),
     Color32::from_rgb(0x00, 0x02, 0x07),
@@ -1365,9 +1549,9 @@ mod tests {
     }
 
     #[test]
-    fn flat_box_style_keeps_its_saved_name() {
+    fn removed_flat_box_style_reads_as_model_boxes() {
         let s: ThemeSettings = serde_json::from_str(r#"{"tile_style":"box"}"#).unwrap();
-        assert_eq!(s.tile_style, TileStyle::FlatBox);
+        assert_eq!(s.tile_style, TileStyle::Model);
     }
 
     #[test]
