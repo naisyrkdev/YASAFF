@@ -34,8 +34,12 @@ pub struct Game {
     pub app_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub save_dir: Option<PathBuf>,
+    /// Bubble placement saved by older versions; read once and replaced by `bubble_slot`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bubble_place: Option<String>,
+    /// The bubble this game sits in, so adding or removing games leaves it where it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bubble_slot: Option<usize>,
     /// The cover image and placement kept for each tile style.
     #[serde(default, skip_serializing_if = "CoverShapes::is_empty")]
     pub cover_shapes: CoverShapes,
@@ -561,6 +565,7 @@ impl Library {
             app_id: None,
             save_dir: None,
             bubble_place: None,
+            bubble_slot: None,
             cover_shapes: CoverShapes::default(),
             gallery: Vec::new(),
             fixed_slot: None,

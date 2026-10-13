@@ -38,6 +38,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "..\target\release\yasaff.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "setup-git.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
+; ffmpeg and its license, fetched by build-installer.ps1
+Source: "..\target\bundle\tools\*"; DestDir: "{app}\tools"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\YASAFF"; Filename: "{app}\yasaff.exe"

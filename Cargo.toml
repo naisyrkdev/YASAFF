@@ -39,3 +39,5 @@ winresource = "0.1"
 
 [package.metadata.appimage]
 icon = "assets/icon-256.png"
+# Filled by installer/build-appimage.sh (ffmpeg, xorriso); copied to $APPDIR/tools.
+assets = ["target/bundle/tools"]

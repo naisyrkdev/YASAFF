@@ -252,15 +252,16 @@ impl App {
                 }
             }
             SettingRow::ThemeExport => {
-                let dialog = rfd::FileDialog::new().set_title(tr!("Export theme to folder"));
-                self.ask_path(dialog, Pick::Folder, |app, parent| match app.theme().export(&parent) {
-                    Ok(dir) => app.notify(tr!("Theme exported to {folder}", folder = dir.display())),
+                let name = &self.theme().settings.name;
+                let dialog = rfd::FileDialog::new().set_title(tr!("Export theme {name}", name = name)).add_filter("ZIP", &["zip"]).set_file_name(self.theme().package_name());
+                self.ask_path(dialog, Pick::Save, |app, file| match app.theme().export(&file) {
+                    Ok(()) => app.notify(tr!("Theme exported to {file}", file = file.display())),
                     Err(e) => app.notify(tr!("Could not export theme: {error}", error = format!("{e:#}"))),
                 });
             }
             SettingRow::ThemeImport => {
-                let dialog = rfd::FileDialog::new().set_title(tr!("Select an exported theme folder"));
-                self.ask_path(dialog, Pick::Folder, |app, dir| match Theme::import(&dir) {
+                let dialog = rfd::FileDialog::new().set_title(tr!("Select a theme package")).add_filter("ZIP", &["zip"]);
+                self.ask_path(dialog, Pick::File, |app, zip| match Theme::import(&zip) {
                     Ok(theme) => {
                         let id = theme.id.clone();
                         app.themes.push(theme);

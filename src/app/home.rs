@@ -456,8 +456,7 @@ impl App {
     }
 
     pub(super) fn bubble_occupant(&self, slot: usize) -> Option<usize> {
-        let specials = self.library.games.len()..self.tile_count();
-        self.bubble_places().iter().position(|&p| p == slot).or_else(|| specials.contains(&slot).then_some(slot))
+        self.bubble_places().iter().position(|&p| p == slot)
     }
 
     pub(super) fn empty_bubble(&self) -> Option<usize> {
@@ -527,16 +526,6 @@ impl App {
         }
     }
 
-    pub(super) fn bubble_key(&self, i: usize) -> String {
-        match self.library.games.get(i) {
-            Some(game) => game.id.clone(),
-            None => {
-                let special = self.special(i);
-                format!("special-{}", Special::ALL.iter().position(|s| Some(*s) == special).unwrap_or(0))
-            }
-        }
-    }
-
     pub(super) fn update_videos(&mut self, ctx: &Context) {
         const MAX_IDLE: usize = 12;
         let theme = &self.theme().settings;
@@ -571,15 +560,18 @@ impl App {
         let top = self.bar_rect(BarSlot::Top, screen, s).bottom() + 16.0 * s;
         let mut area = Rect::from_min_max(pos2(screen.left() + 60.0 * s, top), pos2(screen.right() - 60.0 * s, screen.bottom() - 220.0 * s));
         let per_page = bubble_capacity(bubbles.size, area, s);
-        let pages = count.div_ceil(per_page).max(1);
+        // Games keep their saved bubble, so the pages reach far enough to hold the last one.
+        let used = match bubbles.fill_screen {
+            true => self.library.games.iter().filter_map(|g| g.bubble_slot).filter(|&j| j < count * per_page).map(|j| j + 1).max().unwrap_or(0),
+            false => 0,
+        };
+        let pages = count.max(used).div_ceil(per_page).max(1);
         if pages > 1 {
             area = area.shrink2(vec2(50.0 * s, 0.0));
         }
-        let mut keys: Vec<String> = (0..count).map(|i| self.bubble_key(i)).collect();
-        if bubbles.fill_screen {
-            keys.extend((0..(pages * per_page).saturating_sub(count)).map(|k| format!("empty-{k}")));
-        }
-        let diameters: Vec<f32> = keys.iter().map(|key| bubbles.diameter(key) * s).collect();
+        // Sizes belong to the bubbles, not to the games in them, so the layout only changes when the page count does.
+        let total = if bubbles.fill_screen { pages * per_page } else { count };
+        let diameters: Vec<f32> = (0..total).map(|j| bubbles.diameter(&format!("slot-{j}")) * s).collect();
         if self.bubble_layout.as_ref().is_none_or(|c| c.diameters != diameters || c.area != area || c.per_page != per_page) {
             let (mut centers, mut radii) = (Vec::new(), Vec::new());
             for page in diameters.chunks(per_page) {
@@ -593,6 +585,7 @@ impl App {
         if centers.len() < count {
             return;
         }
+        self.keep_bubble_places();
         let places = self.bubble_places();
         let slot = |i: usize| places.get(i).copied().unwrap_or(i);
         let mut occupant: Vec<Option<usize>> = vec![None; centers.len()];
@@ -694,67 +687,72 @@ impl App {
         }
     }
 
+    /// The bubble each tile sits in. Games keep their saved bubble, the special tiles take the last
+    /// bubbles of the first page, and a game without one takes the first empty bubble.
     pub(super) fn bubble_places(&self) -> Vec<usize> {
         let games = &self.library.games;
         let (n, count) = (games.len(), self.tile_count());
-        let total = self.bubble_layout.as_ref().map_or(count, |l| l.centers.len()).max(count);
+        let (total, per_page) = self.bubble_layout.as_ref().map_or((count, count), |l| (l.centers.len(), l.per_page));
+        let total = total.max(count);
         let index: std::collections::HashMap<&str, usize> = games.iter().enumerate().map(|(i, g)| (g.id.as_str(), i)).collect();
-        let slot_of = |key: &str| match key.strip_prefix("empty-") {
-            Some(k) => k.parse::<usize>().ok().map(|k| count + k).filter(|&j| j < total),
+        let legacy = |key: &str| match key.strip_prefix("empty-") {
+            Some(k) => k.parse::<usize>().ok().map(|k| count + k),
             None => index.get(key).copied(),
         };
-        let mut place = vec![usize::MAX; n];
+        let mut place = vec![usize::MAX; count];
         let mut taken = vec![false; total];
         for (i, game) in games.iter().enumerate() {
-            if let Some(slot) = game.bubble_place.as_deref().and_then(slot_of)
-                && !taken[slot]
-            {
+            let saved = game.bubble_slot.or_else(|| game.bubble_place.as_deref().and_then(legacy));
+            if let Some(slot) = saved.filter(|&j| j < total && !taken[j]) {
                 place[i] = slot;
                 taken[slot] = true;
             }
         }
-        for i in 0..n {
-            if place[i] == usize::MAX && !taken[i] {
-                place[i] = i;
-                taken[i] = true;
+        let first = per_page.min(total).saturating_sub(count - n);
+        for (i, slot) in (n..count).zip(first..) {
+            if !taken[slot] {
+                place[i] = slot;
+                taken[slot] = true;
             }
         }
-        let mut free = (0..n).chain(count..total).filter(|&j| !taken[j]);
+        let mut free = (0..total).filter(|&j| !taken[j]);
         for p in place.iter_mut().filter(|p| **p == usize::MAX) {
             *p = free.next().unwrap_or(0);
         }
         place
     }
 
-    pub(super) fn slot_key(&self, slot: usize) -> Option<String> {
-        let (n, count) = (self.library.games.len(), self.tile_count());
-        match slot {
-            _ if slot < n => Some(self.library.games[slot].id.clone()),
-            _ if slot >= count => Some(format!("empty-{}", slot - count)),
-            _ => None,
+    /// Saves the bubble each game sits in, so a new game fills an empty bubble instead of moving the others.
+    fn keep_bubble_places(&mut self) {
+        let places = self.bubble_places();
+        let mut changed = false;
+        for (game, &slot) in self.library.games.iter_mut().zip(&places) {
+            if game.bubble_slot != Some(slot) || game.bubble_place.is_some() {
+                game.bubble_slot = Some(slot);
+                game.bubble_place = None;
+                changed = true;
+            }
+        }
+        if changed {
+            self.save();
         }
     }
 
     pub(super) fn move_bubble(&mut self, from: usize, target: usize) {
-        let Some(target_key) = self.slot_key(target) else {
+        let places = self.bubble_places();
+        let other = places.iter().position(|&p| p == target);
+        if from >= self.library.games.len() || other.is_some_and(|o| o >= self.library.games.len()) {
             self.notify(tr!("Only games can swap places"));
             return;
-        };
+        }
         self.mode = Mode::Home;
-        let places = self.bubble_places();
         let Some(&own) = places.get(from) else { return };
         if own == target {
             return;
         }
-        let mut moves = vec![(from, target_key)];
-        if let Some(other) = places.iter().position(|&p| p == target)
-            && let Some(own_key) = self.slot_key(own)
-        {
-            moves.push((other, own_key));
-        }
-        for (i, key) in moves {
-            let game = &mut self.library.games[i];
-            game.bubble_place = (key != game.id).then_some(key);
+        self.library.games[from].bubble_slot = Some(target);
+        if let Some(other) = other {
+            self.library.games[other].bubble_slot = Some(own);
         }
         self.save();
     }

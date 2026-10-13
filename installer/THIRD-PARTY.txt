@@ -1,0 +1,11 @@
+YASAFF ships these programs unchanged in this "tools" folder. They run as separate
+programs and keep their own licenses.
+
+ffmpeg (Windows and Linux): plays preview and idle videos.
+  License: GNU LGPL 2.1 or later, see ffmpeg-LICENSE.txt
+  Binary:  LGPL build from https://github.com/BtbN/FFmpeg-Builds
+  Source:  https://ffmpeg.org/download.html and https://github.com/BtbN/FFmpeg-Builds
+
+xorriso (Linux only): burns games to CD and DVD.
+  License: GNU GPL 3 or later, see xorriso-COPYING
+  Source:  xorriso-source.tar.gz in this folder, or https://www.gnu.org/software/xorriso/

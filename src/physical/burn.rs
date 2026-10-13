@@ -140,12 +140,8 @@ enum Tool {
     Growisofs,
 }
 
-fn installed(program: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
-}
-
 fn pick_tool(media: &Media) -> Result<Tool, String> {
+    use crate::tools::installed;
     if installed("xorriso") {
         return Ok(Tool::Xorriso);
     }
@@ -162,7 +158,7 @@ fn pick_tool(media: &Media) -> Result<Tool, String> {
 fn iso_maker() -> Result<&'static str, String> {
     ["genisoimage", "mkisofs"]
         .into_iter()
-        .find(|p| installed(p))
+        .find(|p| crate::tools::installed(p))
         .ok_or_else(|| tr!("Burning a CD with wodim needs genisoimage (or install xorriso instead).").into())
 }
 
@@ -318,7 +314,7 @@ impl Failure {
 fn run(program: &str, args: &[&str], on_line: &mut dyn FnMut(&str)) -> Result<(), Failure> {
     let fail = |status: String, lines: Vec<String>| Failure { program: program.to_owned(), status, lines };
     log::info!("burn: {program} {}", args.join(" "));
-    let mut child = Command::new(program)
+    let mut child = Command::new(crate::tools::program(program))
         .args(args)
         .env("LC_ALL", "C")
         .stdin(Stdio::null())

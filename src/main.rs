@@ -31,6 +31,7 @@ mod settings;
 mod sound;
 mod stores;
 mod theme;
+mod tools;
 mod video;
 mod watch;
 

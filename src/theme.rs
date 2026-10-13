@@ -12,7 +12,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const SETTINGS_FILE: &str = "themeSettings.json";
 const IMAGES_DIR: &str = "images";
 pub const BUBBLES_ID: &str = "bubbles";
-pub const DOUBLE_AXIS_ID: &str = "double-axis";
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug, Default)]
 #[serde(rename_all = "lowercase")]
@@ -936,20 +935,6 @@ impl ThemeSettings {
         }
     }
 
-    pub fn double_axis_preset() -> Self {
-        Self {
-            name: "Double axis".to_owned(),
-            kind: ThemeKind::DoubleAxis,
-            background: Background {
-                game_art: true,
-                gradient_from: Color32::from_rgb(0x1a, 0x1a, 0x2e),
-                gradient_to: Color32::from_rgb(0x00, 0x00, 0x00),
-                ..Background::default()
-            },
-            ..Self::default()
-        }
-    }
-
     pub fn disabled_options(&self) -> &'static [&'static str] {
         match self.kind {
             ThemeKind::Bubbles => &["view", "tiles", "grid", "tile_style", "boxes", "objects", "discs", "crt", "swap", "double_axis"],
@@ -1030,7 +1015,7 @@ impl Theme {
 
     pub fn load_all() -> (Vec<Theme>, Vec<String>) {
         let mut themes = Vec::new();
-        let mut warnings = Vec::new();
+        let mut warnings = crate::initial::install_themes();
         for entry in fs::read_dir(Self::themes_dir()).into_iter().flatten().flatten() {
             let dir = entry.path();
             if !dir.join(SETTINGS_FILE).is_file() {
@@ -1044,11 +1029,8 @@ impl Theme {
                 Err(e) => warnings.push(tr!("Skipping theme: {error}", error = format!("{e:#}"))),
             }
         }
-        for (id, preset) in [(BUBBLES_ID, ThemeSettings::bubbles_preset as fn() -> ThemeSettings), (DOUBLE_AXIS_ID, ThemeSettings::double_axis_preset)] {
-            if themes.iter().any(|t| t.id == id) {
-                continue;
-            }
-            let theme = Theme { id: id.to_owned(), dir: Self::themes_dir().join(id), settings: preset() };
+        if !themes.iter().any(|t| t.id == BUBBLES_ID) {
+            let theme = Theme { id: BUBBLES_ID.to_owned(), dir: Self::themes_dir().join(BUBBLES_ID), settings: ThemeSettings::bubbles_preset() };
             if let Err(e) = theme.save() {
                 warnings.push(tr!("Could not create the {theme} theme: {error}", theme = theme.settings.name, error = format!("{e:#}")));
             }
@@ -1082,7 +1064,7 @@ impl Theme {
     }
 
     pub fn is_builtin(&self) -> bool {
-        self.id == BUBBLES_ID || self.id == DOUBLE_AXIS_ID
+        self.id == BUBBLES_ID
     }
 
     pub fn images_dir(&self) -> PathBuf {
@@ -1271,29 +1253,52 @@ impl Theme {
         fs::remove_dir_all(&self.dir).with_context(|| format!("deleting {}", self.dir.display()))
     }
 
-    pub fn export(&self, parent: &Path) -> Result<PathBuf> {
-        let base = safe_folder_name(&self.settings.name);
-        let mut dest = parent.join(&base);
-        for n in 2.. {
-            if !dest.exists() {
-                break;
-            }
-            dest = parent.join(format!("{base} ({n})"));
-        }
-        fs::create_dir_all(dest.join(IMAGES_DIR))?;
-        fs::write(dest.join(SETTINGS_FILE), self.settings.to_json()?)?;
-        copy_images(&self.images_dir(), &dest.join(IMAGES_DIR))?;
-        Ok(dest)
+    /// A file name for the theme's package: its name, made safe for a file.
+    pub fn package_name(&self) -> String {
+        format!("{}.zip", safe_file_name(&self.settings.name))
     }
 
-    pub fn import(src: &Path) -> Result<Theme> {
-        if !src.join(SETTINGS_FILE).is_file() {
-            bail!("{} doesn't contain a {SETTINGS_FILE}", src.display());
+    /// Writes the theme package to `dest`: a .zip with `themeSettings.json` and the `images` folder,
+    /// as [`Theme::import`] reads it.
+    pub fn export(&self, dest: &Path) -> Result<()> {
+        use zip::write::SimpleFileOptions;
+
+        let partial = dest.with_extension("zip.partial");
+        let written = (|| -> Result<()> {
+            let mut zip = zip::ZipWriter::new(std::io::BufWriter::new(fs::File::create(&partial).with_context(|| format!("creating {}", partial.display()))?));
+            let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            zip.start_file(SETTINGS_FILE, options)?;
+            std::io::Write::write_all(&mut zip, self.settings.to_json()?.as_bytes())?;
+            let mut images: Vec<_> = fs::read_dir(self.images_dir()).into_iter().flatten().flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_file())).collect();
+            images.sort_by_key(|e| e.file_name());
+            for entry in images {
+                zip.start_file(format!("{IMAGES_DIR}/{}", entry.file_name().to_string_lossy()), options)?;
+                std::io::copy(&mut fs::File::open(entry.path()).with_context(|| format!("reading {}", entry.path().display()))?, &mut zip)?;
+            }
+            zip.finish()?;
+            Ok(())
+        })();
+        match written {
+            Ok(()) => fs::rename(&partial, dest).with_context(|| format!("saving {}", dest.display())),
+            Err(e) => {
+                let _ = fs::remove_file(&partial);
+                Err(e)
+            }
         }
-        let settings = ThemeSettings { store: None, ..read_settings(src)? };
-        let theme = Theme::create(settings)?;
-        copy_images(&src.join(IMAGES_DIR), &theme.images_dir())?;
-        Ok(theme)
+    }
+
+    /// Installs a theme package: a .zip with `themeSettings.json` and an `images` folder, at its root or
+    /// in one folder. The theme's `kind` picks the layout, so a package brings the look, not code.
+    pub fn import(zip: &Path) -> Result<Theme> {
+        let staging = Library::data_dir().join("cache").join("theme-imports").join(uuid::Uuid::new_v4().to_string());
+        let result = crate::appstore::unpack(zip, &staging, SETTINGS_FILE).and_then(|()| {
+            let settings = ThemeSettings { store: None, ..read_settings(&staging)? };
+            let theme = Theme::create(settings)?;
+            copy_images(&staging.join(IMAGES_DIR), &theme.images_dir())?;
+            Ok(theme)
+        });
+        let _ = fs::remove_dir_all(&staging);
+        result
     }
 
     pub fn install_from_store(src: &Path, origin: StoreOrigin) -> Result<Theme> {
@@ -1370,7 +1375,7 @@ fn is_plain_file_name(name: &str) -> bool {
     !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', ':'])
 }
 
-fn safe_folder_name(name: &str) -> String {
+fn safe_file_name(name: &str) -> String {
     let cleaned: String = name
         .chars()
         .map(|c| if c.is_control() || r#"/\:*?"<>|"#.contains(c) { '_' } else { c })
@@ -1619,6 +1624,22 @@ mod tests {
         let json = serde_json::to_value(&fresh).unwrap();
         assert_eq!(json["style"], "Images");
         assert_eq!(serde_json::from_value::<ButtonStyles>(json).unwrap(), fresh);
+    }
+
+    #[test]
+    fn exported_package_unpacks_with_its_images() {
+        let root = std::env::temp_dir().join(format!("yasaff-test-{}", uuid::Uuid::new_v4()));
+        let theme = Theme { id: "t".into(), dir: root.join("t"), settings: ThemeSettings { name: "A/B".into(), ..ThemeSettings::bubbles_preset() } };
+        fs::create_dir_all(theme.images_dir()).unwrap();
+        fs::write(theme.images_dir().join("background-1.png"), "png").unwrap();
+        assert_eq!(theme.package_name(), "A_B.zip");
+        let zip = root.join(theme.package_name());
+        theme.export(&zip).unwrap();
+        let out = root.join("out");
+        crate::appstore::unpack(&zip, &out, SETTINGS_FILE).unwrap();
+        assert_eq!(read_settings(&out).unwrap().kind, ThemeKind::Bubbles);
+        assert_eq!(fs::read(out.join(IMAGES_DIR).join("background-1.png")).unwrap(), b"png");
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

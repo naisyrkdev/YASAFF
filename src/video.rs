@@ -34,7 +34,7 @@ impl VideoPlayer {
     pub fn start(ctx: &Context, path: &Path, format: Format) -> Result<Self> {
         let [w, h] = format.size;
         let filter = format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps={}", format.fps);
-        let mut cmd = Command::new("ffmpeg");
+        let mut cmd = Command::new(crate::tools::program("ffmpeg"));
         cmd.args(["-hide_banner", "-loglevel", "error", "-nostdin", "-stream_loop", "-1", "-re", "-i"])
             .arg(path)
             .args(["-an", "-vf", &filter, "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"])

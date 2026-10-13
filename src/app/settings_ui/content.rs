@@ -180,8 +180,8 @@ impl App {
             }
             SettingRow::ThemeRename => (tr!("Rename theme").into(), "", Action(tr!("Edit…"))),
             SettingRow::ThemeNew => (tr!("New theme").into(), tr!("Starts as a copy of the current theme"), Action(tr!("Create"))),
-            SettingRow::ThemeExport => (tr!("Export theme…").into(), tr!("Copies the theme folder, images included, to a folder you pick"), Action(tr!("Export"))),
-            SettingRow::ThemeImport => (tr!("Import theme…").into(), tr!("Select an exported theme folder (with themeSettings.json)"), Action(tr!("Import"))),
+            SettingRow::ThemeExport => (tr!("Export theme…").into(), tr!("Saves the theme, images included, as one .zip"), Action(tr!("Export"))),
+            SettingRow::ThemeImport => (tr!("Import theme…").into(), tr!("A theme package: a .zip with themeSettings.json and its images"), Action(tr!("Import"))),
             SettingRow::ThemeDelete => (tr!("Delete theme").into(), "", Action(tr!("Delete…"))),
             SettingRow::ViewKind if theme.kind != ThemeKind::Standard => {
                 (tr!("Layout").into(), tr!("Not available in this pre-defined theme"), Choice(theme.kind.label().into()))
@@ -317,7 +317,7 @@ impl App {
             SettingRow::BubbleShuffle => (tr!("Randomize bubbles").into(), tr!("Picks new random sizes and places"), Action(tr!("Shuffle"))),
             SettingRow::BubbleVideo => (
                 tr!("Play video on selected game").into(),
-                tr!("Set a video in the game's Options. Needs ffmpeg installed"),
+                tr!("Set a video in the game's Options"),
                 Toggle(theme.bubbles.play_video),
             ),
             SettingRow::BubbleSound => (

@@ -1,5 +1,6 @@
 use crate::appstore::{self, Manifest};
 use crate::library::Library;
+use crate::theme::Theme;
 use anyhow::{Context as _, Result};
 use egui::Context;
 use std::fs;
@@ -13,6 +14,10 @@ const BUNDLED: [(&str, &[u8]); 3] = [
     ("cards-are-gone.zip", include_bytes!("../initial_content/dist/cards-are-gone.zip")),
     ("super-army-3d.zip", include_bytes!("../initial_content/dist/super-army-3d.zip")),
 ];
+const THEMES_DIR: &str = "initial_themes";
+const THEMES_DONE: &str = "initialThemes.json";
+/// Theme packages, made in their own repositories (see `initial_content/README.md`).
+const BUNDLED_THEMES: [(&str, &[u8]); 1] = [("double_axis_theme.zip", include_bytes!("../initial_content/custom_themes/double_axis_theme.zip"))];
 
 pub enum Step {
     Total(usize),
@@ -48,7 +53,7 @@ pub fn start(ctx: Context) -> mpsc::Receiver<Step> {
             ctx.request_repaint();
             sent
         };
-        let packages = match packages() {
+        let packages = match packages(DIR, &BUNDLED) {
             Ok(p) => p,
             Err(e) => {
                 send(Step::Failed(format!("{e:#}")));
@@ -68,10 +73,39 @@ pub fn start(ctx: Context) -> mpsc::Receiver<Step> {
     });
     rx
 }
-fn packages() -> Result<Vec<PathBuf>> {
-    let dir = crate::profiles::root().join(DIR);
+/// Installs every theme package in `<YASAFF data>/initial_themes/` into a new profile, once. A profile
+/// that already has themes is from before bundled themes and keeps the ones it has. Returns warnings.
+pub fn install_themes() -> Vec<String> {
+    let done = crate::profiles::dir().join(THEMES_DONE);
+    if done.exists() {
+        return Vec::new();
+    }
+    let mut warnings = Vec::new();
+    let has_themes = fs::read_dir(Theme::themes_dir()).into_iter().flatten().flatten().any(|e| e.path().join("themeSettings.json").is_file());
+    if !has_themes {
+        match packages(THEMES_DIR, &BUNDLED_THEMES) {
+            Ok(zips) => {
+                for zip in zips {
+                    if let Err(e) = Theme::import(&zip) {
+                        let file = zip.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                        warnings.push(tr!("Could not install the theme {file}: {error}", file = file, error = format!("{e:#}")));
+                    }
+                }
+            }
+            Err(e) => warnings.push(tr!("Could not install the theme {file}: {error}", file = THEMES_DIR, error = format!("{e:#}"))),
+        }
+    }
+    if let Err(e) = fs::create_dir_all(crate::profiles::dir()).and_then(|()| fs::write(&done, "{ \"imported\": true }\n")) {
+        log::warn!("could not write {}: {e}", done.display());
+    }
+    warnings
+}
+
+/// Writes the `bundled` zips to `<YASAFF data>/<dir>/` and lists every .zip there.
+fn packages(dir: &str, bundled: &[(&str, &[u8])]) -> Result<Vec<PathBuf>> {
+    let dir = crate::profiles::root().join(dir);
     fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
-    for (name, bytes) in BUNDLED {
+    for &(name, bytes) in bundled {
         let path = dir.join(name);
         if fs::read(&path).is_ok_and(|on_disk| on_disk == bytes) {
             continue;
@@ -109,6 +143,23 @@ mod tests {
                 assert!(dir.join(image).is_file(), "{name}: {image} is missing");
             }
             assert_eq!(manifest.artwork.assets().iter().filter(|(_, p)| p.is_some()).count(), 5, "{name}");
+        }
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn bundled_themes_are_theme_packages() {
+        let root = std::env::temp_dir().join(format!("yasaff-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        for (name, bytes) in BUNDLED_THEMES {
+            let zip = root.join(name);
+            fs::write(&zip, bytes).unwrap();
+            let dir = root.join(name.trim_end_matches(".zip"));
+            appstore::unpack(&zip, &dir, "themeSettings.json").unwrap();
+            let settings: crate::theme::ThemeSettings = serde_json::from_str(&fs::read_to_string(dir.join("themeSettings.json")).unwrap()).unwrap();
+            if name == "double_axis_theme.zip" {
+                assert_eq!(settings.kind, crate::theme::ThemeKind::DoubleAxis);
+            }
         }
         fs::remove_dir_all(&root).unwrap();
     }

@@ -44,6 +44,10 @@ YASAFF is a console-style game launcher for PC, made to be used with a controlle
 
 **Windows:** run the `YASAFF-Setup-<version>.exe` installer. It installs for the current user and doesn't need admin rights.
 
+**Linux:** download `yasaff.AppImage`, make it executable (`chmod +x yasaff.AppImage`) and run it.
+
+Both come with everything YASAFF uses: **ffmpeg** for preview and idle videos, and on Linux **xorriso** for **Burn to CD/DVD…**. You don't have to install anything else.
+
 **From source** (Rust, edition 2024):
 
 ```sh
@@ -51,14 +55,11 @@ cargo build --release
 ./target/release/yasaff               # add --fullscreen to start fullscreen
 ```
 
-To build the Windows installer, run `installer/build-installer.ps1`. It needs Inno Setup 6.3 or newer and writes `target/installer/YASAFF-Setup-<version>.exe`.
+A build from source uses `ffmpeg` and `xorriso` from your system, if they're installed. Without them, videos don't play and discs can't be burned.
 
-Optional programs:
+To build the Windows installer, run `installer/build-installer.ps1`. It needs Inno Setup 6.3 or newer, downloads ffmpeg, and writes `target/installer/YASAFF-Setup-<version>.exe`.
 
-| Program | Needed for |
-|---------|------------|
-| `ffmpeg` | Preview and idle videos (Bubbles theme and CRT screens) |
-| `xorriso`, or `wodim`/`cdrecord` + `genisoimage` for CDs, or `growisofs` for DVDs (Linux) | **Burn to CD/DVD…** |
+To build the AppImage, run `installer/build-appimage.sh`. It needs `cargo-appimage`, `appimagetool`, `curl`, a C compiler and `make`. It downloads ffmpeg, builds xorriso, and writes `target/appimage/yasaff.AppImage`.
 
 Command-line flags:
 
@@ -129,7 +130,7 @@ Press **Menu** (or **Tab**) on a game to open its options:
 
 ![YASAFF customization](assets/for_docs/customization_1.gif)
 
-Everything about the look is part of a **theme**. Open **Settings → Theme** to switch themes, create one (it starts as a copy of the current one), rename, export, import or delete it. A theme is a folder with `themeSettings.json` and its images, so you can share it. The built-in themes can't be deleted, and the pre-defined **Bubbles** and **Double axis** themes offer fewer options.
+Everything about the look is part of a **theme**. Open **Settings → Theme** to switch themes, create one (it starts as a copy of the current one), rename, export, import or delete it. A theme is shared as a **theme package**: a `.zip` with `themeSettings.json` and its `images/` folder. Export writes one, and import installs one. The built-in **Bubbles** theme can't be deleted. Bubbles and **Double axis** offer fewer options. Double axis is a custom theme installed from a package in every new profile; it is made in its own repository, [DoubleAxisTheme](../DoubleAxisTheme/), as an example of making one.
 
 **Pre-defined themes** (click a picture to open it full size)
 

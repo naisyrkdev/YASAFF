@@ -305,7 +305,7 @@ impl App {
                 Hint(Action::Back, tr!("Back")),
             ],
             Mode::Launching(_) => &[Hint(Action::Back, tr!("Hide"))],
-            Mode::SwapBubble { target, .. } if !self.bubble_places().contains(&target) && target >= self.tile_count() => {
+            Mode::SwapBubble { target, .. } if !self.bubble_places().contains(&target) => {
                 &[Hint(Action::Confirm, tr!("Move here")), Hint(Action::Back, tr!("Cancel"))]
             }
             Mode::SwapBubble { .. } | Mode::SwapTile { .. } => &[Hint(Action::Confirm, tr!("Swap here")), Hint(Action::Back, tr!("Cancel"))],

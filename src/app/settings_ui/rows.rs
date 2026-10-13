@@ -358,7 +358,7 @@ impl App {
                 });
                 Some((tr!("Bubbles"), sub))
             }
-            SettingRow::GameVideo => Some((tr!("Videos"), Some((tr!("For bubbles and CRT screens. Needs ffmpeg installed").to_owned(), Color32::from_gray(140))))),
+            SettingRow::GameVideo => Some((tr!("Videos"), Some((tr!("For bubbles and CRT screens").to_owned(), Color32::from_gray(140))))),
             SettingRow::CrtWidth => Some((tr!("CRT screens"), Some((tr!("Videos are set in each game's Options").to_owned(), Color32::from_gray(140))))),
             SettingRow::GameModel => Some((
                 TileStyle::Object.label(),
