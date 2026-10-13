@@ -16,6 +16,7 @@ pub struct Burner {
     pub media: Media,
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 #[derive(Clone, Debug, PartialEq)]
 pub enum Media {
     None,
@@ -62,6 +63,7 @@ pub fn burners() -> Vec<Burner> {
     platform::burners()
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn media_from_props(props: &HashMap<String, String>) -> Media {
     let on = |key: &str| props.get(key).is_some_and(|v| v == "1");
     if !on("ID_CDROM_MEDIA") {
@@ -98,6 +100,7 @@ fn media_from_props(props: &HashMap<String, String>) -> Media {
     }
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn writes_from_props(props: &HashMap<String, String>) -> Vec<&'static str> {
     let on = |key: &str| props.get(&format!("ID_CDROM_{key}")).is_some_and(|v| v == "1");
     let mut writes = Vec::new();
