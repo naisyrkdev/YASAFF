@@ -6,6 +6,8 @@ pub(super) struct CoverEditor {
     pub(super) kind: AssetKind,
     /// For a cover: the tile style whose placement is edited, shown or not.
     pub(super) style: Option<TileStyle>,
+    /// A Double axis category image, kept in the theme, instead of the selected game's image.
+    pub(super) category: Option<AxisSlot>,
     pub(super) draft: CoverPlacement,
     pub(super) cursor: usize,
     pub(super) button: EditorButton,
@@ -89,19 +91,34 @@ impl App {
     pub(super) fn open_cover_editor(&mut self, kind: AssetKind) {
         let Some(game) = self.selected_game() else { return };
         let draft = game.placement(kind);
-        self.mode = Mode::CoverEditor(CoverEditor { kind, style: None, draft, cursor: 0, button: EditorButton::Accept });
+        self.mode = Mode::CoverEditor(CoverEditor { kind, style: None, category: None, draft, cursor: 0, button: EditorButton::Accept });
+    }
+
+    pub(super) fn open_category_editor(&mut self, slot: AxisSlot) {
+        let Some(column) = axis_slot_column(&self.library, slot) else { return };
+        let draft = self.theme().settings.double_axis.placement(column);
+        let editor = CoverEditor { kind: AssetKind::Axis, style: None, category: Some(slot), draft, cursor: 0, button: EditorButton::Accept };
+        self.mode = Mode::CoverEditor(editor);
     }
 
     pub(super) fn open_style_editor(&mut self, style: TileStyle) {
         let Some(game) = self.selected_game() else { return };
         let draft = game.style_placement(style);
-        let editor = CoverEditor { kind: AssetKind::Cover, style: Some(style), draft, cursor: 0, button: EditorButton::Accept };
+        let editor = CoverEditor { kind: AssetKind::Cover, style: Some(style), category: None, draft, cursor: 0, button: EditorButton::Accept };
         self.mode = Mode::CoverEditor(editor);
     }
 
     pub(super) fn close_cover_editor(&mut self, accept: bool) {
         let Mode::CoverEditor(editor) = &self.mode else { return };
         let (kind, style, draft) = (editor.kind, editor.style, editor.draft);
+        if let Some(slot) = editor.category {
+            if accept && let Some(column) = axis_slot_column(&self.library, slot) {
+                self.themes[self.theme].settings.double_axis.set_placement(column, draft);
+                self.save_theme();
+            }
+            self.mode = self.settings_at(SettingRow::AxisImageAdjust(slot));
+            return;
+        }
         if accept && let Some(game) = self.library.games.get_mut(self.selected) {
             match style {
                 Some(style) => game.set_style_placement(style, draft),
@@ -135,21 +152,36 @@ impl App {
 
     fn draw_cover_editor_as_shown(&mut self, ui: &Ui, screen: Rect, s: f32) {
         let Mode::CoverEditor(editor) = &self.mode else { return };
-        let Some(game) = self.selected_game() else { return };
-        let (kind, style, mut draft, mut cursor, mut button) = (editor.kind, editor.style, editor.draft, editor.cursor, editor.button);
-        let before = game.placement(kind);
+        let (kind, style, category, mut draft, mut cursor, mut button) = (editor.kind, editor.style, editor.category, editor.draft, editor.cursor, editor.button);
+        let column = category.and_then(|slot| axis_slot_column(&self.library, slot));
+        let (name, before) = match column {
+            Some(column) => {
+                let name = match column {
+                    theme::AxisColumn::Category(name) => name,
+                    builtin => builtin_column_name(builtin),
+                };
+                (name.to_owned(), self.theme().settings.double_axis.placement(column))
+            }
+            None => match self.selected_game() {
+                Some(game) if category.is_none() => (game.name.clone(), game.placement(kind)),
+                _ => return,
+            },
+        };
+        let category_image = column.and_then(|c| self.theme().axis_image(c));
         let painter = ui.painter();
         painter.rect_filled(screen, 0, Color32::from_black_alpha(190));
         let dialog = Rect::from_center_size(screen.center() - vec2(0.0, 20.0 * s), vec2((1100.0 * s).min(screen.width() - 40.0 * s), 820.0 * s));
         painter.rect_filled(dialog, (8.0 * s) as u8, Color32::from_rgb(18, 24, 40));
         let title = match kind {
-            AssetKind::Spine => tr!("Spine image size and position · {name}", name = game.name),
-            AssetKind::Top => tr!("Top image size and position · {name}", name = game.name),
-            AssetKind::Back => tr!("Back cover size and position · {name}", name = game.name),
-            AssetKind::Side => tr!("Side image size and position · {name}", name = game.name),
-            AssetKind::Bottom => tr!("Bottom image size and position · {name}", name = game.name),
-            AssetKind::Booklet => tr!("Booklet image size and position · {name}", name = game.name),
-            _ => tr!("Cover size and position · {name}", name = game.name),
+            _ if category.is_some() => tr!("Category image size and position · {name}", name = name),
+            AssetKind::Spine => tr!("Spine image size and position · {name}", name = name),
+            AssetKind::Top => tr!("Top image size and position · {name}", name = name),
+            AssetKind::Back => tr!("Back cover size and position · {name}", name = name),
+            AssetKind::Side => tr!("Side image size and position · {name}", name = name),
+            AssetKind::Bottom => tr!("Bottom image size and position · {name}", name = name),
+            AssetKind::Booklet => tr!("Booklet image size and position · {name}", name = name),
+            AssetKind::Axis => tr!("List image size and position · {name}", name = name),
+            _ => tr!("Cover size and position · {name}", name = name),
         };
         painter.text(dialog.left_top() + vec2(40.0 * s, 32.0 * s), Align2::LEFT_TOP, title, FontId::proportional(30.0 * s), Color32::WHITE);
         if kind == AssetKind::Cover {
@@ -159,17 +191,37 @@ impl App {
 
         let settings = &self.theme().settings;
         let tile_h = 330.0 * s;
-        let tile = vec2(tile_h * settings.tile_aspect(), tile_h);
+        let aspect = match kind {
+            _ if category.is_some() => {
+                let [w, h] = settings.double_axis.size();
+                w / h
+            }
+            AssetKind::Axis => 1.0,
+            _ => settings.tile_aspect(),
+        };
+        // A wide category box is kept to half the dialog, so both previews fit.
+        let tile = vec2(tile_h * aspect, tile_h);
+        let tile = tile * (dialog.width() / 2.0 - 60.0 * s).min(tile.x).max(1.0) / tile.x;
         let changed = draft != before;
+        let list_image = (category.is_none() && kind == AssetKind::Axis).then(|| self.selected_game().and_then(|g| g.asset(kind)).map(Path::to_path_buf)).flatten();
         for (n, (label, placement)) in [(tr!("Before"), before), (tr!("After"), draft)].into_iter().enumerate() {
             let center_x = dialog.center().x + (n as f32 - 0.5) * dialog.width() / 2.0;
             let color = if n == 1 && changed { ACCENT } else { Color32::from_gray(170) };
             painter.text(pos2(center_x, dialog.top() + 110.0 * s), Align2::CENTER_TOP, label, FontId::proportional(22.0 * s), color);
             let rect = Rect::from_center_size(pos2(center_x, dialog.top() + 150.0 * s + tile_h / 2.0), tile);
-            *self.library.games[self.selected].placement_mut(kind) = placement;
-            self.paint_tile_art(ui, self.selected, rect, (6.0 * s) as u8, s, 0.0);
+            match category_image.as_ref().or(list_image.as_ref()) {
+                Some(path) => {
+                    painter.rect_stroke(rect, (6.0 * s) as u8, Stroke::new(1.0, Color32::from_white_alpha(60)), StrokeKind::Outside);
+                    paint_image_placed(ui, path, rect, 1.0, (6.0 * s) as u8, placement);
+                }
+                None if category.is_some() || kind == AssetKind::Axis => {}
+                None => {
+                    *self.library.games[self.selected].placement_mut(kind) = placement;
+                    self.paint_tile_art(ui, self.selected, rect, (6.0 * s) as u8, s, 0.0);
+                    *self.library.games[self.selected].placement_mut(kind) = before;
+                }
+            }
         }
-        *self.library.games[self.selected].placement_mut(kind) = before;
 
         let mut accept = None;
         let top = dialog.top() + 520.0 * s;
@@ -232,7 +284,7 @@ impl App {
             }
         }
 
-        self.mode = Mode::CoverEditor(CoverEditor { kind, style, draft, cursor, button });
+        self.mode = Mode::CoverEditor(CoverEditor { kind, style, category, draft, cursor, button });
         if let Some(accept) = accept {
             self.close_cover_editor(accept);
         }

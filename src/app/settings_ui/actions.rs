@@ -419,6 +419,7 @@ impl App {
                     }
                 });
             }
+            SettingRow::AxisImageAdjust(slot) => self.open_category_editor(slot),
             SettingRow::AxisImageClear(slot) => {
                 if let Some(column) = axis_slot_column(&self.library, slot)
                     && let Err(e) = self.themes[self.theme].clear_axis_image(column)

@@ -148,6 +148,8 @@
   "Remove store \"{name}\"?": "Retirer la boutique « {name} » ?",
   "Its address is forgotten. Apps and themes installed from it stay.": "Son adresse sera oubliée. Les applications et thèmes installés depuis celle-ci restent.",
   "Remove": "Retirer",
+  "Category image size and position · {name}": "Taille et position de l'image de la catégorie · {name}",
+  "List image size and position · {name}": "Taille et position de l'image de la liste · {name}",
   "Cover size and position · {name}": "Taille et position de la jaquette · {name}",
   "Before": "Avant",
   "After": "Après",

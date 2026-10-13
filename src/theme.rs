@@ -1,6 +1,6 @@
 
 use crate::input::PadButton;
-use crate::library::Library;
+use crate::library::{CoverPlacement, Library};
 use anyhow::{Context, Result, bail};
 use egui::Color32;
 use serde::{Deserialize, Serialize};
@@ -608,6 +608,9 @@ pub struct DoubleAxisSettings {
     /// Category images keyed by [`axis_image_key`]; file names in the images folder.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub images: BTreeMap<String, String>,
+    /// How each category image sits in its box, keyed like `images`; a missing one is the default.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub placements: BTreeMap<String, CoverPlacement>,
 }
 
 impl Default for DoubleAxisSettings {
@@ -624,6 +627,7 @@ impl Default for DoubleAxisSettings {
             glow_intensity: 0.6,
             title_info: TitleInfo::Selected,
             images: BTreeMap::new(),
+            placements: BTreeMap::new(),
         }
     }
 }
@@ -647,6 +651,18 @@ impl DoubleAxisSettings {
     pub fn font_size(&self) -> f32 {
         let (min, max) = Self::FONT_SIZE_RANGE;
         if self.font_size.is_finite() { self.font_size.clamp(min, max) } else { Self::default().font_size }
+    }
+
+    pub fn placement(&self, column: AxisColumn) -> CoverPlacement {
+        self.placements.get(&axis_image_key(column)).copied().unwrap_or_default()
+    }
+
+    pub fn set_placement(&mut self, column: AxisColumn, placement: CoverPlacement) {
+        if placement.is_default() {
+            self.placements.remove(&axis_image_key(column));
+        } else {
+            self.placements.insert(axis_image_key(column), placement);
+        }
     }
 }
 
@@ -1211,6 +1227,7 @@ impl Theme {
         fs::copy(src, self.images_dir().join(&name)).with_context(|| format!("copying {}", src.display()))?;
         self.remove_axis_image_file(column);
         self.settings.double_axis.images.insert(axis_image_key(column), name);
+        self.settings.double_axis.placements.remove(&axis_image_key(column));
         self.save()
     }
 
@@ -1220,14 +1237,19 @@ impl Theme {
         }
         self.remove_axis_image_file(column);
         self.settings.double_axis.images.remove(&axis_image_key(column));
+        self.settings.double_axis.placements.remove(&axis_image_key(column));
         self.save()
     }
 
     /// Keeps a renamed category's image.
     pub fn rename_axis_image(&mut self, old: &str, new: &str) -> Result<()> {
-        let images = &mut self.settings.double_axis.images;
-        let Some(name) = images.remove(&axis_image_key(AxisColumn::Category(old))) else { return Ok(()) };
-        images.insert(axis_image_key(AxisColumn::Category(new)), name);
+        let axis = &mut self.settings.double_axis;
+        let (old, new) = (axis_image_key(AxisColumn::Category(old)), axis_image_key(AxisColumn::Category(new)));
+        let Some(name) = axis.images.remove(&old) else { return Ok(()) };
+        axis.images.insert(new.clone(), name);
+        if let Some(placement) = axis.placements.remove(&old) {
+            axis.placements.insert(new, placement);
+        }
         self.save()
     }
 

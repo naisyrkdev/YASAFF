@@ -285,6 +285,8 @@ struct AssetFields {
     bottom_placement: CoverPlacement,
     #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
     booklet_placement: CoverPlacement,
+    #[serde(default, skip_serializing_if = "CoverPlacement::is_default")]
+    axis_placement: CoverPlacement,
 }
 
 impl AssetFields {
@@ -313,6 +315,7 @@ impl AssetFields {
             AssetKind::Side => &mut self.side_placement,
             AssetKind::Bottom => &mut self.bottom_placement,
             AssetKind::Booklet => &mut self.booklet_placement,
+            AssetKind::Axis => &mut self.axis_placement,
             _ => &mut self.cover_placement,
         }
     }
@@ -419,11 +422,11 @@ impl AssetKind {
         AssetKind::Axis,
     ];
 
-    /// The surface whose placement this asset uses: the box faces have their own, everything
-    /// else (background, model, video) shares the cover's.
+    /// The surface whose placement this asset uses: the box faces and the Double axis image have
+    /// their own, everything else (background, model, video) shares the cover's.
     fn placement_key(self) -> AssetKind {
         match self {
-            AssetKind::Spine | AssetKind::Top | AssetKind::Back | AssetKind::Side | AssetKind::Bottom | AssetKind::Booklet => self,
+            AssetKind::Spine | AssetKind::Top | AssetKind::Back | AssetKind::Side | AssetKind::Bottom | AssetKind::Booklet | AssetKind::Axis => self,
             _ => AssetKind::Cover,
         }
     }

@@ -4,8 +4,9 @@
 
 use super::*;
 use crate::theme::{AxisColumn, TitleInfo, axis_image_key};
+use egui::load::{ImagePoll, SizeHint};
 use egui::text::{LayoutJob, TextFormat};
-use egui::{Align, FontFamily, Galley};
+use egui::{Align, ColorImage, FontFamily, Galley, ImageSource, TextureHandle};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -193,15 +194,18 @@ impl App {
             if rect.right() < screen.left() || rect.left() > screen.right() {
                 continue;
             }
-            let alpha = 0.45 + 0.55 * focus;
+            // Only the selected category glows; the others are just smaller, never faded.
             let glow = axis.glow() * focus;
-            let text_color = axis.text_color.gamma_multiply(alpha);
+            let text_color = axis.text_color;
             let image = self.theme().axis_image(col.column());
-            if image.is_some() || axis.border {
-                glow_box(&painter, rect, radius, axis.glow_color, glow, s);
-            }
-            if let Some(path) = &image {
-                paint_image_cover(ui, path, rect, alpha, radius);
+            match &image {
+                Some(path) => {
+                    let placement = axis.placement(col.column());
+                    glow_outline(&painter, &file_uri(path), rect, placement, axis.glow_color, glow);
+                    paint_image_placed(ui, path, rect, 1.0, radius, placement);
+                }
+                None if axis.border => glow_box(&painter, rect, radius, axis.glow_color, glow, s),
+                None => {}
             }
             if axis.border {
                 painter.rect_stroke(rect, radius, Stroke::new(2.0 * s, text_color), StrokeKind::Inside);
@@ -270,13 +274,16 @@ impl App {
             let image = game.and_then(|g| g.asset(AssetKind::Axis));
             let icon = if game.is_none() { self.special(i).and_then(|sp| self.special_icon(sp)) } else { None };
             let has_picture = image.is_some() || icon.is_some();
-            if has_picture {
-                glow_box(painter, picture, (6.0 * s) as u8, axis.glow_color, glow, s);
-            }
-            if let Some(path) = image {
-                paint_image_cover(ui, path, picture, alpha, (6.0 * s) as u8);
+            if let (Some(path), Some(game)) = (image, game) {
+                let placement = game.placement(AssetKind::Axis);
+                glow_outline(painter, &file_uri(path), picture, placement, axis.glow_color, glow);
+                paint_image_placed(ui, path, picture, alpha, (6.0 * s) as u8, placement);
             } else if let Some(icon) = icon {
-                egui::Image::new(icon).tint(Color32::WHITE.gamma_multiply(alpha)).paint_at(ui, picture.shrink(item_h * 0.18));
+                let shown = picture.shrink(item_h * 0.18);
+                if let Some(uri) = source_uri(&icon) {
+                    glow_outline(painter, uri, shown, CoverPlacement::default(), axis.glow_color, glow);
+                }
+                egui::Image::new(icon).tint(Color32::WHITE.gamma_multiply(alpha)).paint_at(ui, shown);
             }
             if self.is_active(i) {
                 painter.circle_filled(pos2(origin.x - 18.0 * s, y + item_h / 2.0), 6.0 * s, PAD_A);
@@ -335,6 +342,96 @@ fn glow_box(painter: &Painter, rect: Rect, radius: u8, color: Color32, strength:
         color: color.gamma_multiply(0.9 * strength),
     };
     painter.add(shadow.as_shape(rect, radius));
+}
+
+/// How far an outline glow reaches past its picture, as a share of the picture's shorter side.
+const GLOW_REACH: f32 = 0.3;
+
+/// A soft halo of `color` around the opaque parts of the image at `uri`, placed in `rect` as
+/// `placement` says; `strength` goes from 0 (none) to 1. Transparent parts, such as around a logo,
+/// don't glow, so the halo follows the picture's outline instead of its box.
+fn glow_outline(painter: &Painter, uri: &str, rect: Rect, placement: CoverPlacement, color: Color32, strength: f32) {
+    if strength <= 0.01 || !rect.is_positive() {
+        return;
+    }
+    let Some(mask) = outline_mask(painter.ctx(), uri, rect.size(), placement) else { return };
+    let full = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    painter.image(mask.id(), rect.expand(rect.size().min_elem() * GLOW_REACH), full, color.gamma_multiply(0.9 * strength));
+}
+
+/// The blurred shape of the image as it shows in a picture of `size`, with room around it for the
+/// glow, as a white texture whose alpha is the glow's. It doesn't change with the picture's scale,
+/// so one is made for each image, aspect and placement, and kept.
+fn outline_mask(ctx: &Context, uri: &str, size: Vec2, placement: CoverPlacement) -> Option<TextureHandle> {
+    const CELLS: f32 = 96.0;
+    let milli = |v: f32| (v * 1000.0).round() as i32;
+    let id = Id::new(("outline-glow", uri, milli(size.x / size.y), milli(placement.zoom), milli(placement.x), milli(placement.y)));
+    if let Some(texture) = ctx.data(|d| d.get_temp::<TextureHandle>(id)) {
+        return Some(texture);
+    }
+    let hint = SizeHint::Size { width: 256, height: 256, maintain_aspect_ratio: true };
+    let Ok(ImagePoll::Ready { image }) = ctx.try_load_image(uri, hint) else { return None };
+    let [iw, ih] = image.size;
+    if iw == 0 || ih == 0 {
+        return None;
+    }
+    // The picture measured in its shorter side, and the whole mask with the reach on each side.
+    let unit = size / size.min_elem();
+    let total = unit + Vec2::splat(2.0 * GLOW_REACH);
+    let (gw, gh) = ((total.x / total.max_elem() * CELLS).ceil() as usize, (total.y / total.max_elem() * CELLS).ceil() as usize);
+    let cell = vec2(total.x / gw as f32, total.y / gh as f32);
+    let (part, uv) = box3d::place(vec2(iw as f32, ih as f32), size, placement);
+    let mut alpha = vec![0.0f32; gw * gh];
+    for gy in 0..gh {
+        for gx in 0..gw {
+            let mut sum = 0.0;
+            for (sx, sy) in [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)] {
+                let p = pos2(((gx as f32 + sx) * cell.x - GLOW_REACH) / unit.x, ((gy as f32 + sy) * cell.y - GLOW_REACH) / unit.y);
+                if !part.contains(p) {
+                    continue;
+                }
+                let u = uv.min.x + (p.x - part.min.x) / part.width() * uv.width();
+                let v = uv.min.y + (p.y - part.min.y) / part.height() * uv.height();
+                let (px, py) = (((u * iw as f32) as usize).min(iw - 1), ((v * ih as f32) as usize).min(ih - 1));
+                sum += image.pixels[py * iw + px].a() as f32 / 255.0;
+            }
+            alpha[gy * gw + gx] = sum / 4.0;
+        }
+    }
+    let radius = (GLOW_REACH / cell.max_elem() / 2.5).round().max(1.0) as usize;
+    for _ in 0..3 {
+        box_blur(&mut alpha, gw, gh, radius);
+    }
+    // Doubled, so the glow is full at the picture's edge and fades out to nothing at its reach.
+    let pixels = alpha.iter().map(|a| Color32::from_white_alpha(((a * 2.0).min(1.0) * 255.0) as u8)).collect();
+    let texture = ctx.load_texture(format!("outline-glow:{uri}"), ColorImage::new([gw, gh], pixels), TextureOptions::LINEAR);
+    ctx.data_mut(|d| d.insert_temp(id, texture.clone()));
+    Some(texture)
+}
+
+/// Averages each value with the ones within `r` of it, across and then down.
+fn box_blur(values: &mut [f32], w: usize, h: usize, r: usize) {
+    let mut pass = |len: usize, lines: usize, at: &dyn Fn(usize, usize) -> usize| {
+        let mut line = vec![0.0; len];
+        for l in 0..lines {
+            for (k, v) in line.iter_mut().enumerate() {
+                *v = values[at(l, k)];
+            }
+            for k in 0..len {
+                let (from, to) = (k.saturating_sub(r), (k + r).min(len - 1));
+                values[at(l, k)] = line[from..=to].iter().sum::<f32>() / (2 * r + 1) as f32;
+            }
+        }
+    };
+    pass(w, h, &|y, x| y * w + x);
+    pass(h, w, &|x, y| y * w + x);
+}
+
+fn source_uri<'a>(source: &'a ImageSource) -> Option<&'a str> {
+    match source {
+        ImageSource::Uri(uri) | ImageSource::Bytes { uri, .. } => Some(uri),
+        ImageSource::Texture(_) => None,
+    }
 }
 
 /// Paints text with a drop shadow, and with `glow` (its color and strength from 0 to 1), a halo

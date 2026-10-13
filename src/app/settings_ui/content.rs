@@ -267,6 +267,10 @@ impl App {
                 };
                 (name, sub, Action(tr!("Choose…")))
             }
+            SettingRow::AxisImageAdjust(slot) => {
+                let p = axis_slot_column(&self.library, slot).map(|c| theme.double_axis.placement(c)).unwrap_or_default();
+                (tr!("Size and position…").into(), tr!("Opens a before / after preview. Nothing changes until you accept"), RowValue::Summary(placement_summary(p)))
+            }
             SettingRow::AxisImageClear(_) => (tr!("Remove image").into(), tr!("Shows the name again"), Action(tr!("Remove"))),
             SettingRow::CategoryAdd => (tr!("Add category…").into(), tr!("For example Racing, Shooters or Kids"), Action(tr!("Add"))),
             SettingRow::Category(i) => {

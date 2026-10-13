@@ -86,6 +86,7 @@ pub(super) enum SettingRow {
     AxisImages,
     /// A category's image, on the category images page.
     AxisImage(AxisSlot),
+    AxisImageAdjust(AxisSlot),
     AxisImageClear(AxisSlot),
     CategoryAdd,
     /// A category in Settings, by its index in the library's list.
@@ -282,7 +283,7 @@ impl SettingRow {
             | R::GameAxisImage
             | R::GameAxisImageClear => Page::GameBox,
             R::GameMainCategory | R::GameCategory(_) | R::GameNoCategories => Page::GameDetails,
-            R::AxisImage(_) | R::AxisImageClear(_) => Page::CategoryImages,
+            R::AxisImage(_) | R::AxisImageAdjust(_) | R::AxisImageClear(_) => Page::CategoryImages,
             R::DeviceTarget
             | R::DeviceCreateFile
             | R::DeviceBurn
@@ -324,6 +325,8 @@ impl Page {
 pub(super) struct SettingSection {
     pub(super) title: &'static str,
     pub(super) status: Option<(String, Color32)>,
+    /// The way the game is shown now, on its Appearance page; marked with a green dot.
+    pub(super) shown: bool,
     pub(super) rows: Range<usize>,
 }
 

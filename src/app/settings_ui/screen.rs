@@ -48,7 +48,10 @@ impl App {
                 nav_painter.rect_filled(r, (4.0 * s) as u8, Color32::from_white_alpha(8));
             }
             let color = if selected { Color32::WHITE } else { Color32::from_gray(170) };
-            nav_painter.text(pos2(r.left() + 24.0 * s, r.center().y), Align2::LEFT_CENTER, section.title, FontId::proportional(20.0 * s), color);
+            let text = nav_painter.text(pos2(r.left() + 24.0 * s, r.center().y), Align2::LEFT_CENTER, section.title, FontId::proportional(20.0 * s), color);
+            if section.shown {
+                nav_painter.circle_filled(pos2(text.right() + 14.0 * s, r.center().y), 6.0 * s, PAD_A);
+            }
             if resp.clicked() {
                 chosen_section = Some(i);
             }
@@ -56,7 +59,10 @@ impl App {
 
         let section = &sections[current];
         let column = Rect::from_min_max(pos2(nav.right() + 20.0 * s, body_top), pos2(panel.right() - 20.0 * s, nav.bottom()));
-        painter.text(pos2(column.left() + 20.0 * s, column.top()), Align2::LEFT_TOP, section.title, FontId::proportional(24.0 * s), ACCENT);
+        let heading = painter.text(pos2(column.left() + 20.0 * s, column.top()), Align2::LEFT_TOP, section.title, FontId::proportional(24.0 * s), ACCENT);
+        if section.shown {
+            painter.circle_filled(pos2(heading.right() + 16.0 * s, heading.center().y), 7.0 * s, PAD_A);
+        }
         let mut list_top = column.top() + 44.0 * s;
         if let Some((text, color)) = &section.status {
             let galley = painter.layout(text.clone(), FontId::proportional(16.0 * s), *color, column.width() - 40.0 * s);

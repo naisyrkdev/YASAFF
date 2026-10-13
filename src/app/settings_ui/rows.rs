@@ -19,7 +19,7 @@ impl App {
             for slot in slots {
                 rows.push(R::AxisImage(slot));
                 if axis_slot_column(&self.library, slot).is_some_and(|c| self.theme().axis_image(c).is_some()) {
-                    rows.push(R::AxisImageClear(slot));
+                    rows.extend([R::AxisImageAdjust(slot), R::AxisImageClear(slot)]);
                 }
             }
             return rows;
@@ -46,8 +46,10 @@ impl App {
         if page == Page::GameBox {
             let game = self.selected_game();
             let has = |kind: AssetKind| game.is_some_and(|g| g.asset(kind).is_some());
-            let mut rows = Vec::new();
+            // Each way of showing the game is a group of sections; the one shown now goes first.
+            let mut modes: Vec<(bool, Vec<SettingRow>)> = Vec::new();
             for style in TileStyle::ALL {
+                let mut rows = Vec::new();
                 if style.shows_cover() {
                     rows.push(R::StyleCover(style));
                     if let Some(game) = game.filter(|g| g.style_cover(style).is_some()) {
@@ -84,7 +86,19 @@ impl App {
                     }
                     rows.push(R::GameObjectColor);
                 }
+                modes.push((self.shown_style() == Some(style), rows));
             }
+            let mut rows = vec![R::GameAxisImage];
+            if let Some(game) = game.filter(|g| g.asset(AssetKind::Axis).is_some()) {
+                rows.push(R::GameAdjust(AssetKind::Axis));
+                if !game.placement(AssetKind::Axis).is_default() {
+                    rows.push(R::GameAdjustReset(AssetKind::Axis));
+                }
+                rows.push(R::GameAxisImageClear);
+            }
+            modes.push((self.is_double_axis(), rows));
+            modes.sort_by_key(|(shown, _)| !shown);
+            let mut rows: Vec<SettingRow> = modes.into_iter().flat_map(|(_, rows)| rows).collect();
             rows.push(R::GameBackground);
             if has(AssetKind::Background) {
                 rows.push(R::GameBackgroundClear);
@@ -96,10 +110,6 @@ impl App {
             rows.push(R::GameIdleVideo);
             if has(AssetKind::IdleVideo) {
                 rows.push(R::GameIdleVideoClear);
-            }
-            rows.push(R::GameAxisImage);
-            if has(AssetKind::Axis) {
-                rows.push(R::GameAxisImageClear);
             }
             rows.push(R::GameTitleFont);
             match game.map_or(0, |g| g.gallery.len()) {
@@ -410,10 +420,25 @@ impl App {
         (tr!("Save files"), Some(status))
     }
 
+    /// The tile style games are shown in now; none in the Double axis theme, which lists them.
+    fn shown_style(&self) -> Option<TileStyle> {
+        (!self.is_double_axis()).then_some(self.theme().settings.tile_style)
+    }
+
+    /// Whether `row` heads the section of the way games are shown now.
+    fn setting_shown(&self, row: SettingRow) -> bool {
+        match row {
+            SettingRow::StyleCover(style) => self.shown_style() == Some(style),
+            SettingRow::GameModel => self.shown_style() == Some(TileStyle::Object),
+            SettingRow::GameAxisImage => self.is_double_axis(),
+            _ => false,
+        }
+    }
+
     fn style_status(&self, style: TileStyle) -> (String, Color32) {
         let gray = Color32::from_gray(140);
         let Some(game) = self.selected_game() else { return (String::new(), gray) };
-        if style == self.theme().settings.tile_style {
+        if self.shown_style() == Some(style) {
             (tr!("The tile style shown now").to_owned(), ACCENT)
         } else if game.style_cover(style).is_some() {
             (tr!("Has its own cover and placement").to_owned(), gray)
@@ -447,7 +472,7 @@ impl App {
                 (None, Some(last)) => last.rows.end = i + 1,
                 (heading, _) => {
                     let (title, status) = heading.unwrap_or((tr!("General"), None));
-                    sections.push(SettingSection { title, status, rows: i..i + 1 });
+                    sections.push(SettingSection { title, status, shown: self.setting_shown(row), rows: i..i + 1 });
                 }
             }
         }
