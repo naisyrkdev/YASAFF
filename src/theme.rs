@@ -605,7 +605,8 @@ pub struct DoubleAxisSettings {
     /// From 0 (no glow) to 1.
     pub glow_intensity: f32,
     pub title_info: TitleInfo,
-    /// Category images keyed by [`axis_image_key`]; file names in the images folder.
+    /// Category images, and pictures of the Main column's entries, keyed by [`AxisPicture::key`];
+    /// file names in the images folder.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub images: BTreeMap<String, String>,
     /// How each category image sits in its box, keyed like `images`; a missing one is the default.
@@ -653,15 +654,16 @@ impl DoubleAxisSettings {
         if self.font_size.is_finite() { self.font_size.clamp(min, max) } else { Self::default().font_size }
     }
 
-    pub fn placement(&self, column: AxisColumn) -> CoverPlacement {
-        self.placements.get(&axis_image_key(column)).copied().unwrap_or_default()
+    pub fn placement<'a>(&self, picture: impl Into<AxisPicture<'a>>) -> CoverPlacement {
+        self.placements.get(&picture.into().key()).copied().unwrap_or_default()
     }
 
-    pub fn set_placement(&mut self, column: AxisColumn, placement: CoverPlacement) {
+    pub fn set_placement<'a>(&mut self, picture: impl Into<AxisPicture<'a>>, placement: CoverPlacement) {
+        let key = picture.into().key();
         if placement.is_default() {
-            self.placements.remove(&axis_image_key(column));
+            self.placements.remove(&key);
         } else {
-            self.placements.insert(axis_image_key(column), placement);
+            self.placements.insert(key, placement);
         }
     }
 }
@@ -675,6 +677,29 @@ pub enum AxisColumn<'a> {
     Uncategorized,
     /// The built-in last column: Settings, Discover and Add game.
     Main,
+}
+
+/// A picture of the Double axis theme: a column's, or one of the Main column's entries' (by its
+/// tile icon key: `discover`, `add` or `settings`), shown instead of its icon.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum AxisPicture<'a> {
+    Column(AxisColumn<'a>),
+    Entry(&'a str),
+}
+
+impl<'a> From<AxisColumn<'a>> for AxisPicture<'a> {
+    fn from(column: AxisColumn<'a>) -> Self {
+        Self::Column(column)
+    }
+}
+
+impl AxisPicture<'_> {
+    pub fn key(self) -> String {
+        match self {
+            Self::Column(column) => axis_image_key(column),
+            Self::Entry(key) => format!("entry:{key}"),
+        }
+    }
 }
 
 pub fn axis_image_key(column: AxisColumn) -> String {
@@ -1215,29 +1240,32 @@ impl Theme {
         }
     }
 
-    pub fn axis_image(&self, column: AxisColumn) -> Option<PathBuf> {
-        let name = self.settings.double_axis.images.get(&axis_image_key(column))?;
+    pub fn axis_image<'a>(&self, picture: impl Into<AxisPicture<'a>>) -> Option<PathBuf> {
+        let name = self.settings.double_axis.images.get(&picture.into().key())?;
         is_plain_file_name(name).then(|| self.images_dir().join(name))
     }
 
-    pub fn set_axis_image(&mut self, column: AxisColumn, src: &Path) -> Result<()> {
+    pub fn set_axis_image<'a>(&mut self, picture: impl Into<AxisPicture<'a>>, src: &Path) -> Result<()> {
+        let picture = picture.into();
         let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("png").to_lowercase();
-        let name = format!("category-{}-{}.{ext}", uuid::Uuid::new_v4().simple(), now_secs());
+        let prefix = if let AxisPicture::Entry(_) = picture { "entry" } else { "category" };
+        let name = format!("{prefix}-{}-{}.{ext}", uuid::Uuid::new_v4().simple(), now_secs());
         fs::create_dir_all(self.images_dir())?;
         fs::copy(src, self.images_dir().join(&name)).with_context(|| format!("copying {}", src.display()))?;
-        self.remove_axis_image_file(column);
-        self.settings.double_axis.images.insert(axis_image_key(column), name);
-        self.settings.double_axis.placements.remove(&axis_image_key(column));
+        self.remove_axis_image_file(picture);
+        self.settings.double_axis.images.insert(picture.key(), name);
+        self.settings.double_axis.placements.remove(&picture.key());
         self.save()
     }
 
-    pub fn clear_axis_image(&mut self, column: AxisColumn) -> Result<()> {
-        if !self.settings.double_axis.images.contains_key(&axis_image_key(column)) {
+    pub fn clear_axis_image<'a>(&mut self, picture: impl Into<AxisPicture<'a>>) -> Result<()> {
+        let picture = picture.into();
+        if !self.settings.double_axis.images.contains_key(&picture.key()) {
             return Ok(());
         }
-        self.remove_axis_image_file(column);
-        self.settings.double_axis.images.remove(&axis_image_key(column));
-        self.settings.double_axis.placements.remove(&axis_image_key(column));
+        self.remove_axis_image_file(picture);
+        self.settings.double_axis.images.remove(&picture.key());
+        self.settings.double_axis.placements.remove(&picture.key());
         self.save()
     }
 
@@ -1253,8 +1281,8 @@ impl Theme {
         self.save()
     }
 
-    fn remove_axis_image_file(&self, column: AxisColumn) {
-        if let Some(old) = self.axis_image(column) {
+    fn remove_axis_image_file(&self, picture: AxisPicture) {
+        if let Some(old) = self.axis_image(picture) {
             let _ = fs::remove_file(old);
         }
     }

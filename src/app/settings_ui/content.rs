@@ -254,23 +254,20 @@ impl App {
                 )
             }
             SettingRow::AxisImage(slot) => {
-                let column = axis_slot_column(&self.library, slot);
-                let name = match column {
-                    Some(theme::AxisColumn::Category(name)) => name.to_owned(),
-                    Some(builtin) => builtin_column_name(builtin).to_owned(),
-                    None => String::new(),
-                };
-                let sub = if column.is_some_and(|c| self.theme().axis_image(c).is_some()) {
+                let sub = if axis_slot_picture(&self.library, slot).is_some_and(|p| self.theme().axis_image(p).is_some()) {
                     tr!("Copied into the theme's images folder")
+                } else if let AxisSlot::Entry(_) = slot {
+                    tr!("None. The tile icon is shown")
                 } else {
                     tr!("None. The name is shown")
                 };
-                (name, sub, Action(tr!("Choose…")))
+                (axis_slot_name(&self.library, slot), sub, Action(tr!("Choose…")))
             }
             SettingRow::AxisImageAdjust(slot) => {
-                let p = axis_slot_column(&self.library, slot).map(|c| theme.double_axis.placement(c)).unwrap_or_default();
+                let p = axis_slot_picture(&self.library, slot).map(|p| theme.double_axis.placement(p)).unwrap_or_default();
                 (tr!("Size and position…").into(), tr!("Opens a before / after preview. Nothing changes until you accept"), RowValue::Summary(placement_summary(p)))
             }
+            SettingRow::AxisImageClear(AxisSlot::Entry(_)) => (tr!("Remove image").into(), tr!("Shows the tile icon again"), Action(tr!("Remove"))),
             SettingRow::AxisImageClear(_) => (tr!("Remove image").into(), tr!("Shows the name again"), Action(tr!("Remove"))),
             SettingRow::CategoryAdd => (tr!("Add category…").into(), tr!("For example Racing, Shooters or Kids"), Action(tr!("Add"))),
             SettingRow::Category(i) => {
@@ -777,7 +774,7 @@ impl App {
     /// The picture an Appearance row shows a thumbnail of.
     pub(in crate::app) fn setting_row_image(&self, row: SettingRow) -> Option<PathBuf> {
         if let SettingRow::AxisImage(slot) = row {
-            return self.theme().axis_image(axis_slot_column(&self.library, slot)?);
+            return self.theme().axis_image(axis_slot_picture(&self.library, slot)?);
         }
         let game = self.selected_game()?;
         let path = match row {

@@ -196,19 +196,32 @@ pub(super) enum SettingRow {
     AboutServer,
 }
 
-/// A column of the Double axis theme, as the category images page names it.
+/// A picture of the Double axis theme, as the category images page names it: a column's, or an
+/// entry's of the Main column.
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum AxisSlot {
     Category(usize),
     Uncategorized,
     Main,
+    Entry(Special),
 }
 
-pub(super) fn axis_slot_column(library: &Library, slot: AxisSlot) -> Option<theme::AxisColumn<'_>> {
+pub(super) fn axis_slot_picture(library: &Library, slot: AxisSlot) -> Option<theme::AxisPicture<'_>> {
+    let column = match slot {
+        AxisSlot::Category(i) => theme::AxisColumn::Category(library.categories.get(i)?),
+        AxisSlot::Uncategorized => theme::AxisColumn::Uncategorized,
+        AxisSlot::Main => theme::AxisColumn::Main,
+        AxisSlot::Entry(special) => return Some(theme::AxisPicture::Entry(special.key())),
+    };
+    Some(column.into())
+}
+
+pub(super) fn axis_slot_name(library: &Library, slot: AxisSlot) -> String {
     match slot {
-        AxisSlot::Category(i) => library.categories.get(i).map(|name| theme::AxisColumn::Category(name)),
-        AxisSlot::Uncategorized => Some(theme::AxisColumn::Uncategorized),
-        AxisSlot::Main => Some(theme::AxisColumn::Main),
+        AxisSlot::Category(i) => library.categories.get(i).cloned().unwrap_or_default(),
+        AxisSlot::Uncategorized => builtin_column_name(theme::AxisColumn::Uncategorized).to_owned(),
+        AxisSlot::Main => builtin_column_name(theme::AxisColumn::Main).to_owned(),
+        AxisSlot::Entry(special) => special.name().to_owned(),
     }
 }
 

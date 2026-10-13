@@ -16,9 +16,9 @@ impl App {
         if page == Page::CategoryImages {
             let mut rows = Vec::new();
             let slots = (0..self.library.categories.len()).map(AxisSlot::Category).chain([AxisSlot::Uncategorized, AxisSlot::Main]);
-            for slot in slots {
+            for slot in slots.chain(Special::ALL.map(AxisSlot::Entry)) {
                 rows.push(R::AxisImage(slot));
-                if axis_slot_column(&self.library, slot).is_some_and(|c| self.theme().axis_image(c).is_some()) {
+                if axis_slot_picture(&self.library, slot).is_some_and(|p| self.theme().axis_image(p).is_some()) {
                     rows.extend([R::AxisImageAdjust(slot), R::AxisImageClear(slot)]);
                 }
             }
@@ -325,6 +325,10 @@ impl App {
                 Some((tr!("Categories side by side, the games of the selected one below it").to_owned(), Color32::from_gray(140))),
             )),
             SettingRow::AxisImage(AxisSlot::Category(0)) => Some((tr!("Your categories"), None)),
+            SettingRow::AxisImage(AxisSlot::Entry(special)) if special == Special::ALL[0] => Some((
+                tr!("Main entries"),
+                Some((tr!("Pictures for Discover, Add game and Settings in the list, in place of their tile icons").to_owned(), Color32::from_gray(140))),
+            )),
             SettingRow::AxisImage(AxisSlot::Uncategorized) => Some((
                 tr!("Built-in"),
                 Some((tr!("Games holds the games without a category. Main holds Settings, Discover and Add game").to_owned(), Color32::from_gray(140))),

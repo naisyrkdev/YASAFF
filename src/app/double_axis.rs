@@ -3,7 +3,7 @@
 //! Add game.
 
 use super::*;
-use crate::theme::{AxisColumn, TitleInfo, axis_image_key};
+use crate::theme::{AxisColumn, AxisPicture, TitleInfo, axis_image_key};
 use egui::load::{ImagePoll, SizeHint};
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Align, ColorImage, FontFamily, Galley, ImageSource, TextureHandle};
@@ -272,10 +272,14 @@ impl App {
             let picture = Rect::from_min_size(pos2(origin.x, y), vec2(item_h, item_h));
             let game = self.library.games.get(i);
             let image = game.and_then(|g| g.asset(AssetKind::Axis));
-            let icon = if game.is_none() { self.special(i).and_then(|sp| self.special_icon(sp)) } else { None };
+            // A Main entry shows the theme's picture for it, else its tile icon.
+            let entry = if game.is_none() { self.special(i).map(|sp| AxisPicture::Entry(sp.key())) } else { None };
+            let entry_image = entry.and_then(|e| self.theme().axis_image(e));
+            let icon = if game.is_none() && entry_image.is_none() { self.special(i).and_then(|sp| self.special_icon(sp)) } else { None };
+            let image = image.map(|path| (path, game.map(|g| g.placement(AssetKind::Axis)).unwrap_or_default()));
+            let image = image.or(entry_image.as_deref().zip(entry.map(|e| axis.placement(e))));
             let has_picture = image.is_some() || icon.is_some();
-            if let (Some(path), Some(game)) = (image, game) {
-                let placement = game.placement(AssetKind::Axis);
+            if let Some((path, placement)) = image {
                 glow_outline(painter, &file_uri(path), picture, placement, axis.glow_color, glow);
                 paint_image_placed(ui, path, picture, alpha, (6.0 * s) as u8, placement);
             } else if let Some(icon) = icon {

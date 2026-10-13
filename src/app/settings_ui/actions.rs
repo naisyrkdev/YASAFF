@@ -413,16 +413,16 @@ impl App {
             SettingRow::AxisImage(slot) => {
                 let dialog = rfd::FileDialog::new().set_title(tr!("Select category image")).add_filter(tr!("Images"), IMAGE_EXTS);
                 self.ask_path(dialog, Pick::File, move |app, path| {
-                    let Some(column) = axis_slot_column(&app.library, slot) else { return };
-                    if let Err(e) = app.themes[app.theme].set_axis_image(column, &path) {
+                    let Some(picture) = axis_slot_picture(&app.library, slot) else { return };
+                    if let Err(e) = app.themes[app.theme].set_axis_image(picture, &path) {
                         app.notify(tr!("Could not set image: {error}", error = format!("{e:#}")));
                     }
                 });
             }
             SettingRow::AxisImageAdjust(slot) => self.open_category_editor(slot),
             SettingRow::AxisImageClear(slot) => {
-                if let Some(column) = axis_slot_column(&self.library, slot)
-                    && let Err(e) = self.themes[self.theme].clear_axis_image(column)
+                if let Some(picture) = axis_slot_picture(&self.library, slot)
+                    && let Err(e) = self.themes[self.theme].clear_axis_image(picture)
                 {
                     self.notify(tr!("Could not save theme: {error}", error = format!("{e:#}")));
                 }

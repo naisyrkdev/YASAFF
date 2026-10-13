@@ -6,7 +6,7 @@ pub(super) struct CoverEditor {
     pub(super) kind: AssetKind,
     /// For a cover: the tile style whose placement is edited, shown or not.
     pub(super) style: Option<TileStyle>,
-    /// A Double axis category image, kept in the theme, instead of the selected game's image.
+    /// A Double axis category or Main entry picture, kept in the theme, instead of the selected game's image.
     pub(super) category: Option<AxisSlot>,
     pub(super) draft: CoverPlacement,
     pub(super) cursor: usize,
@@ -95,8 +95,8 @@ impl App {
     }
 
     pub(super) fn open_category_editor(&mut self, slot: AxisSlot) {
-        let Some(column) = axis_slot_column(&self.library, slot) else { return };
-        let draft = self.theme().settings.double_axis.placement(column);
+        let Some(picture) = axis_slot_picture(&self.library, slot) else { return };
+        let draft = self.theme().settings.double_axis.placement(picture);
         let editor = CoverEditor { kind: AssetKind::Axis, style: None, category: Some(slot), draft, cursor: 0, button: EditorButton::Accept };
         self.mode = Mode::CoverEditor(editor);
     }
@@ -112,8 +112,8 @@ impl App {
         let Mode::CoverEditor(editor) = &self.mode else { return };
         let (kind, style, draft) = (editor.kind, editor.style, editor.draft);
         if let Some(slot) = editor.category {
-            if accept && let Some(column) = axis_slot_column(&self.library, slot) {
-                self.themes[self.theme].settings.double_axis.set_placement(column, draft);
+            if accept && let Some(picture) = axis_slot_picture(&self.library, slot) {
+                self.themes[self.theme].settings.double_axis.set_placement(picture, draft);
                 self.save_theme();
             }
             self.mode = self.settings_at(SettingRow::AxisImageAdjust(slot));
@@ -153,26 +153,22 @@ impl App {
     fn draw_cover_editor_as_shown(&mut self, ui: &Ui, screen: Rect, s: f32) {
         let Mode::CoverEditor(editor) = &self.mode else { return };
         let (kind, style, category, mut draft, mut cursor, mut button) = (editor.kind, editor.style, editor.category, editor.draft, editor.cursor, editor.button);
-        let column = category.and_then(|slot| axis_slot_column(&self.library, slot));
-        let (name, before) = match column {
-            Some(column) => {
-                let name = match column {
-                    theme::AxisColumn::Category(name) => name,
-                    builtin => builtin_column_name(builtin),
-                };
-                (name.to_owned(), self.theme().settings.double_axis.placement(column))
-            }
-            None => match self.selected_game() {
-                Some(game) if category.is_none() => (game.name.clone(), game.placement(kind)),
-                _ => return,
+        let picture = category.and_then(|slot| axis_slot_picture(&self.library, slot));
+        let (name, before) = match (category, picture) {
+            (Some(slot), Some(picture)) => (axis_slot_name(&self.library, slot), self.theme().settings.double_axis.placement(picture)),
+            (None, _) => match self.selected_game() {
+                Some(game) => (game.name.clone(), game.placement(kind)),
+                None => return,
             },
+            (Some(_), None) => return,
         };
-        let category_image = column.and_then(|c| self.theme().axis_image(c));
+        let category_image = picture.and_then(|p| self.theme().axis_image(p));
         let painter = ui.painter();
         painter.rect_filled(screen, 0, Color32::from_black_alpha(190));
         let dialog = Rect::from_center_size(screen.center() - vec2(0.0, 20.0 * s), vec2((1100.0 * s).min(screen.width() - 40.0 * s), 820.0 * s));
         painter.rect_filled(dialog, (8.0 * s) as u8, Color32::from_rgb(18, 24, 40));
         let title = match kind {
+            _ if matches!(category, Some(AxisSlot::Entry(_))) => tr!("List image size and position · {name}", name = name),
             _ if category.is_some() => tr!("Category image size and position · {name}", name = name),
             AssetKind::Spine => tr!("Spine image size and position · {name}", name = name),
             AssetKind::Top => tr!("Top image size and position · {name}", name = name),
@@ -192,6 +188,7 @@ impl App {
         let settings = &self.theme().settings;
         let tile_h = 330.0 * s;
         let aspect = match kind {
+            _ if matches!(category, Some(AxisSlot::Entry(_))) => 1.0,
             _ if category.is_some() => {
                 let [w, h] = settings.double_axis.size();
                 w / h
