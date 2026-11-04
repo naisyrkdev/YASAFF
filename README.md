@@ -74,9 +74,9 @@ Yea, created here: https://discord.gg/fMRpS6Jmr
 
 **Windows:** run the `YASAFF-Setup-<version>.exe` installer. It installs for the current user and doesn't need admin rights. A portable `YASAFF-<version>-portable-win64.zip` is also available: unzip it anywhere and run `yasaff.exe`, no installation needed. The first time it runs, it asks whether to keep your library, settings and saves in your Windows user account (reusing them if YASAFF is already installed there) or inside the unzipped folder itself, so the whole thing stays self-contained (for example on a USB stick); it remembers the answer after that.
 
-**Linux:** download `yasaff.AppImage`, make it executable (`chmod +x yasaff.AppImage`) and run it.
+**Linux:** download `yasaff.AppImage`, make it executable (`chmod +x yasaff.AppImage`) and run it. On Debian, Ubuntu and Mint you can instead install `yasaff_<version>_amd64.deb` (`sudo apt install ./yasaff_<version>_amd64.deb`), which adds YASAFF to the applications menu.
 
-Both come with everything YASAFF uses: **ffmpeg** for preview and idle videos, and on Linux **xorriso** for **Burn to CD/DVD…**. You don't have to install anything else.
+The Windows installer, the portable .zip and the AppImage come with everything YASAFF uses: **ffmpeg** for preview and idle videos, and on Linux **xorriso** for **Burn to CD/DVD…**. You don't have to install anything else. The .deb installs ffmpeg and xorriso from your distribution instead.
 
 **From source** (Rust, edition 2024):
 
@@ -92,6 +92,8 @@ To build the Windows installer, run `installer/build-installer.ps1`. It needs In
 To build the Windows portable .zip, run `installer/build-portable.ps1`. It downloads ffmpeg and writes `target/portable/YASAFF-<version>-portable-win64.zip`.
 
 To build the AppImage, run `installer/build-appimage.sh`. It needs `cargo-appimage`, `appimagetool`, `curl`, a C compiler and `make`. It downloads ffmpeg, builds xorriso, and writes `target/appimage/yasaff.AppImage`.
+
+To build the .deb, run `installer/build-deb.sh`. It needs `dpkg-deb` and `dpkg-shlibdeps` (package `dpkg-dev`) and writes `target/deb/yasaff_<version>_<arch>.deb`. Build it on the oldest distribution you want to support: the package depends on that distribution's glibc and library versions.
 
 Command-line flags:
 

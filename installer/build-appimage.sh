@@ -40,7 +40,10 @@ cp "$cache/$ffmpeg_name/LICENSE.txt" "$tools/ffmpeg-LICENSE.txt"
 echo "Building xorriso..."
 xorriso_tar="$cache/xorriso-$xorriso_version.tar.gz"
 if [[ ! -f "$xorriso_tar" ]] || ! echo "$xorriso_sha256  $xorriso_tar" | sha256sum -c --status; then
-    curl -fL -o "$xorriso_tar" "https://ftp.gnu.org/gnu/xorriso/xorriso-$xorriso_version.tar.gz"
+    # ftp.gnu.org is often unreachable; the checksum below makes any mirror safe to use.
+    for mirror in https://ftp.gnu.org/gnu https://mirrors.kernel.org/gnu https://ftpmirror.gnu.org; do
+        curl -fL --connect-timeout 20 -o "$xorriso_tar" "$mirror/xorriso/xorriso-$xorriso_version.tar.gz" && break
+    done
     echo "$xorriso_sha256  $xorriso_tar" | sha256sum -c --status || { rm -f "$xorriso_tar"; echo "xorriso checksum mismatch" >&2; exit 1; }
 fi
 xorriso_src="$cache/xorriso-src"
