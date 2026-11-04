@@ -1,23 +1,41 @@
-# YASAFF Launcher
+<div align="center">
+
+# <img src="assets/icon.png" alt="YASAFF icon" width="40" align="center"> YASAFF Launcher
 
 ![Rust Percentage](https://img.shields.io/github/languages/top/naisyrkdev/yasaff?logo=rust&logoColor=white)
 [![License](https://img.shields.io/github/license/naisyrkdev/yasaff)](LICENSE)
 ![Status](https://img.shields.io/badge/status-alpha-red)
-![Status](https://img.shields.io/badge/status-WIP-yellow)
 
-
-YASAFF Launcher is a layer that tries mimic console experience:
-- Fully customizable console-alike menu
-- Dedicated apps available to imitate working in "background"
-- Boot your games from physical devices
-- Manage your saves (on physical devices)
-- Install application, themes & more from discover servers
-(look https://github.com/naisyrkdev/YasaffDiscoverServer)
+</div>
 
 ![YASAFF demo](assets/for_docs/1.gif)
 
-It runs on Windows and Linux.
+**YASAFF Launcher** is a software/layer that tries mimic console experience and allow you makes games
+more centered about physical devices:
+- Fully customizable console-alike menu
+- Dedicated apps available to imitate working in background
+- Boot your games from physical devices
+- Manage your saves (on physical devices)
+- Install application, themes & more from discover servers
+(https://github.com/naisyrkdev/YasaffDiscoverServer) (or directly from github [within app])
 
+
+It runs on Windows and Linux. Mac support on the way.
+
+## Roadmap
+- Create an open-source 3D printable model for case that will have slot for both USB Stick (game data, installers) and CD/DVD (only for game launching) and second - double USB Stick (game data; launcher + managing saves). It's all about data retention on USB Sticks (flash).
+- NFC - support on the way. 
+
+## FAQ
+### Is this project AI-generated ("vibe-coded")?
+
+Yes, mostly, indeed.
+
+### Is there commnity server?
+
+Yea, created here: https://discord.gg/fMRpS6Jmr
+
+## Details
 - [Features](#features)
 - [Installing and building](#installing-and-building)
 - [Adding games](#adding-games)
@@ -32,6 +50,10 @@ It runs on Windows and Linux.
 - [Settings overview](#settings-overview)
 - [Data folders](#data-folders)
 - [Logs](#logs)
+
+
+## Support 
+<a href='https://ko-fi.com/T3T7280TZN' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi5.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
 ## Features
 
@@ -50,7 +72,7 @@ It runs on Windows and Linux.
 
 ## Installing and building
 
-**Windows:** run the `YASAFF-Setup-<version>.exe` installer. It installs for the current user and doesn't need admin rights.
+**Windows:** run the `YASAFF-Setup-<version>.exe` installer. It installs for the current user and doesn't need admin rights. A portable `YASAFF-<version>-portable-win64.zip` is also available: unzip it anywhere and run `yasaff.exe`, no installation needed. The first time it runs, it asks whether to keep your library, settings and saves in your Windows user account (reusing them if YASAFF is already installed there) or inside the unzipped folder itself, so the whole thing stays self-contained (for example on a USB stick); it remembers the answer after that.
 
 **Linux:** download `yasaff.AppImage`, make it executable (`chmod +x yasaff.AppImage`) and run it.
 
@@ -67,6 +89,8 @@ A build from source uses `ffmpeg` and `xorriso` from your system, if they're ins
 
 To build the Windows installer, run `installer/build-installer.ps1`. It needs Inno Setup 6.3 or newer, downloads ffmpeg, and writes `target/installer/YASAFF-Setup-<version>.exe`.
 
+To build the Windows portable .zip, run `installer/build-portable.ps1`. It downloads ffmpeg and writes `target/portable/YASAFF-<version>-portable-win64.zip`.
+
 To build the AppImage, run `installer/build-appimage.sh`. It needs `cargo-appimage`, `appimagetool`, `curl`, a C compiler and `make`. It downloads ffmpeg, builds xorriso, and writes `target/appimage/yasaff.AppImage`.
 
 Command-line flags:
@@ -78,7 +102,7 @@ Command-line flags:
 
 ## Adding games
 
-A new profile starts with a few placeholder games, so the screen isn't empty. You can delete them.
+A new profile starts empty. On its first start YASAFF offers the repositories listed in [initial_content/initial_install_repos.txt](initial_content/initial_install_repos.txt), one at a time: "Do you want to download this repo?" with its type, `owner/name` and description. **Download** installs it as with **Install from GitHub**, and **Skip** moves on. See [initial_content/README.md](initial_content/README.md) for the format of the list.
 
 Open the **Add game** tile, or press **Y** / **Insert**. From there you can:
 
@@ -86,6 +110,7 @@ Open the **Add game** tile, or press **Y** / **Insert**. From there you can:
 - **Add a file:** a game executable, a script, or a `.desktop` / shortcut file.
 - **Add a command or URL:** for example `steam://rungameid/...` or any command line.
 - **Import an application from file:** a YASAFF app or game package (`.zip`).
+- **Install from GitHub:** a YASAFF app, addon or theme from a GitHub repository (see below).
 
 Games installed from YASAFF Discover are added to the library automatically.
 
@@ -142,12 +167,14 @@ Everything about the look is part of a **theme**. Open **Settings → Theme** to
 
 A **custom theme** draws the home screen with its own code, a WebAssembly module that YASAFF runs sandboxed. The theme decides the layout, the navigation and the animation, and declares its own options, pictures and a per-game picture, which show up in Settings like YASAFF's own. YASAFF ships none: you install them from a package or from Discover. [YasaffDoubleAxisTheme](../YasaffDoubleAxisTheme/) is the example of making one, and [docs/THEMES.md](docs/THEMES.md) describes how.
 
-**Pre-defined themes** (click a picture to open it full size)
+**Themes** (click a picture to open it full size)
+
+*Bubbles* is built in. *Double axis* is a custom theme kept in a separate repository, [YasaffDoubleAxisTheme](https://github.com/naisyrkdev/YasaffDoubleAxisTheme). The launcher offers to download it during first-time setup, or you can install it manually from that repository.
 
 | Theme | Description | View |
 | --- | --- | --- |
-| **Bubbles** | Games float as bubbles of different sizes, with empty bubbles filling the screen, a preview video and a swap sound. | <a href="assets/for_docs/custom_themes/bubbles.png"><img src="assets/for_docs/custom_themes/bubbles.png" alt="Bubbles theme" width="320"></a> |
-| **Double axis** (custom, install it from [its package](../YasaffDoubleAxisTheme/)) | Double axis menus. Categories run along the top, the games of the selected one below it. | <a href="assets/for_docs/custom_themes/double_axis.png"><img src="assets/for_docs/custom_themes/double_axis.png" alt="Double axis theme" width="320"></a> |
+| **Bubbles** (built in) | Games float as bubbles of different sizes, with empty bubbles filling the screen, a preview video and a swap sound. | <a href="assets/for_docs/custom_themes/bubbles.png"><img src="assets/for_docs/custom_themes/bubbles.png" alt="Bubbles theme" width="320"></a> |
+| **Double axis** ([separate repository](https://github.com/naisyrkdev/YasaffDoubleAxisTheme), downloadable during first-time setup) | Double axis menus. Categories run along the top, the games of the selected one below it. | <a href="assets/for_docs/custom_themes/double_axis.png"><img src="assets/for_docs/custom_themes/double_axis.png" alt="Double axis theme" width="320"></a> |
 
 **Categories:** add, rename, reorder and delete them in **Settings → Categories**. Saving a category with an empty name deletes it; its games stay in the library.
 
@@ -212,10 +239,14 @@ Each copy is written to a temporary folder first and then renamed, so pulling th
 
 ## YASAFF Discover, apps and addons
 
-The **Discover** tile lists apps, games, themes and addons from a YASAFF Discover Server ([YasaffStuffServer](https://github.com/naisyrkdev/YasaffStuffServer)), where you install and update them. Add the store address in **Settings → YASAFF Discover**. You can add several stores and switch between them.
+The **Discover** tile lists apps, games, themes and addons from a YASAFF Discover Server ([YasaffDiscoverfServer](https://github.com/naisyrkdev/YasaffDiscoverServer)), where you install and update them. Add the store address in **Settings → YASAFF Discover**. You can add several stores and switch between them.
 
 - **Apps** are separate programs that YASAFF starts and holds inside its own window. Press Guide to come back to YASAFF while they keep running.
 - **Addons** are bar widgets, for example device info or a clock. Manage them in **Settings → Addons → Addons Manager…** and show each one in the top bar, the bottom bar or anywhere on the screen, at 50–300 % size.
+
+**Installed** is the last Discover tab, and the one Discover opens on when no store is set up. It lists every app and addon you have, wherever it came from, with a tag for its source: the store, **GitHub**, **File** (imported from a `.zip`), **Built in** (came with YASAFF) or **Other store**. In the store's own tabs, apps you installed from somewhere else carry the same tag, in yellow, and say they're not from this store.
+
+The first row of **Installed**, **Install from GitHub…**, works with or without a store. Type the repository as `owner/name` (or paste its github.com address). YASAFF downloads the `.zip` attached to the repository's latest release, the one whose name has `windows`, `linux` or `macos` in it when there are several. GitHub's checksum is checked when it has one. A release without a `.zip` falls back to its source archive, and a repository without a release to its default branch's source; both only work for packages that need no build. A package with `themeSettings.json` instead of `yasaffConfig.json` is added as a new theme and selected. To update, press **Y** on the app in **Installed**: the prompt comes filled in with its repository. Without signing in, GitHub allows 60 requests an hour.
 
 To make your own app, game package or addon, see [docs/YASAFF_application_guide.md](docs/YASAFF_application_guide.md).
 

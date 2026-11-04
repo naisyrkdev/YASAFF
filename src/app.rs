@@ -41,6 +41,7 @@ use crate::scan;
 use crate::sound::Sounds;
 use crate::settings::{DiscAction, Language, MouseSettings, Settings};
 use crate::stores::Store;
+use crate::taskbar;
 use crate::video::{self, Videos};
 use crate::theme::{
     self, BackgroundKind, BarPosition, BarSlot, BarStyle, BoxCase, BubbleSettings, CoverShape, ButtonShape, ButtonStyle, DiscKind, DiscSettings, DiscSpin, GradientDirection, GridAlign, GridSettings,
@@ -204,6 +205,7 @@ pub struct App {
     videos: RefCell<Videos>,
     crt_visible: Vec<usize>,
     fullscreen: bool,
+    taskbar_hidden: bool,
     autostart: bool,
     bg_current: Option<PathBuf>,
     bg_previous: Option<PathBuf>,
@@ -233,7 +235,8 @@ pub struct App {
     profiles: Vec<String>,
     profile_pick: String,
     profile_job: Option<mpsc::Receiver<ProfileJob>>,
-    setup: Option<InitialSetup>,
+    /// Repositories from `initial_install_repos.txt` still to be offered, oldest first.
+    offers: std::collections::VecDeque<crate::appstore::RepoInfo>,
     /// Set once a restart was requested: the window is closing and nothing may touch the profile.
     restarting: bool,
     dialog: Option<dialogs::PendingDialog>,
@@ -299,6 +302,7 @@ impl App {
             videos: RefCell::default(),
             crt_visible: Vec::new(),
             fullscreen,
+            taskbar_hidden: false,
             autostart: autostart::is_enabled(),
             bg_current: None,
             bg_previous: None,
@@ -325,7 +329,7 @@ impl App {
             profiles: profiles::list(),
             profile_pick: profiles::active(),
             profile_job: None,
-            setup: None,
+            offers: Default::default(),
             restarting: false,
             dialog: None,
             button_edit: PadButton::South,
@@ -364,7 +368,9 @@ impl App {
         app.find_missing_save_dirs();
         if initial::wanted(&app.library) {
             app.mode = Mode::Welcome { cursor: 0 };
+            app.look_up_initial_repos();
         }
+        app.sync_taskbar();
         app
     }
 
@@ -447,6 +453,18 @@ impl App {
         }
     }
 
+    /// Hides the taskbar while fullscreen, if the setting wants it; restores it otherwise.
+    fn sync_taskbar(&mut self) {
+        self.set_taskbar_hidden(self.fullscreen && self.settings.windows.hide_taskbar);
+    }
+
+    fn set_taskbar_hidden(&mut self, hidden: bool) {
+        if self.taskbar_hidden != hidden {
+            taskbar::set_hidden(hidden);
+            self.taskbar_hidden = hidden;
+        }
+    }
+
     fn controls_changed(&mut self) {
         self.input.set_bindings(self.settings.controls.bindings());
         self.clamp_selection();
@@ -521,6 +539,7 @@ impl App {
             Action::ToggleFullscreen => {
                 self.fullscreen = !self.fullscreen;
                 ctx.send_viewport_cmd(ViewportCommand::Fullscreen(self.fullscreen));
+                self.sync_taskbar();
                 return;
             }
             Action::BringToFront => return self.come_home(ctx),
@@ -574,6 +593,7 @@ impl eframe::App for App {
         if ctx.input(|i| i.viewport().minimized) != Some(true) {
             return;
         }
+        self.set_taskbar_hidden(false);
         for action in self.input.poll_hidden() {
             self.handle(ctx, action);
         }
@@ -629,7 +649,7 @@ impl eframe::App for App {
         self.poll_device_sync();
         self.refresh_devices();
         self.poll_profile_job();
-        self.poll_setup();
+        self.offer_initial_repo();
         self.update_launching(&ctx);
         if !matches!(self.mode, Mode::Home) {
             self.bubble_empty = None;
@@ -679,7 +699,6 @@ impl eframe::App for App {
         self.draw_gallery_pick(ui, screen, s);
         self.draw_burn(ui, screen, s);
         self.draw_device_sync(ui, screen, s);
-        self.draw_setup(&painter, screen, s);
         self.draw_dialog_wait(&painter, screen, s);
         self.draw_toast(&painter, screen, s);
         self.draw_launching(ui, screen, s);
@@ -688,5 +707,9 @@ impl eframe::App for App {
 
         let focused = ctx.input(|i| i.focused);
         ctx.request_repaint_after(Duration::from_millis(if focused { 16 } else { 100 }));
+    }
+
+    fn on_exit(&mut self) {
+        self.set_taskbar_hidden(false);
     }
 }

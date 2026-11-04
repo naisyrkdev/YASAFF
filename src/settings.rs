@@ -257,6 +257,20 @@ impl Default for OrderSettings {
     }
 }
 
+/// Windows-only system behavior.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct WindowsSettings {
+    /// Hides the taskbar on every monitor while YASAFF is fullscreen, so it can't show over it.
+    pub hide_taskbar: bool,
+}
+
+impl Default for WindowsSettings {
+    fn default() -> Self {
+        WindowsSettings { hide_taskbar: true }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(default)]
 pub struct Settings {
@@ -272,6 +286,7 @@ pub struct Settings {
     pub fonts: FontSettings,
     pub order: OrderSettings,
     pub gallery: GallerySettings,
+    pub windows: WindowsSettings,
     pub app_stores: Vec<AppStoreSettings>,
     pub active_app_store: usize,
     #[serde(skip_serializing_if = "Option::is_none")]

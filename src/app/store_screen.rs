@@ -1,6 +1,6 @@
 
 use super::*;
-use crate::appstore::{self, AppProcess, Endpoint, Event, Manifest, Placement, RemoteApp, RemoteTheme};
+use crate::appstore::{self, AppProcess, Endpoint, Event, GithubPackage, Manifest, Placement, RemoteApp, RemoteTheme, Source};
 use crate::theme::StoreOrigin;
 use std::collections::HashMap;
 
@@ -23,6 +23,9 @@ pub(super) struct StoreState {
     theme_installs: HashMap<String, Install>,
     addons: Vec<RemoteApp>,
     addon_listing: Listing,
+    /// The GitHub install in progress or that failed last, and its repository.
+    github: Option<Install>,
+    github_repo: String,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -30,16 +33,19 @@ enum StoreTab {
     Apps,
     Themes,
     Addons,
+    /// What is installed, from any source; works without a store. Row 0 installs from GitHub.
+    Installed,
 }
 
 impl StoreTab {
-    const ALL: [Self; 3] = [Self::Apps, Self::Themes, Self::Addons];
+    const ALL: [Self; 4] = [Self::Apps, Self::Themes, Self::Addons, Self::Installed];
 
     fn label(self) -> &'static str {
         match self {
             Self::Apps => tr!("Apps"),
             Self::Themes => tr!("Themes"),
             Self::Addons => tr!("Addons"),
+            Self::Installed => tr!("Installed"),
         }
     }
 }
@@ -103,22 +109,18 @@ impl StoreState {
             theme_installs: HashMap::new(),
             addons: Vec::new(),
             addon_listing: Listing::NotLoaded,
-        }
-    }
-
-    fn count(&self) -> usize {
-        match self.tab {
-            StoreTab::Apps => self.apps.len(),
-            StoreTab::Themes => self.themes.len(),
-            StoreTab::Addons => self.addons.len(),
+            github: None,
+            github_repo: String::new(),
         }
     }
 
     fn listing(&self) -> &Listing {
+        static LOADED: Listing = Listing::Loaded;
         match self.tab {
             StoreTab::Apps => &self.listing,
             StoreTab::Themes => &self.theme_listing,
             StoreTab::Addons => &self.addon_listing,
+            StoreTab::Installed => &LOADED,
         }
     }
 
@@ -144,9 +146,32 @@ impl App {
         self.settings.app_store().endpoint()
     }
 
+    fn store_base(&self) -> Option<String> {
+        self.store_endpoint().map(|e| e.base)
+    }
+
     pub(super) fn open_store(&mut self) {
+        if self.store_endpoint().is_none() {
+            self.store.tab = StoreTab::Installed;
+        }
         self.mode = Mode::Store { cursor: 0, scroll: 0 };
         self.load_store_tab();
+    }
+
+    fn store_count(&self) -> usize {
+        match self.store.tab {
+            StoreTab::Apps => self.store.apps.len(),
+            StoreTab::Themes => self.store.themes.len(),
+            StoreTab::Addons => self.store.addons.len(),
+            StoreTab::Installed => 1 + self.installed_packages().len(),
+        }
+    }
+
+    /// Installed apps and addons, by name; the Installed tab lists them after its GitHub row.
+    fn installed_packages(&self) -> Vec<&Manifest> {
+        let mut all: Vec<&Manifest> = self.store.installed.values().chain(&self.addons.installed).collect();
+        all.sort_by_key(|m| m.name.to_lowercase());
+        all
     }
 
     fn load_store_tab(&mut self) {
@@ -259,6 +284,26 @@ impl App {
                     let name = zip.file_name().unwrap_or_default().to_string_lossy().into_owned();
                     self.notify(tr!("Could not import {name}: {error}", name = name, error = e));
                 }
+                Event::GithubProgress(done, total) => self.store.github = Some(Install::Downloading(done, total)),
+                Event::GithubInstalled(_, Ok(GithubPackage::App(manifest))) => {
+                    self.store.github = None;
+                    if manifest.is_addon() {
+                        self.add_installed_addon(*manifest);
+                    } else {
+                        self.add_installed(*manifest);
+                    }
+                }
+                Event::GithubInstalled(_, Ok(GithubPackage::Theme(zip))) => {
+                    self.store.github = None;
+                    self.import_theme_zip(&zip);
+                    let _ = std::fs::remove_file(&zip);
+                }
+                Event::RepoInfo(_, Ok(info)) => self.offers.push_back(info),
+                Event::RepoInfo(repo, Err(e)) => self.notify(tr!("Could not look up {repo}: {error}", repo = repo, error = e)),
+                Event::GithubInstalled(repo, Err(e)) => {
+                    self.notify(tr!("Could not install {name}: {error}", name = repo, error = e));
+                    self.store.github = Some(Install::Failed(e));
+                }
                 Event::Installed(id, Err(e)) => {
                     self.addons.resume(&id);
                     let name = self.store.package_name(&id);
@@ -317,10 +362,58 @@ impl App {
         self.ask_path(dialog, super::Pick::File, Self::import_app_zip);
     }
 
+    /// The ids of the apps that are running, which an install must not replace.
+    fn busy_apps(&self) -> Vec<String> {
+        self.running.iter().filter_map(|r| self.library.games.iter().find(|g| g.id == r.game_id)?.app_id.clone()).collect()
+    }
+
     pub(super) fn import_app_zip(&mut self, zip: PathBuf) {
-        let busy = self.running.iter().filter_map(|r| self.library.games.iter().find(|g| g.id == r.game_id)?.app_id.clone()).collect();
         self.notify(tr!("Importing {file}…", file = zip.file_name().unwrap_or_default().to_string_lossy()));
-        self.store.client.import_file(zip, busy);
+        self.store.client.import_file(zip, self.busy_apps());
+    }
+
+    /// Opens Discover on the Installed tab, under the prompt for a GitHub repository.
+    pub(super) fn ask_github_repo(&mut self, buffer: String) {
+        self.open_installed_tab();
+        self.mode = Mode::Prompt { kind: PromptKind::GithubRepo, buffer };
+    }
+
+    pub(super) fn open_installed_tab(&mut self) {
+        self.open_store_tab(StoreTab::Installed);
+    }
+
+    /// Looks up the repositories of `initial_install_repos.txt`; each is offered once found.
+    pub(super) fn look_up_initial_repos(&mut self) {
+        self.store.client.repo_infos(initial::repos());
+    }
+
+    /// Asks about the next repository to offer, once the home screen is back and no GitHub
+    /// install is running.
+    pub(super) fn offer_initial_repo(&mut self) {
+        if matches!(self.mode, Mode::Home) && !self.offers.is_empty() && !matches!(self.store.github, Some(Install::Downloading(..))) {
+            self.mode = Mode::ConfirmRemove { what: Removal::InitialRepo, yes: true };
+        }
+    }
+
+    /// Answers the repository on offer: `yes` installs it.
+    pub(super) fn answer_offer(&mut self, yes: bool) {
+        self.mode = Mode::Home;
+        if let Some(info) = self.offers.pop_front()
+            && yes
+        {
+            self.install_from_github(info.repo);
+        }
+    }
+
+    pub(super) fn install_from_github(&mut self, repo: String) {
+        if matches!(self.store.github, Some(Install::Downloading(..))) {
+            self.notify(tr!("Wait until {name} is installed", name = self.store.github_repo));
+            return;
+        }
+        self.notify(tr!("Installing {repo} from GitHub…", repo = repo));
+        self.store.github = Some(Install::Downloading(0, 0));
+        self.store.github_repo = repo.clone();
+        self.store.client.install_github(repo, self.busy_apps());
     }
 
     fn add_installed_addon(&mut self, manifest: Manifest) -> Option<usize> {
@@ -382,6 +475,34 @@ impl App {
                 self.addons.sync(&self.settings);
             }
             Err(e) => self.notify(tr!("Could not change the image: {error}", error = format!("{e:#}"))),
+        }
+    }
+
+    /// The short tag for where `m` came from.
+    fn source_badge(&self, m: &Manifest) -> (String, Color32) {
+        let outside = m.outside_store(self.store_base().as_deref());
+        let label = match &m.source {
+            None => tr!("Installed"),
+            Some(Source::Github { .. }) => "GitHub",
+            Some(Source::File) => tr!("File"),
+            Some(Source::Bundled) => tr!("Built in"),
+            Some(Source::Store { .. }) if outside => tr!("Other store"),
+            Some(Source::Store { .. }) => tr!("YASAFF Discover"),
+        };
+        (label.to_owned(), if outside { PAD_Y } else { PAD_A })
+    }
+
+    /// Where `m` came from, as a sentence; empty for packages installed before YASAFF kept track.
+    fn source_sentence(&self, m: &Manifest) -> String {
+        match &m.source {
+            None => String::new(),
+            Some(Source::Github { repo, tag }) => tr!("Installed from GitHub: {repo} {tag}", repo = repo, tag = tag),
+            Some(Source::File) => tr!("Installed from a file").to_owned(),
+            Some(Source::Bundled) => tr!("Came with YASAFF").to_owned(),
+            Some(Source::Store { url }) if self.store_base().as_ref() == Some(url) => {
+                tr!("Installed from {store}", store = self.settings.app_store().title())
+            }
+            Some(Source::Store { .. }) => tr!("Installed from another YASAFF Discover store").to_owned(),
         }
     }
 
@@ -483,6 +604,20 @@ impl App {
         self.store.client.install(endpoint, app);
     }
 
+    fn installed_activate(&mut self, index: usize) {
+        let packages = self.installed_packages();
+        let Some((id, addon)) = index.checked_sub(1).and_then(|i| packages.get(i)).map(|m| (m.id.clone(), m.is_addon())) else {
+            return self.ask_github_repo(String::new());
+        };
+        if addon {
+            self.mode = AddonManager::open(AddonView::Addon(id), 0);
+        } else if let Some(i) = self.library.games.iter().position(|g| g.app_id.as_deref() == Some(&id)) {
+            self.selected = i;
+            self.mode = Mode::Home;
+            self.launch_selected();
+        }
+    }
+
     pub(super) fn game_update(&self, game: &Game) -> Option<&RemoteApp> {
         self.store.update_for(game.app_id.as_deref()?)
     }
@@ -538,6 +673,19 @@ impl App {
         }
     }
 
+    /// Adds the theme package `zip` as a new theme and selects it.
+    pub(super) fn import_theme_zip(&mut self, zip: &Path) {
+        match Theme::import(zip) {
+            Ok(theme) => {
+                let id = theme.id.clone();
+                self.themes.push(theme);
+                self.select_theme(&id);
+                self.notify(tr!("Imported {name}", name = self.theme().settings.name));
+            }
+            Err(e) => self.notify(tr!("Could not import theme: {error}", error = format!("{e:#}"))),
+        }
+    }
+
     fn install_store_theme(&mut self, id: &str, dir: &Path) {
         let Some(remote) = self.store.themes.iter().find(|t| t.id == id).cloned() else { return };
         let origin = StoreOrigin { id: id.to_owned(), version: remote.latest.version };
@@ -568,7 +716,8 @@ impl App {
 
     /// Whether a store download or install is in progress.
     pub(super) fn store_busy(&self) -> bool {
-        self.store.installs.values().chain(self.store.theme_installs.values()).any(|i| matches!(i, Install::Downloading(..)))
+        let installs = self.store.installs.values().chain(self.store.theme_installs.values()).chain(&self.store.github);
+        installs.into_iter().any(|i| matches!(i, Install::Downloading(..)))
     }
 
     pub(super) fn running_app(&self, game_id: &str) -> Option<&RunningApp> {
@@ -686,9 +835,10 @@ impl App {
     }
 
     pub(super) fn handle_store(&mut self, action: Action) {
-        let connected = self.store_endpoint().is_some();
+        let connected = self.store_endpoint().is_some() || self.store.tab == StoreTab::Installed;
+        let count = self.store_count();
+        let github = self.store_cursor_github_repo();
         let Mode::Store { cursor, .. } = &mut self.mode else { return };
-        let count = self.store.count();
         match action {
             Action::Up | Action::Left => *cursor = cursor.saturating_sub(1),
             Action::Down | Action::Right => *cursor = (*cursor + 1).min(count.saturating_sub(1)),
@@ -698,10 +848,12 @@ impl App {
                 match self.store.tab {
                     StoreTab::Apps | StoreTab::Addons => self.store_activate(i),
                     StoreTab::Themes => self.open_store_theme(i),
+                    StoreTab::Installed => self.installed_activate(i),
                 }
             }
             Action::Options => self.switch_store_tab(),
             Action::Add => match self.store.tab {
+                StoreTab::Installed => self.ask_github_repo(github.unwrap_or_default()),
                 StoreTab::Apps => {
                     self.store.listing = Listing::NotLoaded;
                     self.refresh_store();
@@ -723,6 +875,17 @@ impl App {
 
     pub(super) fn store_on_themes(&self) -> bool {
         self.store.tab == StoreTab::Themes
+    }
+
+    pub(super) fn store_on_installed(&self) -> bool {
+        self.store.tab == StoreTab::Installed
+    }
+
+    /// The repository of the installed package under the cursor, when it came from GitHub.
+    fn store_cursor_github_repo(&self) -> Option<String> {
+        let Mode::Store { cursor, .. } = self.mode else { return None };
+        let packages = self.installed_packages();
+        Some(packages.get(cursor.checked_sub(1)?)?.github_repo()?.to_owned())
     }
 
     fn switch_store_tab(&mut self) {
@@ -760,9 +923,10 @@ impl App {
         let title = if self.store.store_name.is_empty() { tr!("YASAFF Discover").to_owned() } else { self.store.store_name.clone() };
         let title = painter.text(panel.left_top() + vec2(40.0 * s, 36.0 * s), Align2::LEFT_TOP, title, FontId::proportional(30.0 * s), Color32::WHITE);
         let switch_tab = self.draw_store_tabs(ui, pos2(title.right() + 36.0 * s, title.center().y), s);
-        let count = self.store.count();
+        let count = self.store_count();
         let counts = match self.store.tab {
             _ if *self.store.listing() != Listing::Loaded => String::new(),
+            StoreTab::Installed => tr_n!(count - 1, "{n} app or addon installed", "{n} apps and addons installed"),
             StoreTab::Apps => tr_n!(count, "{n} app for {platform}", "{n} apps for {platform}", platform = appstore::platform()),
             StoreTab::Themes => tr_n!(count, "{n} theme", "{n} themes"),
             StoreTab::Addons => tr_n!(count, "{n} addon for {platform}", "{n} addons for {platform}", platform = appstore::platform()),
@@ -779,7 +943,7 @@ impl App {
             let galley = painter.layout(sub.to_owned(), FontId::proportional(18.0 * s), Color32::from_gray(160), body.width() * 0.7);
             painter.galley(body.center() + vec2(-galley.size().x / 2.0, 14.0 * s), galley, Color32::from_gray(160));
         };
-        if self.store_endpoint().is_none() {
+        if self.store_endpoint().is_none() && self.store.tab != StoreTab::Installed {
             center_text(
                 tr!("Connect a store"),
                 tr!("Settings → YASAFF Discover: paste the store's address. Press A to open it."),
@@ -805,6 +969,7 @@ impl App {
                     StoreTab::Apps => tr!("This store has no apps for {platform} yet.", platform = appstore::platform()),
                     StoreTab::Themes => tr!("This store has no themes yet.").to_owned(),
                     StoreTab::Addons => tr!("This store has no addons for {platform} yet.", platform = appstore::platform()),
+                    StoreTab::Installed => String::new(),
                 };
                 center_text(tr!("Nothing here yet"), &sub, Color32::WHITE);
                 return;
@@ -828,6 +993,7 @@ impl App {
         scroll = scroll.min(count.saturating_sub(rows));
 
         let mut clicked = None;
+        let installed = self.installed_packages();
         for i in (scroll..count).take(rows) {
             let r = Rect::from_min_size(pos2(list.left(), list.top() + (i - scroll) as f32 * row_h), vec2(list.width(), row_h - 8.0 * s));
             if i == cursor {
@@ -837,6 +1003,7 @@ impl App {
             match self.store.tab {
                 StoreTab::Apps | StoreTab::Addons => self.paint_store_app_row(ui, &self.store.packages()[i], r, s),
                 StoreTab::Themes => self.paint_store_theme_row(ui, &self.store.themes[i], r, s),
+                StoreTab::Installed => self.paint_installed_row(ui, i.checked_sub(1).map(|i| installed[i]), r, s),
             }
             let resp = ui.interact(r, Id::new(("store-row", i)), Sense::click());
             if resp.hovered() && ui.input(|inp| inp.pointer.delta() != egui::Vec2::ZERO) {
@@ -854,12 +1021,14 @@ impl App {
         let button = match self.store.tab {
             StoreTab::Apps | StoreTab::Addons => self.draw_store_detail(ui, cursor, detail, s),
             StoreTab::Themes => self.draw_store_theme_summary(ui, cursor, detail, s),
+            StoreTab::Installed => self.draw_installed_detail(ui, cursor.checked_sub(1).map(|i| installed[i]), detail, s),
         };
 
         self.mode = Mode::Store { cursor, scroll };
         let activate = |app: &mut Self, i: usize| match app.store.tab {
             StoreTab::Apps | StoreTab::Addons => app.store_activate(i),
             StoreTab::Themes => app.open_store_theme(i),
+            StoreTab::Installed => app.installed_activate(i),
         };
         if let Some(i) = clicked {
             if i == cursor {
@@ -1111,6 +1280,10 @@ impl App {
             _ => (tr_n!(app.downloads, "{n} download", "{n} downloads"), Color32::from_gray(160)),
         };
         painter.text(pos2(x, y), Align2::LEFT_TOP, status.0, FontId::proportional(17.0 * s), status.1);
+        if let Some(m) = installed.filter(|m| m.outside_store(self.store_base().as_deref())) {
+            let text = format!("{} · {}", self.source_sentence(m), tr!("not from this store"));
+            painter.text(pos2(x, y + 26.0 * s), Align2::LEFT_TOP, text, FontId::proportional(16.0 * s), PAD_Y);
+        }
 
         let label = match (self.store.installs.get(&app.id), installed) {
             (Some(Install::Downloading(done, total)), _) => {
@@ -1163,6 +1336,7 @@ impl App {
             }
             (Some(Install::Failed(_)), _) => (tr!("Failed").to_owned(), PAD_B),
             (_, Some(m)) if app.latest.is_update_for(m) => (tr!("Update").to_owned(), ACCENT),
+            (_, Some(m)) if m.outside_store(self.store_base().as_deref()) => self.source_badge(m),
             (_, Some(_)) => (tr!("Installed").to_owned(), PAD_A),
             _ => (tr!("Get").to_owned(), Color32::WHITE),
         }
@@ -1177,6 +1351,88 @@ impl App {
                 ui.painter().text(rect.center(), Align2::CENTER_CENTER, initials(&app.name), FontId::proportional(rect.height() * 0.3), Color32::WHITE);
             }
         }
+    }
+
+    fn paint_installed_row(&self, ui: &Ui, package: Option<&Manifest>, r: Rect, s: f32) {
+        let icon = Rect::from_min_size(r.left_top() + vec2(20.0 * s, 8.0 * s), vec2(r.height() - 16.0 * s, r.height() - 16.0 * s));
+        let text_x = icon.right() + 18.0 * s;
+        let Some(m) = package else {
+            paint_github_icon(ui.painter(), icon, s);
+            let (summary, label, color, progress) = match &self.store.github {
+                Some(Install::Downloading(done, total)) => {
+                    let p = percent(*done, *total);
+                    (tr!("Installing {repo} from GitHub…", repo = self.store.github_repo), format!("{p} %"), Color32::from_gray(200), Some(p))
+                }
+                Some(Install::Failed(e)) => (e.clone(), tr!("Failed").to_owned(), PAD_B, None),
+                None => (tr!("An app or addon from a repository's latest release").to_owned(), "GitHub".to_owned(), Color32::WHITE, None),
+            };
+            paint_row_text(ui.painter(), r, text_x, tr!("Install from GitHub…"), &summary, &label, color, progress, s);
+            return;
+        };
+        self.paint_installed_icon(ui, m, icon, s);
+        let (label, color) = self.source_badge(m);
+        let summary = m.summary.clone().unwrap_or_else(|| tr!("version {version}", version = m.version));
+        paint_row_text(ui.painter(), r, text_x, &m.name, &summary, &label, color, None, s);
+    }
+
+    fn paint_installed_icon(&self, ui: &Ui, m: &Manifest, rect: Rect, s: f32) {
+        let dir = if m.is_addon() { appstore::addon_dir(&m.id) } else { appstore::install_dir(&m.id) };
+        match m.icon.as_ref().map(|icon| dir.join(icon)).filter(|p| p.is_file()) {
+            Some(path) => paint_image_cover(ui, &path, rect, 1.0, (6.0 * s) as u8),
+            None => {
+                ui.painter().rect_filled(rect, (6.0 * s) as u8, placeholder_color(&m.name));
+                ui.painter().text(rect.center(), Align2::CENTER_CENTER, initials(&m.name), FontId::proportional(rect.height() * 0.3), Color32::WHITE);
+            }
+        }
+    }
+
+    /// The right side of the Installed tab: the package under the cursor, or (`None`) the GitHub row.
+    fn draw_installed_detail(&self, ui: &Ui, package: Option<&Manifest>, rect: Rect, s: f32) -> bool {
+        let painter = ui.painter().with_clip_rect(rect);
+        let icon = Rect::from_min_size(rect.min, vec2(200.0 * s, 200.0 * s));
+        let x = icon.right() + 30.0 * s;
+        let mut y = icon.top() + 6.0 * s;
+        let (title, label, description) = match package {
+            None => {
+                paint_github_icon(&painter, icon, s);
+                let label = match &self.store.github {
+                    Some(Install::Downloading(done, total)) => tr!("Installing… {percent} %", percent = percent(*done, *total)),
+                    _ => tr!("Enter repository").to_owned(),
+                };
+                let text = tr!(
+                    "Type a GitHub repository as owner/name, or paste its address. YASAFF installs the .zip attached to its latest release (the one for {platform} when there are several), with or without a store. Installing it again updates it.",
+                    platform = appstore::platform(),
+                );
+                (tr!("Install from GitHub…").to_owned(), label, text)
+            }
+            Some(m) => {
+                self.paint_installed_icon(ui, m, icon, s);
+                let label = if m.is_addon() { tr!("Place in a bar") } else { tr!("Start") };
+                let description = m.description.clone().or_else(|| m.summary.clone()).unwrap_or_default();
+                (m.name.clone(), label.to_owned(), description)
+            }
+        };
+        painter.text(pos2(x, y), Align2::LEFT_TOP, title, FontId::proportional(38.0 * s), Color32::WHITE);
+        y += 54.0 * s;
+        if let Some(m) = package {
+            let author = m.author.as_deref().filter(|a| !a.is_empty()).unwrap_or(tr!("unknown author"));
+            let kind = if m.is_addon() { tr!("bar widget") } else { &m.kind };
+            let facts = tr!("{author} · {kind} · version {version}", author = author, kind = kind, version = m.version);
+            painter.text(pos2(x, y), Align2::LEFT_TOP, facts, FontId::proportional(17.0 * s), Color32::from_gray(160));
+            y += 30.0 * s;
+            let color = if m.outside_store(self.store_base().as_deref()) { PAD_Y } else { PAD_A };
+            painter.text(pos2(x, y), Align2::LEFT_TOP, self.source_sentence(m), FontId::proportional(17.0 * s), color);
+        } else if let Some(Install::Failed(e)) = &self.store.github {
+            let galley = painter.layout(tr!("Install failed: {error}", error = e), FontId::proportional(17.0 * s), PAD_B, rect.right() - x);
+            painter.galley(pos2(x, y), galley, PAD_B);
+        }
+        let btn = Rect::from_min_size(pos2(x, icon.bottom() - 56.0 * s), vec2(260.0 * s, 56.0 * s));
+        painter.rect_filled(btn, (4.0 * s) as u8, Color32::WHITE);
+        painter.text(btn.center(), Align2::CENTER_CENTER, label, FontId::proportional(24.0 * s), Color32::BLACK);
+        let clicked = ui.interact(btn, Id::new("store-installed-button"), Sense::click()).clicked();
+        let galley = painter.layout(description, FontId::proportional(19.0 * s), Color32::from_gray(215), rect.width());
+        painter.galley(pos2(rect.left(), icon.bottom() + 36.0 * s), galley, Color32::from_gray(215));
+        clicked
     }
 
     pub(super) fn paint_running_glow(&self, ui: &Ui, i: usize, rect: Rect, s: f32) {
@@ -1236,6 +1492,11 @@ fn paint_row_text(painter: &Painter, r: Rect, text_x: f32, name: &str, summary: 
         painter.rect_filled(bar, 2, Color32::from_white_alpha(30));
         painter.rect_filled(Rect::from_min_size(bar.min, vec2(bar.width() * (p as f32 / 100.0).clamp(0.0, 1.0), bar.height())), 2, ACCENT);
     }
+}
+
+fn paint_github_icon(painter: &Painter, rect: Rect, s: f32) {
+    painter.rect_filled(rect, (6.0 * s) as u8, Color32::from_rgb(36, 41, 47));
+    painter.text(rect.center(), Align2::CENTER_CENTER, "+", FontId::proportional(rect.height() * 0.5), Color32::WHITE);
 }
 
 fn percent(done: u64, total: u64) -> u64 {

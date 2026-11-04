@@ -109,7 +109,7 @@ How YASAFF unpacks it (`unpack` and `install_package_in` in `appstore.rs`):
 | `icon` | no | Path inside the package. Becomes the library **cover**, unless the user already set one. |
 | `background` | no | Path inside the package. Becomes the library **background**. 1920×1080 works well. |
 | `artwork` | no | More library images, each a path inside the package: `cover` (portrait cover for the **Game covers** tiles and the front of the 3D boxes), `squareCover` (cover for the square tiles: **Square cards**, 3D objects, discs and CRT screens), `booklet` (portrait front of a 3D case), `spine`, `top`, `bottom`, `back`, `side` (right side of the 3D box), and `logo` (used only by `builtin`). Like `icon`, each is set only where the user has none. With `cover` or `squareCover`, YASAFF keeps one cover per shape and shows the one that fits the tile style; a shape without its own uses `icon`. A cover the user picks replaces only the shape shown at the time. |
-| `builtin` | no | `"mock-game"`: the package has no program. YASAFF opens a window with `artwork.logo` and a note that the game can be deleted. `run` isn't needed. The games in [initial_content/](../initial_content/) use it. |
+| `builtin` | no | `"mock-game"`: the package has no program. YASAFF opens a window with `artwork.logo` and a note that the game can be deleted. `run` isn't needed. |
 | `run` | yes (unless `builtin`) | A map from platform (`linux`, `windows`, `macos`) to a run entry. The running platform **must** have an entry, or the package is refused ("can't run on linux"). |
 | `run.<p>.command` | yes | Relative path to the executable. It **must exist** in the package. |
 | `run.<p>.args` | no | List of extra command-line arguments. |
@@ -313,6 +313,10 @@ The existing apps share one style:
 - [ ] Startup errors don't exit non-zero within 5 s (or, if they do, that's intended)
 - [ ] It works on its own too (no `YASAFF` variable)
 - [ ] README has a controller + keyboard controls table
+
+### Releasing on GitHub
+
+Without a store, people install your app by typing `owner/name` in **Discover → Installed → Install from GitHub…**. YASAFF takes the latest release (not a pre-release or draft) and picks its `.zip` asset: the one with `windows`, `linux` or `macos` in its name for their platform, or else one that names no other platform. Attach one zip per platform, e.g. `calculator-linux.zip` and `calculator-windows.zip`, or a single zip with every `run` entry. Addons are released the same way. Installing again replaces the installed version, so a new release is an update. A repository with no release at all is installed from its default branch's source, which works only when the package needs no build.
 
 ---
 

@@ -19,6 +19,11 @@ impl App {
         match row {
             SettingRow::Fullscreen => (tr!("Start in fullscreen").into(), "", Toggle(self.settings.start_fullscreen)),
             SettingRow::Autostart => (tr!("Run at system startup").into(), tr!("Start YASAFF when you log in"), Toggle(self.autostart)),
+            SettingRow::TaskbarHide => (
+                tr!("Windows: Force to hide taskbar behind YASAFF").into(),
+                tr!("Only while YASAFF is fullscreen"),
+                Toggle(self.settings.windows.hide_taskbar),
+            ),
             SettingRow::Language => {
                 let label = match self.settings.language {
                     Language::English => "Language".to_owned(),

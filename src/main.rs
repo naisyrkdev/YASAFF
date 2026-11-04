@@ -23,6 +23,7 @@ mod metadata;
 mod mock_game;
 mod object3d;
 mod physical;
+mod portable;
 mod profiles;
 mod saves;
 mod device_saves;
@@ -30,6 +31,7 @@ mod scan;
 mod settings;
 mod sound;
 mod stores;
+mod taskbar;
 mod theme;
 mod theme_code;
 mod tools;
@@ -37,8 +39,10 @@ mod video;
 mod watch;
 
 fn main() -> eframe::Result {
-    logging::init();
+    // Before logging::init(), which opens its log file under profiles::root(): otherwise, on a
+    // brand-new data folder, that open file makes profiles::init() fail to "migrate" it below.
     let mut warnings = profiles::init();
+    logging::init();
     let (settings, settings_warning) = settings::Settings::load();
     i18n::set(settings.language);
     warnings.extend(settings_warning.map(|e| tr!("Could not read settings: {error}", error = e)));

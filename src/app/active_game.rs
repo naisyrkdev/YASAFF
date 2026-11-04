@@ -30,6 +30,7 @@ impl App {
         self.mode = Mode::Home;
         self.focus_guard_until = None;
         self.ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
+        self.set_taskbar_hidden(false);
     }
 
     pub(super) fn close_game(&mut self) {
@@ -66,11 +67,13 @@ impl App {
         }
         ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd(ViewportCommand::Focus);
+        self.sync_taskbar();
     }
 
     pub(super) fn come_home(&mut self, ctx: &Context) {
         ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd(ViewportCommand::Focus);
+        self.sync_taskbar();
         let active = self.front_app_index().or(self.game_index());
         if let Some(i) = active {
             self.focus_guard_until = Some(Instant::now() + GUIDE_GUARD);
@@ -146,6 +149,7 @@ impl App {
             } else {
                 self.mode = Mode::Home;
                 ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
+                self.set_taskbar_hidden(false);
             }
         } else if elapsed >= LAUNCH_TIMEOUT {
             let msg = tr!("{name} hasn't opened a window yet. It may still be starting.", name = l.name);

@@ -9,14 +9,16 @@ pub(super) enum AddSource {
     Browse,
     Command,
     ImportApp,
+    Github,
 }
 
-pub(super) const ADD_MENU: [(AddSource, &str, &str); 5] = [
+pub(super) const ADD_MENU: [(AddSource, &str, &str); 6] = [
     (AddSource::Scan, tr_key!("Scan for games"), tr_key!("Finds installed Steam and Heroic games and game shortcuts")),
     (AddSource::Installed, tr_key!("Installed applications"), tr_key!("Games, desktop shortcuts (Heroic, Steam, Lutris…) and apps")),
     (AddSource::Browse, tr_key!("Browse for file…"), tr_key!("Executable, script, AppImage, .desktop or shortcut")),
     (AddSource::Command, tr_key!("Command or URL…"), tr_key!("e.g. steam://rungameid/570 or a full command line")),
     (AddSource::ImportApp, tr_key!("Import application from file…"), tr_key!("A YASAFF app or addon package: a .zip with yasaffConfig.json")),
+    (AddSource::Github, tr_key!("Install from GitHub…"), tr_key!("A YASAFF app or addon from a GitHub repository, as owner/name")),
 ];
 
 #[derive(Clone, Copy, PartialEq)]
@@ -162,6 +164,7 @@ impl App {
                 self.mode = Mode::Prompt { kind: PromptKind::AddCommand, buffer: String::new() };
             }
             AddSource::ImportApp => self.import_app_file(),
+            AddSource::Github => self.ask_github_repo(String::new()),
         }
     }
 

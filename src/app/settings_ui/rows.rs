@@ -123,7 +123,11 @@ impl App {
             return rows;
         }
         let theme = &self.theme().settings;
-        let mut rows = vec![R::Fullscreen, R::Autostart, R::Language, R::GalleryKeepAll, R::OrderLastPlayed, R::OrderStatic];
+        let mut rows = vec![R::Fullscreen, R::Language, R::GalleryKeepAll, R::Autostart];
+        if cfg!(windows) {
+            rows.push(R::TaskbarHide);
+        }
+        rows.extend([R::OrderLastPlayed, R::OrderStatic]);
         rows.extend([R::ProfileActive, R::ProfileRename, R::ProfileNew, R::ProfileExport, R::ProfileImport, R::ProfileReset]);
         rows.push(R::CategoryAdd);
         rows.extend((0..self.library.categories.len()).map(R::Category));
@@ -294,6 +298,7 @@ impl App {
     pub(in crate::app) fn setting_heading(&self, row: SettingRow) -> Option<(&'static str, Option<(String, Color32)>)> {
         match row {
             SettingRow::Fullscreen => Some((tr!("General"), None)),
+            SettingRow::Autostart => Some((tr!("System"), None)),
             SettingRow::OrderLastPlayed => Some((
                 tr!("Game order"),
                 Some((tr!("Row and grid views · Options on a game swaps it or marks its position as static").to_owned(), Color32::from_gray(140))),

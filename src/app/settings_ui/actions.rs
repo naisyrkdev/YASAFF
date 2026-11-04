@@ -106,6 +106,11 @@ impl App {
                 Ok(()) => self.autostart = autostart::is_enabled(),
                 Err(e) => self.notify(tr!("Could not change startup setting: {error}", error = format!("{e:#}"))),
             },
+            SettingRow::TaskbarHide => {
+                self.settings.windows.hide_taskbar ^= true;
+                self.save_settings();
+                self.sync_taskbar();
+            }
             SettingRow::AppStoreUrl => {
                 let buffer = self.settings.app_store().url.clone();
                 self.mode = Mode::Prompt { kind: PromptKind::AppStoreUrl, buffer };
@@ -259,15 +264,7 @@ impl App {
             }
             SettingRow::ThemeImport => {
                 let dialog = rfd::FileDialog::new().set_title(tr!("Select a theme package")).add_filter("ZIP", &["zip"]);
-                self.ask_path(dialog, Pick::File, |app, zip| match Theme::import(&zip) {
-                    Ok(theme) => {
-                        let id = theme.id.clone();
-                        app.themes.push(theme);
-                        app.select_theme(&id);
-                        app.notify(tr!("Imported {name}", name = app.theme().settings.name));
-                    }
-                    Err(e) => app.notify(tr!("Could not import theme: {error}", error = format!("{e:#}"))),
-                });
+                self.ask_path(dialog, Pick::File, |app, zip| app.import_theme_zip(&zip));
             }
             SettingRow::ThemeDelete => {
                 if self.theme().is_builtin() {

@@ -18,6 +18,7 @@ pub(super) use content::slot_label;
 pub(super) enum SettingRow {
     Fullscreen,
     Autostart,
+    TaskbarHide,
     Language,
     OrderLastPlayed,
     OrderStatic,

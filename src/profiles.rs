@@ -38,9 +38,11 @@ pub struct Imported {
 }
 
 pub(crate) fn root() -> PathBuf {
-    directories::ProjectDirs::from("", "", "yasaff")
-        .map(|d| d.data_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("yasaff-data"))
+    crate::portable::root_override().unwrap_or_else(|| {
+        directories::ProjectDirs::from("", "", "yasaff")
+            .map(|d| d.data_dir().to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("yasaff-data"))
+    })
 }
 
 fn profiles_dir() -> PathBuf {

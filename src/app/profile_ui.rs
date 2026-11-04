@@ -2,12 +2,6 @@
 
 use super::*;
 
-pub(super) struct InitialSetup {
-    pub(super) rx: mpsc::Receiver<initial::Step>,
-    pub(super) total: usize,
-    pub(super) done: usize,
-}
-
 pub(super) enum ProfileJob {
     Exported(Result<PathBuf, String>),
     Imported(Result<profiles::Imported, String>),
@@ -17,13 +11,11 @@ pub(super) enum ProfileJob {
 pub(super) enum Start {
     Import,
     Blank,
-    Demo,
 }
 
-pub(super) const WELCOME: [(Start, &str, &str); 3] = [
+pub(super) const WELCOME: [(Start, &str, &str); 2] = [
     (Start::Import, tr_key!("Import games"), tr_key!("Pick from the Steam, Heroic and shortcut games installed on this computer")),
     (Start::Blank, tr_key!("Start blank"), tr_key!("An empty library. Add games any time with Add game")),
-    (Start::Demo, tr_key!("Start blank (with mock games)"), tr_key!("All customization images included")),
 ];
 
 impl App {
@@ -35,8 +27,6 @@ impl App {
             Some(tr!("a save backup is being made"))
         } else if self.profile_job.is_some() {
             Some(tr!("a profile is being exported or imported"))
-        } else if self.setup.is_some() {
-            Some(tr!("the bundled games are being installed"))
         } else if self.store_busy() {
             Some(tr!("something is downloading from the store"))
         } else {
@@ -122,55 +112,6 @@ impl App {
                 self.mode = Mode::ProfileImported { name: imported.name, missing: imported.missing, switch: false };
             }
             ProfileJob::Imported(Err(e)) => self.notify(tr!("Could not import profile: {error}", error = e)),
-        }
-    }
-
-    pub(super) fn poll_setup(&mut self) {
-        let Some(setup) = &mut self.setup else { return };
-        let mut installed = Vec::new();
-        let finished = loop {
-            match setup.rx.try_recv() {
-                Ok(initial::Step::Total(n)) => setup.total = n,
-                Ok(initial::Step::Installed(manifest)) => {
-                    setup.done += 1;
-                    installed.push(*manifest);
-                }
-                Ok(initial::Step::Failed(e)) => {
-                    setup.done += 1;
-                    log::warn!("initial games: {e}");
-                }
-                Err(mpsc::TryRecvError::Empty) => break false,
-                Err(mpsc::TryRecvError::Disconnected) => break true,
-            }
-        };
-        let selected = self.selected_game().map(|g| g.id.clone());
-        for manifest in installed {
-            self.add_to_library(manifest, false);
-        }
-        self.selected = selected.and_then(|id| self.library.position(&id)).unwrap_or(0);
-        if finished {
-            self.setup = None;
-            initial::mark_done();
-        }
-    }
-
-    pub(super) fn draw_setup(&self, painter: &Painter, screen: Rect, s: f32) {
-        let Some(setup) = &self.setup else { return };
-        if matches!(self.mode, Mode::Scan(_)) {
-            return;
-        }
-        let panel = Rect::from_center_size(pos2(screen.center().x, screen.bottom() - 200.0 * s), vec2(420.0 * s, 86.0 * s));
-        painter.rect_filled(panel, (6.0 * s) as u8, Color32::from_black_alpha(220));
-        let left = panel.left() + 20.0 * s;
-        painter.text(pos2(left, panel.top() + 16.0 * s), Align2::LEFT_TOP, tr!("Setting up initial stuff…"), FontId::proportional(20.0 * s), Color32::WHITE);
-        let count = format!("{} / {}", setup.done, setup.total.max(setup.done));
-        painter.text(pos2(panel.right() - 20.0 * s, panel.top() + 18.0 * s), Align2::RIGHT_TOP, count, FontId::proportional(17.0 * s), Color32::from_gray(150));
-        let bar = Rect::from_min_size(pos2(left, panel.bottom() - 30.0 * s), vec2(panel.width() - 40.0 * s, 12.0 * s));
-        let radius = (6.0 * s) as u8;
-        painter.rect_filled(bar, radius, Color32::from_white_alpha(25));
-        let fraction = if setup.total == 0 { 0.0 } else { setup.done as f32 / setup.total as f32 };
-        if fraction > 0.0 {
-            painter.rect_filled(Rect::from_min_size(bar.min, vec2(bar.width() * fraction.min(1.0), bar.height())), radius, ACCENT);
         }
     }
 
@@ -301,12 +242,6 @@ impl App {
             }
             Start::Blank => {
                 initial::mark_done();
-                self.mode = Mode::Home;
-            }
-            Start::Demo => {
-                if self.setup.is_none() {
-                    self.setup = Some(InitialSetup { rx: initial::start(self.ctx.clone()), total: 0, done: 0 });
-                }
                 self.mode = Mode::Home;
             }
         }

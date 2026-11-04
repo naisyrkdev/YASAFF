@@ -41,6 +41,8 @@ pub(super) enum PromptKind {
     StoreCommand(Store),
     ThemeName,
     AppStoreUrl,
+    /// A GitHub repository to install from; Discover's Installed tab is under it.
+    GithubRepo,
     Color(SettingRow),
     BoxSize(SettingRow),
     CrtSize(SettingRow),
@@ -64,6 +66,8 @@ pub(super) enum Removal {
     Everything,
     /// Not a removal: turning on static order, which deserves the same second look.
     StaticOrder,
+    /// Not a removal: offering the first of `App::offers` on a new profile.
+    InitialRepo,
 }
 
 impl App {
@@ -193,6 +197,14 @@ impl App {
                 self.store_settings_changed();
                 self.mode = self.settings_at(SettingRow::AppStoreUrl);
             }
+            PromptKind::GithubRepo => {
+                self.open_installed_tab();
+                match crate::appstore::github_repo(text) {
+                    Some(repo) => self.install_from_github(repo),
+                    None if text.is_empty() => {}
+                    None => self.notify(tr!("\"{text}\" is not a GitHub repository. Type it as owner/name", text = text)),
+                }
+            }
             PromptKind::ThemeName => {
                 if !text.is_empty() {
                     self.themes[self.theme].settings.name = text.to_owned();
@@ -291,6 +303,9 @@ impl App {
     }
 
     pub(super) fn cancel_prompt(&mut self) {
+        if matches!(self.mode, Mode::Prompt { kind: PromptKind::GithubRepo, .. }) {
+            return self.open_installed_tab();
+        }
         self.mode = match &self.mode {
             Mode::Prompt { kind: PromptKind::AddCommand, .. } => Mode::AddMenu { cursor: add_menu_index(AddSource::Command) },
             Mode::Prompt { kind: PromptKind::StoreCommand(store), .. } => self.settings_at(SettingRow::StoreCommand(*store)),
@@ -319,6 +334,7 @@ impl App {
 
     pub(super) fn draw_confirm_remove(&mut self, ui: &Ui, screen: Rect, s: f32) {
         let Mode::ConfirmRemove { what, yes } = self.mode else { return };
+        let offer;
         let (title, detail) = match what {
             Removal::Game => {
                 let Some(game) = self.selected_game() else { return };
@@ -356,6 +372,18 @@ impl App {
                 tr!("Mark all games static?").to_owned(),
                 tr!("Each stays in its current slot. You place games yourself with Swap position."),
             ),
+            Removal::InitialRepo => {
+                let Some(info) = self.offers.front() else { return };
+                let kind = match info.kind.as_str() {
+                    "theme" => tr!("theme"),
+                    "addon" => tr!("addon"),
+                    "game" => tr!("game"),
+                    _ => tr!("app"),
+                };
+                let what = format!("({kind}) {}", info.repo);
+                offer = if info.description.is_empty() { what } else { format!("{what} - {}", info.description) };
+                (tr!("Do you want to download this repo?").to_owned(), offer.as_str())
+            }
         };
         let painter = ui.painter();
         painter.rect_filled(screen, 0, Color32::from_black_alpha(160));
@@ -371,10 +399,12 @@ impl App {
             Removal::Addon(_) => tr!("Uninstall"),
             Removal::Profile | Removal::Everything => tr!("Reset"),
             Removal::StaticOrder => tr!("Turn on"),
+            Removal::InitialRepo => tr!("Download"),
             Removal::Game if self.selected_game().is_some_and(|g| g.app_id.is_some()) => tr!("Uninstall"),
             Removal::Game => tr!("Remove"),
         };
-        for (i, (label, is_yes)) in [(tr!("Cancel"), false), (action, true)].into_iter().enumerate() {
+        let cancel = if what == Removal::InitialRepo { tr!("Skip") } else { tr!("Cancel") };
+        for (i, (label, is_yes)) in [(cancel, false), (action, true)].into_iter().enumerate() {
             let center = dialog.center_bottom() + vec2((i as f32 - 0.5) * 240.0 * s, -60.0 * s);
             let btn = Rect::from_center_size(center, vec2(200.0 * s, 54.0 * s));
             let focused = yes == is_yes;
@@ -414,6 +444,10 @@ impl App {
             PromptKind::AppStoreUrl => (
                 tr!("YASAFF Discover address"),
                 Some(tr!("Paste the store's site address, e.g. https://store.example.com. Save it empty to disconnect.")),
+            ),
+            PromptKind::GithubRepo => (
+                tr!("Install from GitHub"),
+                Some(tr!("The repository as owner/name, e.g. naisyrkdev/YasaffBlankApp, or its github.com address. Its latest release needs a .zip with yasaffConfig.json.")),
             ),
             PromptKind::CrtSize(row) => (
                 if *row == SettingRow::CrtWidth { tr!("Screen width (px)") } else { tr!("Screen height (px)") },
@@ -643,6 +677,7 @@ impl App {
                             self.save_settings();
                         }
                     }
+                    Removal::InitialRepo => self.answer_offer(yes),
                     Removal::Profile | Removal::Everything => {
                         let row = if what == Removal::Profile { SettingRow::ProfileReset } else { SettingRow::AppReset };
                         self.mode = self.settings_at(row);
@@ -663,6 +698,7 @@ impl App {
                     Removal::Profile => self.settings_at(SettingRow::ProfileReset),
                     Removal::Everything => self.settings_at(SettingRow::AppReset),
                     Removal::StaticOrder => self.settings_at(SettingRow::OrderStatic),
+                    Removal::InitialRepo => return self.answer_offer(false),
                 }
             }
             _ => {}

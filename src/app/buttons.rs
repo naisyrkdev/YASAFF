@@ -283,6 +283,12 @@ impl App {
                 Hint(Action::Add, tr!("Refresh")),
                 Hint(Action::Back, tr!("Back")),
             ],
+            Mode::Store { .. } if self.store_on_installed() => &[
+                Hint(Action::Confirm, tr!("Start / Install")),
+                Hint(Action::Options, tr!("Apps")),
+                Hint(Action::Add, tr!("From GitHub")),
+                Hint(Action::Back, tr!("Back")),
+            ],
             Mode::Store { .. } => &[
                 Hint(Action::Confirm, tr!("Get / Update / Start")),
                 Hint(Action::Options, tr!("Themes")),

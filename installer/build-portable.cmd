@@ -1,0 +1,3 @@
+@echo off
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build-portable.ps1"
+pause

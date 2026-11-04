@@ -14,6 +14,9 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 pub const MANIFEST: &str = "yasaffConfig.json";
+/// Written next to [`MANIFEST`] on install: where the package came from, as a [`Source`].
+const SOURCE_FILE: &str = ".yasaffSource.json";
+const GITHUB_API: &str = "https://api.github.com";
 const API_KEY_HEADER: &str = "X-Api-Key";
 const MAX_JSON_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_ICON_BYTES: u64 = 10 * 1024 * 1024;
@@ -40,6 +43,23 @@ pub struct Manifest {
     pub widget: Option<WidgetSpec>,
     pub artwork: Artwork,
     pub builtin: Option<String>,
+    /// Read from [`SOURCE_FILE`]; `None` for packages installed by older versions.
+    #[serde(skip)]
+    pub source: Option<Source>,
+}
+
+/// Where an installed app or addon came from.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "from", rename_all = "camelCase")]
+pub enum Source {
+    /// A YASAFF Discover Server, by its API address.
+    Store { url: String },
+    /// The latest release of a GitHub repository (`owner/repo`) at the time.
+    Github { repo: String, tag: String },
+    /// A package picked on this computer.
+    File,
+    /// One of the packages YASAFF comes with.
+    Bundled,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -135,7 +155,9 @@ impl Manifest {
     pub fn read(dir: &Path) -> Result<Self> {
         let path = dir.join(MANIFEST);
         let text = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-        serde_json::from_str(&text).with_context(|| format!("{} is not valid", path.display()))
+        let mut manifest: Self = serde_json::from_str(&text).with_context(|| format!("{} is not valid", path.display()))?;
+        manifest.source = fs::read_to_string(dir.join(SOURCE_FILE)).ok().and_then(|t| serde_json::from_str(&t).ok());
+        Ok(manifest)
     }
 
     pub fn run_entry(&self) -> Option<&RunEntry> {
@@ -186,6 +208,37 @@ impl Manifest {
     pub fn commit(&self) -> Option<&str> {
         self.git.as_ref()?.commit.as_deref()
     }
+
+    /// Whether it was installed from somewhere other than the store at `store` (an API address).
+    /// Packages from before sources were recorded count as the store's.
+    pub fn outside_store(&self, store: Option<&str>) -> bool {
+        match &self.source {
+            None => false,
+            Some(Source::Store { url }) => store.is_some_and(|s| s != url),
+            Some(_) => true,
+        }
+    }
+
+    /// The GitHub repository it was installed from.
+    pub fn github_repo(&self) -> Option<&str> {
+        match &self.source {
+            Some(Source::Github { repo, .. }) => Some(repo),
+            _ => None,
+        }
+    }
+}
+
+/// `owner/repo` from what users type: `owner/repo`, or the repository's github.com address.
+pub fn github_repo(text: &str) -> Option<String> {
+    let text = text.trim().trim_end_matches('/');
+    let path = text.split_once("github.com/").map_or(text, |(_, path)| path);
+    let mut parts = path.split('/');
+    let (owner, repo) = (parts.next()?, parts.next()?);
+    let repo = repo.strip_suffix(".git").unwrap_or(repo);
+    let valid = |part: &str, max: usize| {
+        (1..=max).contains(&part.len()) && part.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b)) && !part.starts_with('.')
+    };
+    (valid(owner, 39) && valid(repo, 100)).then(|| format!("{owner}/{repo}"))
 }
 
 pub fn platform() -> &'static str {
@@ -624,6 +677,9 @@ pub enum Event {
     Progress(String, u64, u64),
     Installed(String, Result<Box<Manifest>, String>),
     Imported(PathBuf, Result<Box<Manifest>, String>),
+    GithubProgress(u64, u64),
+    GithubInstalled(String, Result<GithubPackage, String>),
+    RepoInfo(String, Result<RepoInfo, String>),
     ThemesListed(Result<Vec<RemoteTheme>, String>),
     ThemePreview(String, usize, PathBuf),
     ThemeProgress(String, u64, u64),
@@ -702,8 +758,26 @@ impl Client {
 
     pub fn import_file(&self, zip: PathBuf, busy: Vec<String>) {
         self.spawn(move |_, send| {
-            let result = install_package(&zip, &busy).map(Box::new).map_err(|e| format!("{e:#}"));
+            let result = install_package(&zip, &busy, &Source::File).map(Box::new).map_err(|e| format!("{e:#}"));
             send(Event::Imported(zip, result));
+        });
+    }
+
+    /// Installs the package in the latest release of the GitHub repository `repo` (`owner/repo`).
+    pub fn install_github(&self, repo: String, busy: Vec<String>) {
+        self.spawn(move |agent, send| {
+            let result = install_github(agent, &repo, &busy, &|done, total| send(Event::GithubProgress(done, total)));
+            send(Event::GithubInstalled(repo.clone(), result.map_err(|e| format!("{e:#}"))));
+        });
+    }
+
+    /// Looks up each of `repos` (`owner/repo`) on GitHub, one after another, without downloading.
+    pub fn repo_infos(&self, repos: Vec<String>) {
+        self.spawn(move |agent, send| {
+            for repo in repos {
+                let info = repo_info(agent, &repo).map_err(|e| format!("{e:#}"));
+                send(Event::RepoInfo(repo, info));
+            }
         });
     }
 
@@ -838,8 +912,9 @@ fn install(agent: &ureq::Agent, endpoint: &Endpoint, app: &RemoteApp, progress: 
     fs::create_dir_all(&root)?;
     let zip_path = root.join(format!(".download-{}.zip", app.id));
     let (url, size, sha) = (&app.latest.package_url, app.latest.size, &app.latest.sha256);
-    let result = download(agent, endpoint, url, size, sha, &zip_path, progress).and_then(|()| {
-        let manifest = install_package(&zip_path, &[])?;
+    let source = Source::Store { url: endpoint.base.clone() };
+    let result = download(agent, endpoint, url, size, Some(sha), &zip_path, progress).and_then(|()| {
+        let manifest = install_package(&zip_path, &[], &source)?;
         ensure!(manifest.id == app.id, "the package is for \"{}\", not \"{}\"", manifest.id, app.id);
         ensure!(manifest.is_addon() == (app.kind == BAR_WIDGET), "the store and the package disagree on whether {} is an addon", app.name);
         Ok(manifest)
@@ -848,20 +923,22 @@ fn install(agent: &ureq::Agent, endpoint: &Endpoint, app: &RemoteApp, progress: 
     result
 }
 
-pub(crate) fn install_package(zip_path: &Path, busy: &[String]) -> Result<Manifest> {
-    install_package_in(&Library::data_dir(), zip_path, busy)
+pub(crate) fn install_package(zip_path: &Path, busy: &[String], source: &Source) -> Result<Manifest> {
+    install_package_in(&Library::data_dir(), zip_path, busy, source)
 }
 
-pub(crate) fn install_package_in(root: &Path, zip_path: &Path, busy: &[String]) -> Result<Manifest> {
+pub(crate) fn install_package_in(root: &Path, zip_path: &Path, busy: &[String], source: &Source) -> Result<Manifest> {
     fs::create_dir_all(root)?;
     let staging = root.join(format!(".staging-{}", uuid::Uuid::new_v4()));
     let result = (|| {
         unpack(zip_path, &staging, MANIFEST)?;
-        let manifest = Manifest::read(&staging)?;
+        let mut manifest = Manifest::read(&staging)?;
         manifest.validate(&staging)?;
         ensure!(!busy.contains(&manifest.id), "{} is running; close it first", manifest.name);
         #[cfg(unix)]
         make_executable(&staging, &manifest)?;
+        fs::write(staging.join(SOURCE_FILE), serde_json::to_string(source)?)?;
+        manifest.source = Some(source.clone());
         let folder = root.join(if manifest.is_addon() { "addons" } else { "apps" });
         fs::create_dir_all(&folder)?;
         swap_in(&staging, &folder.join(&manifest.id))?;
@@ -871,8 +948,11 @@ pub(crate) fn install_package_in(root: &Path, zip_path: &Path, busy: &[String]) 
     result
 }
 
-fn download(agent: &ureq::Agent, endpoint: &Endpoint, url: &str, size: u64, sha256: &str, to: &Path, progress: &dyn Fn(u64, u64)) -> Result<()> {
-    ensure!(sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_hexdigit()), "the store did not send a valid checksum for this package");
+/// Downloads `url` to `to`, checking it against `sha256` when there is one.
+fn download(agent: &ureq::Agent, endpoint: &Endpoint, url: &str, size: u64, sha256: Option<&str>, to: &Path, progress: &dyn Fn(u64, u64)) -> Result<()> {
+    if let Some(sha256) = sha256 {
+        ensure!(sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_hexdigit()), "the store did not send a valid checksum for this package");
+    }
     let response = get(agent, endpoint, url)?;
     let total = response.body().content_length().unwrap_or(size);
     let mut body = response.into_body().into_with_config().limit(MAX_PACKAGE_BYTES).reader();
@@ -897,8 +977,139 @@ fn download(agent: &ureq::Agent, endpoint: &Endpoint, url: &str, size: u64, sha2
     file.flush()?;
     progress(done, total);
     let hash = hex(&hasher.finalize());
-    ensure!(hash.eq_ignore_ascii_case(sha256), "the download is damaged (checksum mismatch); try again");
+    ensure!(sha256.is_none_or(|sha| hash.eq_ignore_ascii_case(sha)), "the download is damaged (checksum mismatch); try again");
     Ok(())
+}
+
+#[derive(Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    #[serde(default)]
+    assets: Vec<GithubAsset>,
+    zipball_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GithubAsset {
+    name: String,
+    #[serde(default)]
+    size: u64,
+    browser_download_url: String,
+    /// `sha256:<hex>`; GitHub fills it in for assets uploaded since mid-2025.
+    digest: Option<String>,
+}
+
+/// The release's package for this platform: a .zip naming the platform, else one naming no other.
+fn release_package(assets: &[GithubAsset]) -> Option<&GithubAsset> {
+    let zips: Vec<_> = assets.iter().filter(|a| a.name.to_ascii_lowercase().ends_with(".zip")).collect();
+    let names = |a: &GithubAsset, p: &str| a.name.to_ascii_lowercase().contains(p);
+    let others: Vec<_> = ["windows", "linux", "macos"].into_iter().filter(|p| *p != platform()).collect();
+    zips.iter().find(|a| names(a, platform())).or_else(|| zips.iter().find(|a| !others.iter().any(|p| names(a, p)))).copied()
+}
+
+/// GETs `path` from the GitHub API; `None` when GitHub answers 404.
+fn github_get<T: serde::de::DeserializeOwned>(agent: &ureq::Agent, path: &str) -> Result<Option<T>> {
+    let response = agent
+        .get(format!("{GITHUB_API}/{path}"))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", concat!("YASAFF/", env!("CARGO_PKG_VERSION")))
+        .call()
+        .map_err(|e| anyhow::anyhow!("could not reach GitHub: {e}"))?;
+    let status = response.status().as_u16();
+    let text = response.into_body().with_config().limit(MAX_JSON_BYTES).read_to_string()?;
+    match status {
+        200..=299 => serde_json::from_str(&text).map(Some).context("GitHub answered in a way YASAFF doesn't understand"),
+        404 => Ok(None),
+        403 | 429 => bail!("GitHub turned the request down; without signing in it allows only a few an hour, so try again later"),
+        code => bail!("GitHub answered HTTP {code}"),
+    }
+}
+
+#[derive(Deserialize)]
+struct GithubRepo {
+    description: Option<String>,
+    default_branch: String,
+}
+
+fn github_repo_meta(agent: &ureq::Agent, repo: &str) -> Result<GithubRepo> {
+    github_get(agent, &format!("repos/{repo}"))?.with_context(|| format!("{repo} is not on GitHub, or is private"))
+}
+
+/// A GitHub repository, as offered before anything is downloaded from it.
+#[derive(Clone, Debug)]
+pub struct RepoInfo {
+    pub repo: String,
+    /// `theme`, `addon`, `game` or `app`, from the package files at the root of its default branch.
+    pub kind: String,
+    pub description: String,
+}
+
+fn repo_info(agent: &ureq::Agent, repo: &str) -> Result<RepoInfo> {
+    let meta = github_repo_meta(agent, repo)?;
+    // raw.githubusercontent.com doesn't count against GitHub's hourly API limit.
+    let raw = |file: &str| -> Option<String> {
+        let url = format!("https://raw.githubusercontent.com/{repo}/{}/{file}", meta.default_branch);
+        let response = agent.get(&url).call().ok().filter(|r| r.status().is_success())?;
+        response.into_body().with_config().limit(MAX_JSON_BYTES).read_to_string().ok()
+    };
+    let kind = match raw(MANIFEST).and_then(|t| serde_json::from_str::<Manifest>(&t).ok()) {
+        Some(manifest) if manifest.is_addon() => "addon".to_owned(),
+        Some(manifest) if !manifest.kind.is_empty() => manifest.kind,
+        _ if raw(THEME_SETTINGS).is_some() => "theme".to_owned(),
+        // Packages built in a release have nothing at the root to tell.
+        _ => "app".to_owned(),
+    };
+    Ok(RepoInfo { repo: repo.to_owned(), kind, description: meta.description.unwrap_or_default() })
+}
+
+/// What a GitHub repository's package turned out to be.
+pub enum GithubPackage {
+    App(Box<Manifest>),
+    /// A theme package, downloaded to this .zip for the caller to import.
+    Theme(PathBuf),
+}
+
+fn install_github(agent: &ureq::Agent, repo: &str, busy: &[String], progress: &dyn Fn(u64, u64)) -> Result<GithubPackage> {
+    let (url, size, sha, tag) = match github_get::<GithubRelease>(agent, &format!("repos/{repo}/releases/latest"))? {
+        Some(release) => match release_package(&release.assets) {
+            Some(asset) => {
+                let sha = asset.digest.as_deref().and_then(|d| d.strip_prefix("sha256:")).map(str::to_owned);
+                (asset.browser_download_url.clone(), asset.size, sha, release.tag_name)
+            }
+            // No package attached: the source archive works for apps that need no build.
+            None => (release.zipball_url.clone().with_context(|| format!("release {} of {repo} has no .zip", release.tag_name))?, 0, None, release.tag_name),
+        },
+        // No release: the default branch's source, which works for themes and apps that need no build.
+        None => {
+            let branch = github_repo_meta(agent, repo)?.default_branch;
+            (format!("{GITHUB_API}/repos/{repo}/zipball/{branch}"), 0, None, branch)
+        }
+    };
+    let root = theme_download_dir();
+    fs::create_dir_all(&root)?;
+    let zip_path = root.join(format!("github-{}.zip", uuid::Uuid::new_v4()));
+    let endpoint = Endpoint { base: GITHUB_API.into(), key: String::new() };
+    let source = Source::Github { repo: repo.to_owned(), tag: tag.clone() };
+    let result = download(agent, &endpoint, &url, size, sha.as_deref(), &zip_path, progress).and_then(|()| {
+        if !zip_has(&zip_path, MANIFEST)? && zip_has(&zip_path, THEME_SETTINGS)? {
+            return Ok(GithubPackage::Theme(zip_path.clone()));
+        }
+        install_package(&zip_path, busy, &source).map(|m| GithubPackage::App(Box::new(m)))
+    });
+    if !matches!(result, Ok(GithubPackage::Theme(_))) {
+        let _ = fs::remove_file(&zip_path);
+    }
+    result.with_context(|| format!("{repo} {tag}"))
+}
+
+/// Whether [`unpack`] would find `marker` in the .zip: at its root or in its only top folder.
+fn zip_has(zip_path: &Path, marker: &str) -> Result<bool> {
+    let archive = zip::ZipArchive::new(fs::File::open(zip_path)?).context("the package is not a valid .zip")?;
+    Ok(archive.file_names().any(|n| {
+        let mut parts = n.split('/');
+        let first = parts.next();
+        first == Some(marker) || (parts.next() == Some(marker) && parts.next().is_none())
+    }))
 }
 
 pub(crate) fn unpack(zip_path: &Path, dir: &Path, marker: &str) -> Result<()> {
@@ -970,7 +1181,7 @@ fn download_theme(agent: &ureq::Agent, endpoint: &Endpoint, theme: &RemoteTheme,
     let zip_path = root.join(format!("{}-{token}.zip", theme.id));
     let dir = root.join(format!("{}-{token}", theme.id));
     let (url, size, sha) = (&theme.latest.package_url, theme.latest.size, &theme.latest.sha256);
-    let result = download(agent, endpoint, url, size, sha, &zip_path, progress)
+    let result = download(agent, endpoint, url, size, Some(sha), &zip_path, progress)
         .and_then(|()| unpack(&zip_path, &dir, THEME_SETTINGS))
         .and_then(|()| {
             let text = fs::read_to_string(dir.join(THEME_SETTINGS))?;
@@ -1074,7 +1285,7 @@ mod tests {
         let script = [("bin/run.sh", "#!/bin/sh\necho hi\n")];
 
         let v1 = package(&dir, "v1.zip", &manifest("1.0.0", "bin/run.sh"), &script);
-        let installed = install_package_in(&root, &v1, &[]).unwrap();
+        let installed = install_package_in(&root, &v1, &[], &Source::File).unwrap();
         assert_eq!((installed.id.as_str(), installed.version.as_str()), ("demo-app", "1.0.0"));
         assert!(apps.join("demo-app/bin/run.sh").is_file());
         #[cfg(unix)]
@@ -1085,12 +1296,12 @@ mod tests {
         }
 
         let broken = package(&dir, "broken.zip", &manifest("2.0.0", "bin/missing"), &script);
-        assert!(install_package_in(&root, &broken, &[]).is_err());
+        assert!(install_package_in(&root, &broken, &[], &Source::File).is_err());
         let v2 = package(&dir, "v2.zip", &manifest("2.0.0", "bin/run.sh"), &script);
-        assert!(install_package_in(&root, &v2, &["demo-app".into()]).is_err());
+        assert!(install_package_in(&root, &v2, &["demo-app".into()], &Source::File).is_err());
         assert_eq!(Manifest::read(&apps.join("demo-app")).unwrap().version, "1.0.0");
 
-        assert_eq!(install_package_in(&root, &v2, &[]).unwrap().version, "2.0.0");
+        assert_eq!(install_package_in(&root, &v2, &[], &Source::File).unwrap().version, "2.0.0");
         let left: Vec<_> = fs::read_dir(&apps).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert_eq!(left, ["demo-app"]);
         fs::remove_dir_all(&dir).unwrap();
@@ -1133,9 +1344,9 @@ mod tests {
         };
         let script = [("bin/run.sh", "#!/bin/sh\necho hi\n")];
         let unknown = package(&dir, "unknown.zip", &manifest("sidebar"), &script);
-        assert!(install_package_in(&root, &unknown, &[]).is_err());
+        assert!(install_package_in(&root, &unknown, &[], &Source::File).is_err());
         let widget = package(&dir, "widget.zip", &manifest(BAR_WIDGET), &script);
-        let installed = install_package_in(&root, &widget, &[]).unwrap();
+        let installed = install_package_in(&root, &widget, &[], &Source::File).unwrap();
         assert!(installed.is_addon());
         assert_eq!(installed.min_height(), Some(120.0));
         assert!(root.join("addons/demo-widget/bin/run.sh").is_file());
@@ -1180,10 +1391,57 @@ mod tests {
         }
         zip.finish().unwrap();
         let out = dir.join("out");
+        assert!(zip_has(&zip_path, THEME_SETTINGS).unwrap());
+        assert!(!zip_has(&zip_path, MANIFEST).unwrap());
+        assert!(!zip_has(&zip_path, "bg.png").unwrap(), "only the top folder counts");
         unpack(&zip_path, &out, THEME_SETTINGS).unwrap();
         assert!(out.join("themeSettings.json").is_file());
         assert!(out.join("images/bg.png").is_file());
         assert!(!out.join("__MACOSX").exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn github_repo_from_what_users_type() {
+        assert_eq!(github_repo(" naisyrkdev/YasaffBlankApp ").as_deref(), Some("naisyrkdev/YasaffBlankApp"));
+        assert_eq!(github_repo("https://github.com/naisyrkdev/yasaff.git").as_deref(), Some("naisyrkdev/yasaff"));
+        assert_eq!(github_repo("github.com/a-b/c_d.e/releases/").as_deref(), Some("a-b/c_d.e"));
+        assert_eq!(github_repo("naisyrkdev"), None);
+        assert_eq!(github_repo("../etc/passwd"), None);
+        assert_eq!(github_repo("a b/c"), None);
+    }
+
+    #[test]
+    fn picks_the_release_zip_for_this_platform() {
+        let asset = |name: &str| GithubAsset { name: name.into(), size: 0, browser_download_url: name.into(), digest: None };
+        let other = if platform() == "windows" { "linux" } else { "windows" };
+        let picked = |names: &[String]| {
+            let assets: Vec<_> = names.iter().map(|n| asset(n)).collect();
+            release_package(&assets).map(|a| a.name.clone())
+        };
+        let here = format!("app-{}.zip", platform());
+        let there = format!("app-{other}.zip");
+        assert_eq!(picked(&[there.clone(), "notes.txt".into(), here.clone()]), Some(here));
+        assert_eq!(picked(&[there.clone(), "app.zip".into()]), Some("app.zip".into()));
+        assert_eq!(picked(&[there]), None);
+    }
+
+    #[test]
+    fn remembers_where_a_package_came_from() {
+        let dir = std::env::temp_dir().join(format!("yasaff-test-{}", uuid::Uuid::new_v4()));
+        let root = dir.join("data");
+        fs::create_dir_all(&dir).unwrap();
+        let manifest = format!(r#"{{"yasaff":"app","formatVersion":1,"id":"demo-app","name":"Demo","version":"1.0.0","run":{{"{}":{{"command":"run"}}}}}}"#, platform());
+        let zip = package(&dir, "demo.zip", &manifest, &[("run", ""), (SOURCE_FILE, r#"{"from":"bundled"}"#)]);
+        let source = Source::Github { repo: "me/demo".into(), tag: "v1".into() };
+        assert_eq!(install_package_in(&root, &zip, &[], &source).unwrap().source.as_ref(), Some(&source));
+        let read = Manifest::read(&root.join("apps/demo-app")).unwrap();
+        assert_eq!(read.github_repo(), Some("me/demo"), "the package can't claim its own source");
+        assert!(read.outside_store(Some("https://store.example.com/api/v1")));
+        let from_store = Manifest { source: Some(Source::Store { url: "https://a/api/v1".into() }), ..Default::default() };
+        assert!(!from_store.outside_store(Some("https://a/api/v1")));
+        assert!(from_store.outside_store(Some("https://b/api/v1")));
+        assert!(!Manifest::default().outside_store(Some("https://a/api/v1")));
         fs::remove_dir_all(&dir).unwrap();
     }
 
