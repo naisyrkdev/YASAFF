@@ -1,6 +1,6 @@
 <div align="center">
 
-# <img src="assets/icon.png" alt="YASAFF icon" width="40" align="center"> YASAFF Launcher
+# <img src="assets/icon.png" alt="YASAFF icon" width="36" align="absmiddle"> YASAFF Launcher
 
 ![Rust Percentage](https://img.shields.io/github/languages/top/naisyrkdev/yasaff?logo=rust&logoColor=white)
 [![License](https://img.shields.io/github/license/naisyrkdev/yasaff)](LICENSE)
