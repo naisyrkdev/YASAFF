@@ -82,7 +82,7 @@ Both come with everything YASAFF uses: **ffmpeg** for preview and idle videos, a
 
 ```sh
 cargo build --release
-./target/release/yasaff               # add --fullscreen to start fullscreen
+./target/release/yasaff               # starts fullscreen; turn it off in Settings → General
 ```
 
 A build from source uses `ffmpeg` and `xorriso` from your system, if they're installed. Without them, videos don't play and discs can't be burned.

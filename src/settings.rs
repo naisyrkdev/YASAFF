@@ -271,7 +271,7 @@ impl Default for WindowsSettings {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Default)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct Settings {
     pub start_fullscreen: bool,
@@ -298,6 +298,32 @@ pub struct Settings {
     /// The settings file could be neither read nor moved aside; saving would destroy it.
     #[serde(skip)]
     keep_file: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            start_fullscreen: true,
+            language: Language::default(),
+            theme: String::new(),
+            heroic: StoreSettings::default(),
+            steam: StoreSettings::default(),
+            discs: DiscSettings::default(),
+            mouse: MouseSettings::default(),
+            controls: ControlSettings::default(),
+            shortcuts: ShortcutSettings::default(),
+            fonts: FontSettings::default(),
+            order: OrderSettings::default(),
+            gallery: GallerySettings::default(),
+            windows: WindowsSettings::default(),
+            app_stores: Vec::new(),
+            active_app_store: 0,
+            backup_dir: None,
+            addons: BTreeMap::new(),
+            app_store: None,
+            keep_file: false,
+        }
+    }
 }
 
 impl Settings {
@@ -422,6 +448,13 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn starts_fullscreen_unless_turned_off() {
+        assert!(Settings::default().start_fullscreen);
+        assert!(serde_json::from_str::<Settings>("{}").unwrap().start_fullscreen);
+        assert!(!serde_json::from_str::<Settings>(r#"{"start_fullscreen":false}"#).unwrap().start_fullscreen);
+    }
 
     #[test]
     fn swap_only_applies_without_remapping() {
