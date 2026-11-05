@@ -48,10 +48,10 @@ pub fn suppress() -> Option<Suppression> {
     if saved.is_empty() {
         return None;
     }
-    if let Ok(json) = serde_json::to_vec_pretty(&saved) {
-        if let Err(e) = crate::fsutil::write_atomic(&restore_file(), json) {
-            log::warn!("could not record the autoplay settings to restore: {e:#}");
-        }
+    if let Ok(json) = serde_json::to_vec_pretty(&saved)
+        && let Err(e) = crate::fsutil::write_atomic(&restore_file(), json)
+    {
+        log::warn!("could not record the autoplay settings to restore: {e:#}");
     }
     Some(Suppression { saved })
 }
