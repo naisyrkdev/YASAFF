@@ -719,7 +719,11 @@ impl eframe::App for App {
         self.draw_store_theme(ui, screen, s);
         self.draw_confirm_remove(ui, screen, s);
         self.draw_cover_editor(ui, screen, s);
-        let shortcut = self.draw_hints(ui, screen, s).or(self.draw_top_shortcuts(ui, screen, s)).or(self.draw_system_hint(ui, screen, s));
+        let shortcut = if self.system_menu.is_some() {
+            None
+        } else {
+            self.draw_hints(ui, screen, s).or(self.draw_top_shortcuts(ui, screen, s)).or(self.draw_system_hint(ui, screen, s))
+        };
         if let Some(action) = shortcut {
             self.handle(&ctx, action);
         }
