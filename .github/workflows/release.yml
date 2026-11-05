@@ -1,0 +1,114 @@
+name: Release
+
+# Pushing a tag like v0.1.4 builds every package and attaches them to a draft GitHub Release.
+# Running it by hand from the Actions tab builds the same packages as workflow artifacts only.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+
+  windows:
+    name: Windows (portable + installer)
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Inno Setup if missing
+        shell: pwsh
+        run: |
+          $found = (Get-Command ISCC.exe -ErrorAction SilentlyContinue) -or
+            (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") -or
+            (Test-Path "$env:ProgramFiles\Inno Setup 6\ISCC.exe")
+          if (-not $found) { choco install innosetup -y --no-progress }
+      - name: Build portable zip
+        shell: pwsh
+        run: ./installer/build-portable.ps1
+      - name: Build installer
+        shell: pwsh
+        run: ./installer/build-installer.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          retention-days: 7
+          path: |
+            target/portable/*.zip
+            target/installer/*.exe
+
+  linux:
+    name: Linux (AppImage + deb)
+    needs: version
+    # The oldest supported runner, so the binaries run on older glibc versions too.
+    runs-on: ubuntu-22.04
+    env:
+      # appimagetool is itself an AppImage; run it without FUSE.
+      APPIMAGE_EXTRACT_AND_RUN: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev libasound2-dev libxkbcommon-dev libwayland-dev libdbus-1-dev dpkg-dev file
+          cargo install --locked cargo-appimage
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o "$HOME/.local/bin/appimagetool" \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x "$HOME/.local/bin/appimagetool"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Build .deb
+        run: ./installer/build-deb.sh
+      - name: Build AppImage
+        run: |
+          ./installer/build-appimage.sh
+          mv target/appimage/yasaff.AppImage "target/appimage/YASAFF-${{ needs.version.outputs.version }}-x86_64.AppImage"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          retention-days: 7
+          path: |
+            target/deb/*.deb
+            target/appimage/*.AppImage
+
+  release:
+    name: Draft GitHub Release
+    if: github.ref_type == 'tag'
+    needs: [version, windows, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          find dist -type f
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft \
+            --title "YASAFF ${{ needs.version.outputs.version }}" --generate-notes \
+            $(find dist -type f)
