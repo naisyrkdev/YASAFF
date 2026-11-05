@@ -20,7 +20,7 @@ more centered about physical devices:
 (https://github.com/naisyrkdev/YasaffDiscoverServer) (or directly from github [within app])
 
 
-It runs on Windows and Linux. Mac support on the way.
+It runs on Windows and Linux. A macOS build is available too, but it's new and less tested.
 
 ## Launching games from a physical device
 
@@ -94,9 +94,11 @@ Yea, created here: https://discord.gg/fMRpS6Jmr
 
 **Windows:** run the `YASAFF-Setup-<version>.exe` installer. It installs for the current user and doesn't need admin rights. A portable `YASAFF-<version>-portable-win64.zip` is also available: unzip it anywhere and run `yasaff.exe`, no installation needed. The first time it runs, it asks whether to keep your library, settings and saves in your Windows user account (reusing them if YASAFF is already installed there) or inside the unzipped folder itself, so the whole thing stays self-contained (for example on a USB stick); it remembers the answer after that.
 
-**Linux:** download `yasaff.AppImage`, make it executable (`chmod +x yasaff.AppImage`) and run it. On Debian, Ubuntu and Mint you can instead install `yasaff_<version>_amd64.deb` (`sudo apt install ./yasaff_<version>_amd64.deb`), which adds YASAFF to the applications menu.
+**Linux:** download `yasaff.AppImage`, make it executable (`chmod +x yasaff.AppImage`) and run it. On Debian, Ubuntu and Mint you can instead install `yasaff_<version>_amd64.deb` (`sudo apt install ./yasaff_<version>_amd64.deb`), which adds YASAFF to the applications menu. On Fedora, RHEL and openSUSE install `yasaff-<version>-1.x86_64.rpm` (`sudo dnf install ./yasaff-<version>-1.x86_64.rpm`), and on Arch, Manjaro and EndeavourOS `yasaff-<version>-1-x86_64.pkg.tar.zst` (`sudo pacman -U yasaff-<version>-1-x86_64.pkg.tar.zst`).
 
-The Windows installer, the portable .zip and the AppImage come with everything YASAFF uses: **ffmpeg** for preview and idle videos, and on Linux **xorriso** for **Burn to CD/DVD…**. You don't have to install anything else. The .deb installs ffmpeg and xorriso from your distribution instead.
+**macOS** (11 Big Sur or newer, Apple silicon or Intel): open `YASAFF-<version>-macos-universal.dmg` and drag YASAFF to Applications. The app isn't notarized by Apple, so the first time macOS refuses to open it: go to **System Settings → Privacy & Security** and click **Open Anyway** (or run `xattr -dr com.apple.quarantine /Applications/YASAFF.app`). For videos, install ffmpeg with [Homebrew](https://brew.sh) (`brew install ffmpeg`). Burning discs isn't supported on macOS.
+
+The Windows installer, the portable .zip and the AppImage come with everything YASAFF uses: **ffmpeg** for preview and idle videos, and on Linux **xorriso** for **Burn to CD/DVD…**. You don't have to install anything else. The .deb, .rpm and Arch packages install ffmpeg and xorriso from your distribution instead (on Arch they're optional: `sudo pacman -S ffmpeg libisoburn`).
 
 **From source** (Rust, edition 2024):
 
@@ -114,6 +116,12 @@ To build the Windows portable .zip, run `installer/build-portable.ps1`. It downl
 To build the AppImage, run `installer/build-appimage.sh`. It needs `cargo-appimage`, `appimagetool`, `curl`, a C compiler and `make`. It downloads ffmpeg, builds xorriso, and writes `target/appimage/yasaff.AppImage`.
 
 To build the .deb, run `installer/build-deb.sh`. It needs `dpkg-deb` and `dpkg-shlibdeps` (package `dpkg-dev`) and writes `target/deb/yasaff_<version>_<arch>.deb`. Build it on the oldest distribution you want to support: the package depends on that distribution's glibc and library versions.
+
+To build the .rpm, run `installer/build-rpm.sh`. It needs `rpmbuild` (package `rpm` on Debian and Ubuntu, `rpm-build` on Fedora) and `objdump`, and writes `target/rpm/yasaff-<version>-1.<arch>.rpm`. Like the .deb, build it on the oldest distribution you want to support.
+
+To build the Arch package, run `installer/build-arch.sh` on Arch as a normal user. It needs `makepkg` and `cargo`, and writes `target/arch/yasaff-<version>-1-<arch>.pkg.tar.zst`.
+
+To build the macOS disk image, run `installer/build-macos.sh` on a Mac. It needs `rustup` and Xcode's command line tools, builds for Apple silicon and Intel, and writes `target/macos/YASAFF-<version>-macos-universal.dmg`.
 
 Command-line flags:
 

@@ -57,7 +57,7 @@ jobs:
             target/installer/*.exe
 
   linux:
-    name: Linux (AppImage + deb)
+    name: Linux (AppImage + deb + rpm)
     needs: version
     # The oldest supported runner, so the binaries run on older glibc versions too.
     runs-on: ubuntu-22.04
@@ -71,7 +71,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y libudev-dev libasound2-dev libxkbcommon-dev libwayland-dev libdbus-1-dev dpkg-dev file
+          sudo apt-get install -y libudev-dev libasound2-dev libxkbcommon-dev libwayland-dev libdbus-1-dev dpkg-dev rpm file
           cargo install --locked cargo-appimage
           mkdir -p "$HOME/.local/bin"
           curl -fsSL -o "$HOME/.local/bin/appimagetool" \
@@ -80,6 +80,8 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Build .deb
         run: ./installer/build-deb.sh
+      - name: Build .rpm
+        run: ./installer/build-rpm.sh
       - name: Build AppImage
         run: |
           ./installer/build-appimage.sh
@@ -90,12 +92,54 @@ jobs:
           retention-days: 7
           path: |
             target/deb/*.deb
+            target/rpm/*.rpm
             target/appimage/*.AppImage
+
+  arch:
+    name: Arch Linux (pkg.tar.zst)
+    needs: version
+    runs-on: ubuntu-latest
+    # Built on current Arch, which is what a rolling-release user has installed.
+    container: archlinux:latest
+    steps:
+      - name: Install build tools
+        run: |
+          pacman -Syu --noconfirm --needed base-devel rust git alsa-lib systemd-libs libxkbcommon libglvnd
+          useradd --create-home builder
+      - uses: actions/checkout@v4
+      - name: Build package
+        # makepkg refuses to run as root.
+        run: |
+          chown -R builder "$GITHUB_WORKSPACE"
+          su builder -c "cd '$GITHUB_WORKSPACE' && ./installer/build-arch.sh"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch
+          retention-days: 7
+          path: target/arch/*.pkg.tar.zst
+
+  macos:
+    name: macOS (universal dmg)
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Build disk image
+        run: ./installer/build-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          retention-days: 7
+          path: target/macos/*.dmg
 
   release:
     name: Draft GitHub Release
     if: github.ref_type == 'tag'
-    needs: [version, windows, linux]
+    needs: [version, windows, linux, arch, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
