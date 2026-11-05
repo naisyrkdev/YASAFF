@@ -198,7 +198,8 @@ impl App {
 
     pub(super) fn draw_welcome(&mut self, ui: &Ui, screen: Rect, s: f32) {
         let (cursor, theme_step) = match self.mode {
-            Mode::WelcomeTheme { cursor } => (cursor, true),
+            Mode::WelcomeTheme { preview: true, cursor } => return self.draw_welcome_preview_banner(ui, screen, s, cursor),
+            Mode::WelcomeTheme { cursor, .. } => (cursor, true),
             Mode::Welcome { cursor } => (cursor, false),
             _ => return,
         };
@@ -240,8 +241,15 @@ impl App {
                 clicked = Some(i);
             }
         }
-        if let Some(i) = hovered {
-            self.mode = if theme_step { Mode::WelcomeTheme { cursor: i } } else { Mode::Welcome { cursor: i } };
+        if let Some(i) = hovered
+            && i != cursor
+        {
+            if theme_step {
+                self.mode = Mode::WelcomeTheme { cursor: i, preview: false };
+                self.apply_welcome_theme(WELCOME_THEMES[i].0);
+            } else {
+                self.mode = Mode::Welcome { cursor: i };
+            }
         }
         match clicked {
             Some(i) if theme_step => self.start_with_theme(WELCOME_THEMES[i].0),
@@ -250,16 +258,33 @@ impl App {
         }
     }
 
-    /// Selects the first-run look (`bubbles`, or the first standard theme) and moves on to how to start.
-    pub(super) fn start_with_theme(&mut self, bubbles: bool) {
+    /// While previewing: a small label naming the look, so the screen behind stays visible.
+    fn draw_welcome_preview_banner(&self, ui: &Ui, screen: Rect, s: f32, cursor: usize) {
+        let painter = ui.painter();
+        let name = i18n::tr(WELCOME_THEMES[cursor].1);
+        let galley = painter.layout_no_wrap(tr!("Previewing {name}", name = name).to_owned(), FontId::proportional(20.0 * s), Color32::WHITE);
+        let pill = Rect::from_center_size(screen.center_top() + vec2(0.0, 110.0 * s), galley.size() + vec2(40.0 * s, 20.0 * s));
+        painter.rect_filled(pill, (pill.height() / 2.0) as u8, Color32::from_black_alpha(190));
+        painter.galley(pill.center() - galley.size() / 2.0, galley, Color32::WHITE);
+    }
+
+    /// Switches to a first-run look (`bubbles`, or the first standard theme) so it shows behind the dialog.
+    pub(super) fn apply_welcome_theme(&mut self, bubbles: bool) {
         let id = if bubbles {
             Some(theme::BUBBLES_ID.to_owned())
         } else {
             self.themes.iter().find(|t| t.settings.kind == theme::ThemeKind::Standard).map(|t| t.id.clone())
         };
-        if let Some(id) = id {
+        if let Some(id) = id
+            && id != self.theme().id
+        {
             self.select_theme(&id);
         }
+    }
+
+    /// Keeps the first-run look and moves on to how to start.
+    pub(super) fn start_with_theme(&mut self, bubbles: bool) {
+        self.apply_welcome_theme(bubbles);
         self.mode = Mode::Welcome { cursor: 0 };
     }
 
@@ -279,15 +304,23 @@ impl App {
 
 impl App {
     pub(super) fn handle_welcome_theme(&mut self, action: Action) {
-        let Mode::WelcomeTheme { cursor } = &mut self.mode else { return };
+        let Mode::WelcomeTheme { cursor, preview } = &mut self.mode else { return };
+        let before = *cursor;
         match action {
-            Action::Up => *cursor = cursor.saturating_sub(1),
-            Action::Down => *cursor = (*cursor + 1).min(WELCOME_THEMES.len() - 1),
+            Action::Up | Action::Left => *cursor = cursor.saturating_sub(1),
+            Action::Down | Action::Right => *cursor = (*cursor + 1).min(WELCOME_THEMES.len() - 1),
+            // P on the keyboard, the Add button (Y / △) on a controller.
+            Action::Preview | Action::Add => *preview = !*preview,
+            Action::Back => *preview = false,
             Action::Confirm => {
                 let bubbles = WELCOME_THEMES[*cursor].0;
-                self.start_with_theme(bubbles);
+                return self.start_with_theme(bubbles);
             }
             _ => {}
+        }
+        if *cursor != before {
+            let bubbles = WELCOME_THEMES[*cursor].0;
+            self.apply_welcome_theme(bubbles);
         }
     }
 
@@ -302,7 +335,7 @@ impl App {
             }
             Action::Back => {
                 let bubbles = self.theme().id == theme::BUBBLES_ID;
-                self.mode = Mode::WelcomeTheme { cursor: WELCOME_THEMES.iter().position(|t| t.0 == bubbles).unwrap_or(0) };
+                self.mode = Mode::WelcomeTheme { cursor: WELCOME_THEMES.iter().position(|t| t.0 == bubbles).unwrap_or(0), preview: false };
             }
             _ => {}
         }

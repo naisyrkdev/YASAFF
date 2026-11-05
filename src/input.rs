@@ -20,6 +20,12 @@ pub enum Action {
     BringToFront,
     Type(char),
     Erase,
+    /// Shows the screen behind a dialog. Only the keyboard sends it (P); on a controller the
+    /// [`Control::Add`] button (Y / △) does the same where a dialog offers a preview.
+    Preview,
+    /// Opens the system options (shut down, minimize). Sent once the button bound to
+    /// [`Control::Guide`] or the Esc key has been held for [`SYSTEM_HOLD`].
+    SystemMenu,
 }
 
 impl Action {
@@ -38,6 +44,8 @@ impl Action {
             Action::ToggleFullscreen => Control::Fullscreen,
             Action::BringToFront => Control::Guide,
             Action::Erase => Control::Erase,
+            Action::Preview => Control::Add,
+            Action::SystemMenu => Control::Guide,
             Action::Type(_) => Control::Nothing,
         }
     }
@@ -349,6 +357,8 @@ const REPEAT_DELAY: Duration = Duration::from_millis(400);
 const REPEAT_RATE: Duration = Duration::from_millis(110);
 const MOUSE_DEADZONE: f32 = 0.15;
 const MOUSE_IDLE: Duration = Duration::from_secs(5);
+/// How long Guide or Esc is held to open the system options.
+pub const SYSTEM_HOLD: Duration = Duration::from_millis(1000);
 pub const GLOBAL_MOUSE_BUTTONS: [PadButton; 2] = [PadButton::RightTrigger, PadButton::LeftTrigger];
 
 struct VirtualMouse {
@@ -362,6 +372,8 @@ struct VirtualMouse {
 pub struct Input {
     gilrs: Option<Gilrs>,
     held: Option<(Action, Instant)>,
+    /// When Guide or Esc went down, and whether the system options were already opened for it.
+    system_hold: Option<(Instant, bool)>,
     mouse: VirtualMouse,
     mouse_enabled: bool,
     global_mouse: bool,
@@ -380,7 +392,7 @@ impl Input {
             }
         };
         let mouse = VirtualMouse { pos: None, screen: Rect::NOTHING, last_tick: Instant::now(), last_used: None, buttons: Vec::new() };
-        Self { gilrs, held: None, mouse, mouse_enabled: false, global_mouse: false, bindings: Bindings::default(), last_pad: None }
+        Self { gilrs, held: None, system_hold: None, mouse, mouse_enabled: false, global_mouse: false, bindings: Bindings::default(), last_pad: None }
     }
 
     pub fn set_bindings(&mut self, bindings: Bindings) {
@@ -464,6 +476,7 @@ impl Input {
 
     pub fn poll_hidden(&mut self) -> Vec<Action> {
         self.held = None;
+        self.system_hold = None;
         let global_mouse = self.global_mouse;
         let Some(gilrs) = &mut self.gilrs else { return Vec::new() };
         let mut actions = Vec::new();
@@ -522,6 +535,9 @@ impl Input {
             let dir = if focused { held_direction(gilrs, &self.bindings, self.global_mouse) } else { None };
             self.update_repeat(dir, &mut actions);
         }
+        let guide = self.gilrs.as_ref().is_some_and(|g| guide_held(g, &self.bindings, global_mouse));
+        let esc = focused && ctx.input(|i| i.key_down(Key::Escape));
+        self.update_system_hold(guide || esc, &mut actions);
 
         if focused && !ctx.text_edit_focused() {
             ctx.input(|i| {
@@ -532,9 +548,11 @@ impl Input {
                         actions.extend(text.chars().filter(|c| !c.is_control()).map(Action::Type));
                         continue;
                     }
-                    let egui::Event::Key { key, pressed: true, .. } = event else { continue };
+                    let egui::Event::Key { key, pressed: true, modifiers, repeat, .. } = event else { continue };
                     let action = match key {
                         Key::Space if capture_text => continue,
+                        // Holding Esc opens the system options; it must not back out of every screen meanwhile.
+                        Key::Escape if *repeat => continue,
                         Key::Backspace if capture_text => Action::Erase,
                         Key::ArrowLeft => Action::Left,
                         Key::ArrowRight => Action::Right,
@@ -545,6 +563,7 @@ impl Input {
                         Key::Tab => Action::Options,
                         Key::Insert => Action::Add,
                         Key::F11 => Action::ToggleFullscreen,
+                        Key::P if !capture_text && !modifiers.any() => Action::Preview,
                         _ => continue,
                     };
                     actions.push(action);
@@ -552,6 +571,24 @@ impl Input {
             });
         }
         actions
+    }
+
+    fn update_system_hold(&mut self, down: bool, actions: &mut Vec<Action>) {
+        match self.system_hold {
+            _ if !down => self.system_hold = None,
+            None => self.system_hold = Some((Instant::now(), false)),
+            Some((since, false)) if since.elapsed() >= SYSTEM_HOLD => {
+                actions.push(Action::SystemMenu);
+                self.system_hold = Some((since, true));
+            }
+            Some(_) => {}
+        }
+    }
+
+    /// How far a hold of Guide or Esc is towards opening the system options, from 0 to 1.
+    pub fn system_hold_progress(&self) -> Option<f32> {
+        let (since, fired) = self.system_hold?;
+        (!fired).then(|| (since.elapsed().as_secs_f32() / SYSTEM_HOLD.as_secs_f32()).min(1.0))
     }
 
     fn update_repeat(&mut self, dir: Option<Action>, actions: &mut Vec<Action>) {
@@ -593,6 +630,15 @@ fn left_to_global_mouse(global_mouse: bool, button: PadButton) -> bool {
 fn is_controller(pad: &Gamepad) -> bool {
     let name = pad.name().to_lowercase();
     !["touchpad", "motion sensor"].iter().any(|n| name.contains(n))
+}
+
+fn guide_held(gilrs: &Gilrs, bindings: &Bindings, global_mouse: bool) -> bool {
+    gilrs.gamepads().filter(|(_, pad)| is_controller(pad)).any(|(_, pad)| {
+        PadButton::ALL
+            .into_iter()
+            .filter(|b| !left_to_global_mouse(global_mouse, *b))
+            .any(|b| bindings.get(b) == Control::Guide && pad.is_pressed(b.to_gilrs()))
+    })
 }
 
 fn held_direction(gilrs: &Gilrs, bindings: &Bindings, global_mouse: bool) -> Option<Action> {

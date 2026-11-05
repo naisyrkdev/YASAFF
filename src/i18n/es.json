@@ -1126,5 +1126,14 @@
   ],
   "Keep both": "Conservar ambos",
   "Replace": "Reemplazar",
-  "{device} has another launch file": "{device} tiene otro archivo de inicio"
+  "{device} has another launch file": "{device} tiene otro archivo de inicio",
+  "Preview": "Vista previa",
+  "Change look": "Cambiar aspecto",
+  "Use this look": "Usar este aspecto",
+  "Exit preview": "Salir de la vista previa",
+  "Previewing {name}": "Vista previa: {name}",
+  "Hold": "Mantén",
+  "System options": "Opciones del sistema",
+  "Shut down": "Apagar",
+  "Minimize": "Minimizar"
 }

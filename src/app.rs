@@ -17,6 +17,7 @@ mod profile_ui;
 mod saves_ui;
 mod settings_ui;
 mod store_screen;
+mod system_menu;
 mod tiles;
 
 use crate::addons::{self, AddonHost, Placement};
@@ -146,8 +147,9 @@ impl Special {
 
 enum Mode {
     Home,
-    /// First run: picking the look, before [`Mode::Welcome`].
-    WelcomeTheme { cursor: usize },
+    /// First run: picking the look, before [`Mode::Welcome`]. The look under the cursor is
+    /// applied right away; `preview` hides the dialog to show it whole.
+    WelcomeTheme { cursor: usize, preview: bool },
     Welcome { cursor: usize },
     Options { cursor: usize },
     SwapBubble { from: usize, target: usize },
@@ -254,6 +256,8 @@ pub struct App {
     device_pick: Option<PathBuf>,
     /// Copying a closed game's saves to the device it was started from.
     device_sync: Option<DeviceSync>,
+    /// The system options (shut down, minimize) shown over everything, with the focused row.
+    system_menu: Option<usize>,
 }
 
 impl App {
@@ -345,6 +349,7 @@ impl App {
             devices_looked: None,
             device_pick: None,
             device_sync: None,
+            system_menu: None,
         };
         app.apply_fonts();
         if let Some(w) = warning {
@@ -374,7 +379,8 @@ impl App {
         app.refresh_store();
         app.find_missing_save_dirs();
         if initial::wanted(&app.library) {
-            app.mode = Mode::WelcomeTheme { cursor: 0 };
+            app.mode = Mode::WelcomeTheme { cursor: 0, preview: false };
+            app.apply_welcome_theme(profile_ui::WELCOME_THEMES[0].0);
             app.look_up_initial_repos();
         }
         app.sync_taskbar();
@@ -549,6 +555,11 @@ impl App {
                 self.sync_taskbar();
                 return;
             }
+            Action::SystemMenu => {
+                self.system_menu.get_or_insert(0);
+                return;
+            }
+            _ if self.system_menu.is_some() => return self.handle_system_menu(ctx, action),
             Action::BringToFront => return self.come_home(ctx),
             _ => {}
         }
@@ -694,7 +705,8 @@ impl eframe::App for App {
         self.draw_store_theme(ui, screen, s);
         self.draw_confirm_remove(ui, screen, s);
         self.draw_cover_editor(ui, screen, s);
-        if let Some(action) = self.draw_hints(ui, screen, s).or(self.draw_top_shortcuts(ui, screen, s)) {
+        let shortcut = self.draw_hints(ui, screen, s).or(self.draw_top_shortcuts(ui, screen, s)).or(self.draw_system_hint(ui, screen, s));
+        if let Some(action) = shortcut {
             self.handle(&ctx, action);
         }
         self.draw_settings(ui, screen, s);
@@ -710,6 +722,7 @@ impl eframe::App for App {
         self.draw_dialog_wait(&painter, screen, s);
         self.draw_toast(&painter, screen, s);
         self.draw_launching(ui, screen, s);
+        self.draw_system_menu(ui, screen, s);
         self.draw_prompt(&ctx);
         self.draw_cursor(&ctx, s);
 

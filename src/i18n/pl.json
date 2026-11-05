@@ -1148,5 +1148,14 @@
   ],
   "Keep both": "Zachowaj oba",
   "Replace": "Zastąp",
-  "{device} has another launch file": "{device} ma inny plik uruchamiania"
+  "{device} has another launch file": "{device} ma inny plik uruchamiania",
+  "Preview": "Podgląd",
+  "Change look": "Zmień wygląd",
+  "Use this look": "Użyj tego wyglądu",
+  "Exit preview": "Zamknij podgląd",
+  "Previewing {name}": "Podgląd: {name}",
+  "Hold": "Przytrzymaj",
+  "System options": "Opcje systemowe",
+  "Shut down": "Wyłącz",
+  "Minimize": "Minimalizuj"
 }

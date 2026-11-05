@@ -181,6 +181,7 @@ pub(super) fn keyboard_key(action: Action) -> &'static str {
         Action::Add => "Ins",
         Action::Erase => "Bksp",
         Action::ToggleFullscreen => "F11",
+        Action::Preview => "P",
         _ => "",
     }
 }
@@ -346,7 +347,12 @@ impl App {
             ],
             Mode::DiscChooser { .. } => &[Hint(Action::Confirm, tr!("Start")), Hint(Action::Back, tr!("Cancel"))],
             Mode::DiscNotFound { .. } => &[Hint(Action::Confirm, tr!("OK"))],
-            Mode::WelcomeTheme { .. } => &[Hint(Action::Confirm, tr!("Select"))],
+            Mode::WelcomeTheme { preview: true, .. } => &[
+                Hint(Action::Left, tr!("Change look")),
+                Hint(Action::Confirm, tr!("Use this look")),
+                Hint(Action::Preview, tr!("Exit preview")),
+            ],
+            Mode::WelcomeTheme { .. } => &[Hint(Action::Confirm, tr!("Select")), Hint(Action::Preview, tr!("Preview"))],
             Mode::Welcome { .. } => &[Hint(Action::Confirm, tr!("Select")), Hint(Action::Back, tr!("Back"))],
             Mode::ProfileImported { .. } => &[Hint(Action::Confirm, tr!("Select")), Hint(Action::Back, tr!("Back"))],
             Mode::Burn(_) => match &self.burning {

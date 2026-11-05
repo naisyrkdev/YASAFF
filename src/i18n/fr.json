@@ -1126,5 +1126,14 @@
   ],
   "Keep both": "Garder les deux",
   "Replace": "Remplacer",
-  "{device} has another launch file": "{device} contient un autre fichier de lancement"
+  "{device} has another launch file": "{device} contient un autre fichier de lancement",
+  "Preview": "Aperçu",
+  "Change look": "Changer d'apparence",
+  "Use this look": "Utiliser cette apparence",
+  "Exit preview": "Quitter l'aperçu",
+  "Previewing {name}": "Aperçu : {name}",
+  "Hold": "Maintenir",
+  "System options": "Options système",
+  "Shut down": "Éteindre",
+  "Minimize": "Réduire"
 }
