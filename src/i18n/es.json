@@ -1106,5 +1106,9 @@
   "addon": "complemento",
   "app": "aplicación",
   "game": "juego",
-  "theme": "tema"
+  "theme": "tema",
+  "Pick a look. Settings → Theme can change it later.": "Elige un estilo. Ajustes → Tema permite cambiarlo más tarde.",
+  "Game covers side by side. Settings → Theme changes the layout": "Portadas de juegos una al lado de otra. Ajustes → Tema cambia la disposición",
+  "Games float around as bubbles": "Los juegos flotan como burbujas",
+  "Installed {name}. Settings → Theme switches to it.": "{name} instalado. Ajustes → Tema permite activarlo."
 }

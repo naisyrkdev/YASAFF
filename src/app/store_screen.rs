@@ -295,7 +295,7 @@ impl App {
                 }
                 Event::GithubInstalled(_, Ok(GithubPackage::Theme(zip))) => {
                     self.store.github = None;
-                    self.import_theme_zip(&zip);
+                    self.install_theme_zip(&zip);
                     let _ = std::fs::remove_file(&zip);
                 }
                 Event::RepoInfo(_, Ok(info)) => self.offers.push_back(info),
@@ -681,6 +681,20 @@ impl App {
                 self.themes.push(theme);
                 self.select_theme(&id);
                 self.notify(tr!("Imported {name}", name = self.theme().settings.name));
+            }
+            Err(e) => self.notify(tr!("Could not import theme: {error}", error = format!("{e:#}"))),
+        }
+    }
+
+    /// Adds the downloaded theme package `zip` as a new theme, keeping the current one selected.
+    fn install_theme_zip(&mut self, zip: &Path) {
+        match Theme::import(zip) {
+            Ok(theme) => {
+                let name = theme.settings.name.clone();
+                let active = self.theme().id.clone();
+                self.themes.push(theme);
+                self.select_theme(&active);
+                self.notify(tr!("Installed {name}. Settings → Theme switches to it.", name = name));
             }
             Err(e) => self.notify(tr!("Could not import theme: {error}", error = format!("{e:#}"))),
         }

@@ -1106,5 +1106,9 @@
   "addon": "extension",
   "app": "application",
   "game": "jeu",
-  "theme": "thème"
+  "theme": "thème",
+  "Pick a look. Settings → Theme can change it later.": "Choisissez un style. Paramètres → Thème permet de le changer plus tard.",
+  "Game covers side by side. Settings → Theme changes the layout": "Les jaquettes côte à côte. Paramètres → Thème change la disposition",
+  "Games float around as bubbles": "Les jeux flottent comme des bulles",
+  "Installed {name}. Settings → Theme switches to it.": "{name} installé. Paramètres → Thème permet de l'activer."
 }

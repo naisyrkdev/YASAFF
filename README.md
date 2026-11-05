@@ -104,7 +104,7 @@ Command-line flags:
 
 ## Adding games
 
-A new profile starts empty. On its first start YASAFF offers the repositories listed in [initial_content/initial_install_repos.txt](initial_content/initial_install_repos.txt), one at a time: "Do you want to download this repo?" with its type, `owner/name` and description. **Download** installs it as with **Install from GitHub**, and **Skip** moves on. See [initial_content/README.md](initial_content/README.md) for the format of the list.
+A new profile starts empty. On its first start YASAFF asks which look to use, **Default** or **Bubbles**, then offers the repositories listed in [initial_content/initial_install_repos.txt](initial_content/initial_install_repos.txt), one at a time: "Do you want to download this repo?" with its type, `owner/name` and description. **Download** installs it as with **Install from GitHub**, and **Skip** moves on. See [initial_content/README.md](initial_content/README.md) for the format of the list.
 
 Open the **Add game** tile, or press **Y** / **Insert**. From there you can:
 
@@ -248,7 +248,7 @@ The **Discover** tile lists apps, games, themes and addons from a YASAFF Discove
 
 **Installed** is the last Discover tab, and the one Discover opens on when no store is set up. It lists every app and addon you have, wherever it came from, with a tag for its source: the store, **GitHub**, **File** (imported from a `.zip`), **Built in** (came with YASAFF) or **Other store**. In the store's own tabs, apps you installed from somewhere else carry the same tag, in yellow, and say they're not from this store.
 
-The first row of **Installed**, **Install from GitHub…**, works with or without a store. Type the repository as `owner/name` (or paste its github.com address). YASAFF downloads the `.zip` attached to the repository's latest release, the one whose name has `windows`, `linux` or `macos` in it when there are several. GitHub's checksum is checked when it has one. A release without a `.zip` falls back to its source archive, and a repository without a release to its default branch's source; both only work for packages that need no build. A package with `themeSettings.json` instead of `yasaffConfig.json` is added as a new theme and selected. To update, press **Y** on the app in **Installed**: the prompt comes filled in with its repository. Without signing in, GitHub allows 60 requests an hour.
+The first row of **Installed**, **Install from GitHub…**, works with or without a store. Type the repository as `owner/name` (or paste its github.com address). YASAFF downloads the `.zip` attached to the repository's latest release, the one whose name has `windows`, `linux` or `macos` in it when there are several. GitHub's checksum is checked when it has one. A release without a `.zip` falls back to its source archive, and a repository without a release to its default branch's source; both only work for packages that need no build. A package with `themeSettings.json` instead of `yasaffConfig.json` is added as a new theme; pick it in **Settings → Theme**. To update, press **Y** on the app in **Installed**: the prompt comes filled in with its repository. Without signing in, GitHub allows 60 requests an hour.
 
 To make your own app, game package or addon, see [docs/YASAFF_application_guide.md](docs/YASAFF_application_guide.md).
 

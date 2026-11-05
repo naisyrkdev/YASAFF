@@ -146,6 +146,8 @@ impl Special {
 
 enum Mode {
     Home,
+    /// First run: picking the look, before [`Mode::Welcome`].
+    WelcomeTheme { cursor: usize },
     Welcome { cursor: usize },
     Options { cursor: usize },
     SwapBubble { from: usize, target: usize },
@@ -367,7 +369,7 @@ impl App {
         app.refresh_store();
         app.find_missing_save_dirs();
         if initial::wanted(&app.library) {
-            app.mode = Mode::Welcome { cursor: 0 };
+            app.mode = Mode::WelcomeTheme { cursor: 0 };
             app.look_up_initial_repos();
         }
         app.sync_taskbar();
@@ -554,6 +556,7 @@ impl App {
             Mode::Options { .. } => self.handle_options(action),
             Mode::SwapBubble { .. } => self.handle_swap_bubble(action),
             Mode::SwapTile { .. } => self.handle_swap_tile(action),
+            Mode::WelcomeTheme { .. } => self.handle_welcome_theme(action),
             Mode::Welcome { .. } => self.handle_welcome(action),
             Mode::AddMenu { .. } => self.handle_add_menu(action),
             Mode::Picker(_) => self.handle_picker(action),

@@ -1127,5 +1127,9 @@
   "addon": "dodatek",
   "app": "aplikacja",
   "game": "gra",
-  "theme": "motyw"
+  "theme": "motyw",
+  "Pick a look. Settings → Theme can change it later.": "Wybierz wygląd. Ustawienia → Motyw pozwalają zmienić go później.",
+  "Game covers side by side. Settings → Theme changes the layout": "Okładki gier obok siebie. Ustawienia → Motyw zmieniają układ",
+  "Games float around as bubbles": "Gry unoszą się jak bąbelki",
+  "Installed {name}. Settings → Theme switches to it.": "Zainstalowano {name}. Ustawienia → Motyw pozwalają go włączyć."
 }

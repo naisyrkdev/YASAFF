@@ -18,6 +18,12 @@ pub(super) const WELCOME: [(Start, &str, &str); 2] = [
     (Start::Blank, tr_key!("Start blank"), tr_key!("An empty library. Add games any time with Add game")),
 ];
 
+/// The looks a new profile can start with: `true` is the built-in Bubbles theme.
+pub(super) const WELCOME_THEMES: [(bool, &str, &str); 2] = [
+    (false, tr_key!("Default"), tr_key!("Game covers side by side. Settings → Theme changes the layout")),
+    (true, tr_key!("Bubbles"), tr_key!("Games float around as bubbles")),
+];
+
 impl App {
     /// What would be cut short by a restart or by deleting the profile, if anything.
     pub(super) fn busy_with(&self) -> Option<&'static str> {
@@ -191,21 +197,29 @@ impl App {
     }
 
     pub(super) fn draw_welcome(&mut self, ui: &Ui, screen: Rect, s: f32) {
-        let Mode::Welcome { cursor } = self.mode else { return };
+        let (cursor, theme_step) = match self.mode {
+            Mode::WelcomeTheme { cursor } => (cursor, true),
+            Mode::Welcome { cursor } => (cursor, false),
+            _ => return,
+        };
+        let (subtitle, items): (_, Vec<(&str, &str)>) = if theme_step {
+            (tr!("Pick a look. Settings → Theme can change it later."), WELCOME_THEMES.iter().map(|(_, l, n)| (*l, *n)).collect())
+        } else {
+            (tr!("How would you like to start?"), WELCOME.iter().map(|(_, l, n)| (*l, *n)).collect())
+        };
         let painter = ui.painter();
         painter.rect_filled(screen, 0, Color32::from_black_alpha(170));
         let button_h = 88.0 * s;
         let gap = 14.0 * s;
-        let height = 170.0 * s + WELCOME.len() as f32 * (button_h + gap);
+        let height = 170.0 * s + items.len() as f32 * (button_h + gap);
         let dialog = Rect::from_center_size(screen.center(), vec2((760.0 * s).min(screen.width() - 40.0), height));
         painter.rect_filled(dialog, (8.0 * s) as u8, Color32::from_rgb(14, 20, 36));
         painter.text(dialog.center_top() + vec2(0.0, 44.0 * s), Align2::CENTER_TOP, tr!("Welcome!"), FontId::proportional(32.0 * s), Color32::WHITE);
-        let subtitle = tr!("How would you like to start?");
         painter.text(dialog.center_top() + vec2(0.0, 92.0 * s), Align2::CENTER_TOP, subtitle, FontId::proportional(19.0 * s), Color32::from_gray(170));
 
         let mut hovered = None;
         let mut clicked = None;
-        for (i, (_, label, note)) in WELCOME.iter().enumerate() {
+        for (i, (label, note)) in items.iter().enumerate() {
             let top = dialog.top() + 146.0 * s + i as f32 * (button_h + gap);
             let r = Rect::from_min_size(pos2(dialog.left() + 40.0 * s, top), vec2(dialog.width() - 80.0 * s, button_h));
             let focused = i == cursor;
@@ -218,7 +232,7 @@ impl App {
             let x = r.left() + 28.0 * s;
             painter.text(pos2(x, r.center().y - 4.0 * s), Align2::LEFT_BOTTOM, i18n::tr(label), FontId::proportional(24.0 * s), text);
             painter.text(pos2(x, r.center().y + 2.0 * s), Align2::LEFT_TOP, i18n::tr(note), FontId::proportional(16.0 * s), sub);
-            let resp = ui.interact(r, Id::new(("welcome", i)), Sense::click());
+            let resp = ui.interact(r, Id::new(("welcome", theme_step, i)), Sense::click());
             if resp.hovered() && ui.input(|i| i.pointer.delta() != egui::Vec2::ZERO) {
                 hovered = Some(i);
             }
@@ -227,11 +241,26 @@ impl App {
             }
         }
         if let Some(i) = hovered {
-            self.mode = Mode::Welcome { cursor: i };
+            self.mode = if theme_step { Mode::WelcomeTheme { cursor: i } } else { Mode::Welcome { cursor: i } };
         }
-        if let Some(i) = clicked {
-            self.start_with(WELCOME[i].0);
+        match clicked {
+            Some(i) if theme_step => self.start_with_theme(WELCOME_THEMES[i].0),
+            Some(i) => self.start_with(WELCOME[i].0),
+            None => {}
         }
+    }
+
+    /// Selects the first-run look (`bubbles`, or the first standard theme) and moves on to how to start.
+    pub(super) fn start_with_theme(&mut self, bubbles: bool) {
+        let id = if bubbles {
+            Some(theme::BUBBLES_ID.to_owned())
+        } else {
+            self.themes.iter().find(|t| t.settings.kind == theme::ThemeKind::Standard).map(|t| t.id.clone())
+        };
+        if let Some(id) = id {
+            self.select_theme(&id);
+        }
+        self.mode = Mode::Welcome { cursor: 0 };
     }
 
     pub(super) fn start_with(&mut self, start: Start) {
@@ -249,6 +278,19 @@ impl App {
 }
 
 impl App {
+    pub(super) fn handle_welcome_theme(&mut self, action: Action) {
+        let Mode::WelcomeTheme { cursor } = &mut self.mode else { return };
+        match action {
+            Action::Up => *cursor = cursor.saturating_sub(1),
+            Action::Down => *cursor = (*cursor + 1).min(WELCOME_THEMES.len() - 1),
+            Action::Confirm => {
+                let bubbles = WELCOME_THEMES[*cursor].0;
+                self.start_with_theme(bubbles);
+            }
+            _ => {}
+        }
+    }
+
     pub(super) fn handle_welcome(&mut self, action: Action) {
         let Mode::Welcome { cursor } = &mut self.mode else { return };
         match action {
@@ -257,6 +299,10 @@ impl App {
             Action::Confirm => {
                 let start = WELCOME[*cursor].0;
                 self.start_with(start);
+            }
+            Action::Back => {
+                let bubbles = self.theme().id == theme::BUBBLES_ID;
+                self.mode = Mode::WelcomeTheme { cursor: WELCOME_THEMES.iter().position(|t| t.0 == bubbles).unwrap_or(0) };
             }
             _ => {}
         }

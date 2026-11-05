@@ -346,7 +346,8 @@ impl App {
             ],
             Mode::DiscChooser { .. } => &[Hint(Action::Confirm, tr!("Start")), Hint(Action::Back, tr!("Cancel"))],
             Mode::DiscNotFound { .. } => &[Hint(Action::Confirm, tr!("OK"))],
-            Mode::Welcome { .. } => &[Hint(Action::Confirm, tr!("Select"))],
+            Mode::WelcomeTheme { .. } => &[Hint(Action::Confirm, tr!("Select"))],
+            Mode::Welcome { .. } => &[Hint(Action::Confirm, tr!("Select")), Hint(Action::Back, tr!("Back"))],
             Mode::ProfileImported { .. } => &[Hint(Action::Confirm, tr!("Select")), Hint(Action::Back, tr!("Back"))],
             Mode::Burn(_) => match &self.burning {
                 Some(Burning { result: Some(Err(_)), .. }) => &[Hint(Action::Confirm, tr!("Try again"))],
