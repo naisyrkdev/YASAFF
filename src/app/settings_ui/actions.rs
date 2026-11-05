@@ -205,14 +205,22 @@ impl App {
                 self.disc_removable.store(self.settings.discs.removable_drives, Ordering::Relaxed);
                 self.save_settings();
             }
+            SettingRow::DiscHideFileWindow => {
+                self.settings.discs.hide_file_window ^= true;
+                self.autoplay = None;
+                if self.settings.discs.hide_file_window {
+                    self.autoplay = crate::autoplay::suppress();
+                }
+                self.save_settings();
+            }
             SettingRow::DiscKeepSaves => {
                 self.settings.discs.keep_saves ^= true;
                 self.save_settings();
             }
             SettingRow::DeviceCreateFile => self.create_disc_file(),
             SettingRow::DeviceBurn => self.open_burner(),
-            SettingRow::DeviceInsertConfig => self.insert_launch_config(),
-            SettingRow::DeviceCreateCatalog => self.create_save_catalog(),
+            SettingRow::DeviceInsertConfig => self.confirm_device_write(DeviceWrite::LaunchConfig),
+            SettingRow::DeviceCreateCatalog => self.confirm_device_write(DeviceWrite::SaveCatalog),
             SettingRow::DeviceBackupNow => self.backup_saves(),
             SettingRow::DeviceOpenSaveFolder => self.open_save_dir(),
             SettingRow::DeviceSetSaveFolder => self.pick_save_dir(),
@@ -590,6 +598,7 @@ impl App {
             | SettingRow::StoreBackground(_)
             | SettingRow::DiscScanAtStart
             | SettingRow::DiscRemovable
+            | SettingRow::DiscHideFileWindow
             | SettingRow::DiscKeepSaves => {
                 return self.activate_setting(row);
             }

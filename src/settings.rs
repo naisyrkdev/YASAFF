@@ -48,11 +48,14 @@ pub struct DiscSettings {
     /// Copy a game's saves to the USB stick or SD card it was started from when it closes, for
     /// the games that have it turned on.
     pub keep_saves: bool,
+    /// Stop the system file manager from opening a window when a USB stick, SD card or disc is
+    /// inserted while YASAFF runs. Put back when YASAFF closes.
+    pub hide_file_window: bool,
 }
 
 impl Default for DiscSettings {
     fn default() -> Self {
-        DiscSettings { on_insert: DiscAction::Start, scan_at_start: true, removable_drives: true, keep_saves: false }
+        DiscSettings { on_insert: DiscAction::Start, scan_at_start: true, removable_drives: true, keep_saves: false, hide_file_window: true }
     }
 }
 

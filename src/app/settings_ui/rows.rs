@@ -268,7 +268,7 @@ impl App {
         for store in Store::ALL {
             rows.extend([R::StoreEnabled(store), R::StoreBackground(store), R::StoreCommand(store)]);
         }
-        rows.extend([R::DiscOnInsert, R::DiscScanAtStart, R::DiscRemovable, R::DiscKeepSaves]);
+        rows.extend([R::DiscOnInsert, R::DiscScanAtStart, R::DiscRemovable, R::DiscHideFileWindow, R::DiscKeepSaves]);
         rows.push(R::AddonManager);
         rows.extend([R::AboutApp, R::AboutSource, R::AboutServer, R::AppReset]);
         rows

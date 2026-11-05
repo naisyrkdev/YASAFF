@@ -221,6 +221,8 @@ pub struct App {
     last_focused: Instant,
     discs: mpsc::Receiver<DiscEvent>,
     disc_removable: Arc<AtomicBool>,
+    /// The system's "open a folder on insert" turned off while it lives.
+    autoplay: Option<crate::autoplay::Suppression>,
     _disc_watcher: Watcher,
     artwork: Fetcher,
     fonts: Vec<String>,
@@ -270,6 +272,8 @@ impl App {
                 Err(e) => disc_warning = Some(format!("--disc {}: {e}", path.display())),
             }
         }
+        crate::autoplay::recover();
+        let autoplay = if settings.discs.hide_file_window { crate::autoplay::suppress() } else { None };
         let disc_removable = Arc::new(AtomicBool::new(settings.discs.removable_drives));
         let opts = WatchOptions {
             scan_existing: settings.discs.scan_at_start,
@@ -315,6 +319,7 @@ impl App {
             last_focused: Instant::now(),
             discs,
             disc_removable,
+            autoplay,
             _disc_watcher: disc_watcher,
             artwork: Fetcher::new(cc.egui_ctx.clone()),
             fonts: Vec::new(),
@@ -714,5 +719,6 @@ impl eframe::App for App {
 
     fn on_exit(&mut self) {
         self.set_taskbar_hidden(false);
+        self.autoplay = None;
     }
 }

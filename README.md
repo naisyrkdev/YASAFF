@@ -22,6 +22,26 @@ more centered about physical devices:
 
 It runs on Windows and Linux. Mac support on the way.
 
+## Launching games from a physical device
+
+Turn any USB stick, SD card or CD/DVD into a "game cartridge": insert it, and its game starts, like on a console.
+
+**1. Open the game's Physical Devices.** In the library, select the game, press **Menu** (or **Tab**) and choose **Physical Devices**.
+
+![Game options with Physical Devices selected](assets/for_docs/physical_device_1.png)
+
+**2. Write the launch file to the device.** Go to **YASAFF Launching File** and pick one:
+
+- **Insert YASAFF launch config into device:** choose a plugged-in USB stick or SD card, and YASAFF writes the game's `.yasaff` file onto it. The easiest option.
+- **Burn CD/DVD:** burns the `.yasaff` file to a blank CD or DVD.
+- **Create file:** saves the `.yasaff` file anywhere, so you can copy it to the root of a device or burn it yourself.
+
+![Physical Devices → YASAFF Launching File](assets/for_docs/physical_device_2.png)
+
+**3. Plug it in.** With YASAFF running, insert the disc, USB stick or SD card and the game starts.
+
+For USB sticks and SD cards, make sure **USB stick and SD card support** is on in **Settings → Physical Devices**. There you also choose what happens when a device is inserted (*Start the game*, *Ask first* or *Do nothing*). Saves can travel with the device too, see [Saves](#saves). More details in [Discs, USB sticks and SD cards](#discs-usb-sticks-and-sd-cards).
+
 ## Roadmap
 - Create an open-source 3D printable model for case that will have slot for both USB Stick (game data, installers) and CD/DVD (only for game launching) and second - double USB Stick (game data; launcher + managing saves). It's all about data retention on USB Sticks (flash).
 - NFC - support on the way. 

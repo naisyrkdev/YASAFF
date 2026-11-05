@@ -128,6 +128,7 @@ pub(super) enum SettingRow {
     DiscOnInsert,
     DiscScanAtStart,
     DiscRemovable,
+    DiscHideFileWindow,
     DiscKeepSaves,
     DeviceTarget,
     DeviceCreateFile,

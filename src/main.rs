@@ -15,6 +15,7 @@ mod fsutil;
 mod initial;
 mod global_mouse;
 mod apps;
+mod autoplay;
 mod input;
 mod launcher;
 mod library;

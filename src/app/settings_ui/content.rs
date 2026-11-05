@@ -644,6 +644,11 @@ impl App {
                 tr!("This option will make those devices behave like a disc"),
                 Toggle(self.settings.discs.removable_drives),
             ),
+            SettingRow::DiscHideFileWindow => (
+                tr!("Don't open a file window on insert").into(),
+                tr!("Stops the system from showing the device's folder before the game starts. Restored when YASAFF closes"),
+                Toggle(self.settings.discs.hide_file_window),
+            ),
             SettingRow::DiscKeepSaves => (
                 tr!("Keep saves on the launch device").into(),
                 tr!("Games with it on in Options › Physical Devices copy their saves to the stick they were started from"),

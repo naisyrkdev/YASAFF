@@ -68,6 +68,24 @@ pub(super) enum Removal {
     StaticOrder,
     /// Not a removal: offering the first of `App::offers` on a new profile.
     InitialRepo,
+    /// Not a removal: writing to the USB stick or SD card picked on the Physical Devices page,
+    /// so the user sees which device it lands on first.
+    DeviceWrite(DeviceWrite),
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum DeviceWrite {
+    LaunchConfig,
+    SaveCatalog,
+}
+
+impl DeviceWrite {
+    pub(super) fn row(self) -> SettingRow {
+        match self {
+            DeviceWrite::LaunchConfig => SettingRow::DeviceInsertConfig,
+            DeviceWrite::SaveCatalog => SettingRow::DeviceCreateCatalog,
+        }
+    }
 }
 
 impl App {
@@ -384,6 +402,15 @@ impl App {
                 offer = if info.description.is_empty() { what } else { format!("{what} - {}", info.description) };
                 (tr!("Do you want to download this repo?").to_owned(), offer.as_str())
             }
+            Removal::DeviceWrite(write) => {
+                let Some((volume, path)) = self.device_write_target(write) else { return };
+                let title = match write {
+                    DeviceWrite::LaunchConfig => tr!("Write the launch file to {device}?", device = volume_name(volume)),
+                    DeviceWrite::SaveCatalog => tr!("Create the save folder on {device}?", device = volume_name(volume)),
+                };
+                offer = tr!("Target: {path}", path = path.display());
+                (title, offer.as_str())
+            }
         };
         let painter = ui.painter();
         painter.rect_filled(screen, 0, Color32::from_black_alpha(160));
@@ -400,6 +427,8 @@ impl App {
             Removal::Profile | Removal::Everything => tr!("Reset"),
             Removal::StaticOrder => tr!("Turn on"),
             Removal::InitialRepo => tr!("Download"),
+            Removal::DeviceWrite(DeviceWrite::LaunchConfig) => tr!("Write"),
+            Removal::DeviceWrite(DeviceWrite::SaveCatalog) => tr!("Create"),
             Removal::Game if self.selected_game().is_some_and(|g| g.app_id.is_some()) => tr!("Uninstall"),
             Removal::Game => tr!("Remove"),
         };
@@ -678,6 +707,12 @@ impl App {
                         }
                     }
                     Removal::InitialRepo => self.answer_offer(yes),
+                    Removal::DeviceWrite(write) => {
+                        self.mode = self.settings_at(write.row());
+                        if yes {
+                            self.write_to_device(write);
+                        }
+                    }
                     Removal::Profile | Removal::Everything => {
                         let row = if what == Removal::Profile { SettingRow::ProfileReset } else { SettingRow::AppReset };
                         self.mode = self.settings_at(row);
@@ -699,6 +734,7 @@ impl App {
                     Removal::Everything => self.settings_at(SettingRow::AppReset),
                     Removal::StaticOrder => self.settings_at(SettingRow::OrderStatic),
                     Removal::InitialRepo => return self.answer_offer(false),
+                    Removal::DeviceWrite(write) => self.settings_at(write.row()),
                 }
             }
             _ => {}

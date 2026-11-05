@@ -71,11 +71,45 @@ impl App {
         Some(device_saves::catalog(&self.picked_device()?.root, &self.selected_game()?.name))
     }
 
-    pub(super) fn insert_launch_config(&mut self) {
-        let (Some(game), Some(volume)) = (self.selected_game(), self.picked_device()) else {
+    /// Asks which device a write goes to before doing it. The picked device is pinned, so the
+    /// write lands on the one shown in the popup or nowhere.
+    pub(super) fn confirm_device_write(&mut self, write: DeviceWrite) {
+        let (Some(_), Some(volume)) = (self.selected_game(), self.picked_device()) else {
             return self.notify(tr!("Plug in a USB stick or SD card first"));
         };
-        let path = volume.root.join(disc_file_name(game));
+        self.device_pick = Some(volume.root.clone());
+        self.mode = Mode::ConfirmRemove { what: Removal::DeviceWrite(write), yes: false };
+    }
+
+    /// The pinned device and the path a write to it creates; no fallback to another device.
+    pub(super) fn device_write_target(&self, write: DeviceWrite) -> Option<(&Volume, PathBuf)> {
+        let game = self.selected_game()?;
+        let volume = self.devices.iter().find(|v| Some(&v.root) == self.device_pick.as_ref())?;
+        let path = match write {
+            DeviceWrite::LaunchConfig => volume.root.join(disc_file_name(game)),
+            DeviceWrite::SaveCatalog => device_saves::catalog(&volume.root, &game.name),
+        };
+        Some((volume, path))
+    }
+
+    /// Runs a write the user confirmed, after checking the device is still plugged in.
+    pub(super) fn write_to_device(&mut self, write: DeviceWrite) {
+        let device = self.device_write_target(write).map(|(v, _)| volume_name(v)).unwrap_or_default();
+        self.devices = crate::physical::removable_volumes();
+        self.devices_looked = Some(Instant::now());
+        if self.device_write_target(write).is_none() {
+            return self.notify(tr!("{device} is not plugged in anymore. Nothing was written.", device = device));
+        }
+        match write {
+            DeviceWrite::LaunchConfig => self.insert_launch_config(),
+            DeviceWrite::SaveCatalog => self.create_save_catalog(),
+        }
+    }
+
+    fn insert_launch_config(&mut self) {
+        let (Some(game), Some((volume, path))) = (self.selected_game(), self.device_write_target(DeviceWrite::LaunchConfig)) else {
+            return self.notify(tr!("Plug in a USB stick or SD card first"));
+        };
         let (name, device) = (game.name.clone(), volume_name(volume));
         match std::fs::write(&path, disc_manifest(game).to_json()) {
             Ok(()) => self.notify(tr!("Saved {file} on {device}. Plugging it in starts {name}.", file = path.display(), device = device, name = name)),
@@ -83,8 +117,8 @@ impl App {
         }
     }
 
-    pub(super) fn create_save_catalog(&mut self) {
-        let (Some(catalog), Some(volume)) = (self.picked_catalog(), self.picked_device()) else {
+    fn create_save_catalog(&mut self) {
+        let Some((volume, catalog)) = self.device_write_target(DeviceWrite::SaveCatalog) else {
             return self.notify(tr!("Plug in a USB stick or SD card first"));
         };
         let device = volume_name(volume);
