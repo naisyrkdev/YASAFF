@@ -1117,5 +1117,13 @@
   "Pick a look. Settings → Theme can change it later.": "Elige un estilo. Ajustes → Tema permite cambiarlo más tarde.",
   "Game covers side by side. Settings → Theme changes the layout": "Portadas de juegos una al lado de otra. Ajustes → Tema cambia la disposición",
   "Games float around as bubbles": "Los juegos flotan como burbujas",
-  "Installed {name}. Settings → Theme switches to it.": "{name} instalado. Ajustes → Tema permite activarlo."
+  "Installed {name}. Settings → Theme switches to it.": "{name} instalado. Ajustes → Tema permite activarlo.",
+  "Could not remove {file}: {error}": "No se pudo eliminar {file}: {error}",
+  "It already starts {games}. Replace removes those {n} files. Keep both asks which game to start.": [
+    "Ya inicia {games}. Reemplazar elimina ese archivo. Conservar ambos pregunta qué juego iniciar.",
+    "Ya inicia {games}. Reemplazar elimina esos {n} archivos. Conservar ambos pregunta qué juego iniciar."
+  ],
+  "Keep both": "Conservar ambos",
+  "Replace": "Reemplazar",
+  "{device} has another launch file": "{device} tiene otro archivo de inicio"
 }

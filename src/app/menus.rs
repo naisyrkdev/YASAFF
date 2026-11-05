@@ -71,6 +71,9 @@ pub(super) enum Removal {
     /// Not a removal: writing to the USB stick or SD card picked on the Physical Devices page,
     /// so the user sees which device it lands on first.
     DeviceWrite(DeviceWrite),
+    /// Not a removal: the device already has other .yasaff files. "Yes" replaces them with
+    /// this game's, "no" keeps them next to it.
+    OtherLaunchFiles,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -411,13 +414,36 @@ impl App {
                 offer = tr!("Target: {path}", path = path.display());
                 (title, offer.as_str())
             }
+            Removal::OtherLaunchFiles => {
+                let Some((volume, _)) = self.device_write_target(DeviceWrite::LaunchConfig) else { return };
+                let others = self.other_launch_files();
+                let names: Vec<String> = others
+                    .iter()
+                    .map(|p| match DiscManifest::read(p) {
+                        Ok(m) => m.display_name(),
+                        Err(_) => p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                    })
+                    .collect();
+                offer = tr_n!(
+                    names.len(),
+                    "It already starts {games}. Replace removes that file. Keep both asks which game to start.",
+                    "It already starts {games}. Replace removes those {n} files. Keep both asks which game to start.",
+                    games = names.join(", ")
+                );
+                (tr!("{device} has another launch file", device = volume_name(volume)), offer.as_str())
+            }
         };
         let painter = ui.painter();
         painter.rect_filled(screen, 0, Color32::from_black_alpha(160));
         let dialog = Rect::from_center_size(screen.center(), vec2(640.0 * s, 260.0 * s));
         painter.rect_filled(dialog, (8.0 * s) as u8, Color32::from_rgb(18, 24, 40));
         painter.text(dialog.center_top() + vec2(0.0, 50.0 * s), Align2::CENTER_CENTER, title, FontId::proportional(28.0 * s), Color32::WHITE);
-        painter.text(dialog.center_top() + vec2(0.0, 95.0 * s), Align2::CENTER_CENTER, detail, FontId::proportional(17.0 * s), Color32::from_gray(170));
+        let mut job = egui::text::LayoutJob::simple(detail.to_owned(), FontId::proportional(17.0 * s), Color32::from_gray(170), dialog.width() - 60.0 * s);
+        job.halign = egui::Align::Center;
+        let detail = painter.layout_job(job);
+        let detail_top = dialog.top() + 95.0 * s - (detail.size().y / 2.0).min(30.0 * s);
+        let clip = Rect::from_x_y_ranges(dialog.x_range(), detail_top..=dialog.bottom() - 92.0 * s);
+        painter.with_clip_rect(clip).galley(pos2(dialog.center().x, detail_top), detail, Color32::from_gray(170));
 
         let mut choice = None;
         let action = match what {
@@ -429,10 +455,15 @@ impl App {
             Removal::InitialRepo => tr!("Download"),
             Removal::DeviceWrite(DeviceWrite::LaunchConfig) => tr!("Write"),
             Removal::DeviceWrite(DeviceWrite::SaveCatalog) => tr!("Create"),
+            Removal::OtherLaunchFiles => tr!("Replace"),
             Removal::Game if self.selected_game().is_some_and(|g| g.app_id.is_some()) => tr!("Uninstall"),
             Removal::Game => tr!("Remove"),
         };
-        let cancel = if what == Removal::InitialRepo { tr!("Skip") } else { tr!("Cancel") };
+        let cancel = match what {
+            Removal::InitialRepo => tr!("Skip"),
+            Removal::OtherLaunchFiles => tr!("Keep both"),
+            _ => tr!("Cancel"),
+        };
         for (i, (label, is_yes)) in [(cancel, false), (action, true)].into_iter().enumerate() {
             let center = dialog.center_bottom() + vec2((i as f32 - 0.5) * 240.0 * s, -60.0 * s);
             let btn = Rect::from_center_size(center, vec2(200.0 * s, 54.0 * s));
@@ -709,9 +740,15 @@ impl App {
                     Removal::InitialRepo => self.answer_offer(yes),
                     Removal::DeviceWrite(write) => {
                         self.mode = self.settings_at(write.row());
-                        if yes {
-                            self.write_to_device(write);
+                        if yes && write == DeviceWrite::LaunchConfig && !self.other_launch_files().is_empty() {
+                            self.mode = Mode::ConfirmRemove { what: Removal::OtherLaunchFiles, yes: false };
+                        } else if yes {
+                            self.write_to_device(write, false);
                         }
+                    }
+                    Removal::OtherLaunchFiles => {
+                        self.mode = self.settings_at(SettingRow::DeviceInsertConfig);
+                        self.write_to_device(DeviceWrite::LaunchConfig, yes);
                     }
                     Removal::Profile | Removal::Everything => {
                         let row = if what == Removal::Profile { SettingRow::ProfileReset } else { SettingRow::AppReset };
@@ -735,6 +772,7 @@ impl App {
                     Removal::StaticOrder => self.settings_at(SettingRow::OrderStatic),
                     Removal::InitialRepo => return self.answer_offer(false),
                     Removal::DeviceWrite(write) => self.settings_at(write.row()),
+                    Removal::OtherLaunchFiles => self.settings_at(SettingRow::DeviceInsertConfig),
                 }
             }
             _ => {}

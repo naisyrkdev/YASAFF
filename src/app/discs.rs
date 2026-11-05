@@ -125,6 +125,8 @@ impl App {
             self.mode = Mode::DiscNotFound { name };
             return;
         }
+        // With several .yasaff files on the volume, one file's name says nothing about the disc.
+        let name = if manifests.len() > 1 { String::new() } else { name };
         self.mode = Mode::DiscChooser { name, candidates, cursor: 0, volume: event.volume };
     }
 
@@ -249,9 +251,12 @@ impl App {
         let dialog = Rect::from_center_size(screen.center(), vec2((row_w + 120.0 * s).max(640.0 * s), tile + 290.0 * s));
         painter.rect_filled(dialog, (8.0 * s) as u8, Color32::from_rgb(18, 24, 40));
         let x = dialog.center().x;
-        painter.text(pos2(x, dialog.top() + 36.0 * s), Align2::CENTER_TOP, tr!("Disc inserted: {name}", name = name), FontId::proportional(20.0 * s), Color32::from_gray(170));
+        if !name.is_empty() {
+            painter.text(pos2(x, dialog.top() + 36.0 * s), Align2::CENTER_TOP, tr!("Disc inserted: {name}", name = name), FontId::proportional(20.0 * s), Color32::from_gray(170));
+        }
         let title = if count == 1 { tr!("Start this game?") } else { tr!("Several games match. Which one?") };
-        painter.text(pos2(x, dialog.top() + 66.0 * s), Align2::CENTER_TOP, title, FontId::proportional(30.0 * s), Color32::WHITE);
+        let title_y = if name.is_empty() { 50.0 } else { 66.0 };
+        painter.text(pos2(x, dialog.top() + title_y * s), Align2::CENTER_TOP, title, FontId::proportional(30.0 * s), Color32::WHITE);
 
         let mut clicked = None;
         let top = dialog.top() + 130.0 * s;

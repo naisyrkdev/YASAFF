@@ -92,8 +92,17 @@ impl App {
         Some((volume, path))
     }
 
+    /// The .yasaff files already on the pinned device, apart from the one this game's write
+    /// would overwrite anyway.
+    pub(super) fn other_launch_files(&self) -> Vec<PathBuf> {
+        let Some((volume, target)) = self.device_write_target(DeviceWrite::LaunchConfig) else { return Vec::new() };
+        let same = |p: &Path| p.file_name().zip(target.file_name()).is_some_and(|(a, b)| a.eq_ignore_ascii_case(b));
+        crate::physical::manifest::find(&volume.root).unwrap_or_default().into_iter().filter(|p| !same(p)).collect()
+    }
+
     /// Runs a write the user confirmed, after checking the device is still plugged in.
-    pub(super) fn write_to_device(&mut self, write: DeviceWrite) {
+    /// `replace` removes the other .yasaff files on the device once the launch file is written.
+    pub(super) fn write_to_device(&mut self, write: DeviceWrite, replace: bool) {
         let device = self.device_write_target(write).map(|(v, _)| volume_name(v)).unwrap_or_default();
         self.devices = crate::physical::removable_volumes();
         self.devices_looked = Some(Instant::now());
@@ -101,19 +110,28 @@ impl App {
             return self.notify(tr!("{device} is not plugged in anymore. Nothing was written.", device = device));
         }
         match write {
-            DeviceWrite::LaunchConfig => self.insert_launch_config(),
+            DeviceWrite::LaunchConfig => self.insert_launch_config(replace),
             DeviceWrite::SaveCatalog => self.create_save_catalog(),
         }
     }
 
-    fn insert_launch_config(&mut self) {
+    fn insert_launch_config(&mut self, replace: bool) {
         let (Some(game), Some((volume, path))) = (self.selected_game(), self.device_write_target(DeviceWrite::LaunchConfig)) else {
             return self.notify(tr!("Plug in a USB stick or SD card first"));
         };
         let (name, device) = (game.name.clone(), volume_name(volume));
-        match std::fs::write(&path, disc_manifest(game).to_json()) {
-            Ok(()) => self.notify(tr!("Saved {file} on {device}. Plugging it in starts {name}.", file = path.display(), device = device, name = name)),
-            Err(e) => self.notify(tr!("Could not save {file}: {error}", file = path.display(), error = e)),
+        if let Err(e) = std::fs::write(&path, disc_manifest(game).to_json()) {
+            return self.notify(tr!("Could not save {file}: {error}", file = path.display(), error = e));
+        }
+        self.notify(tr!("Saved {file} on {device}. Plugging it in starts {name}.", file = path.display(), device = device, name = name));
+        if !replace {
+            return;
+        }
+        for other in self.other_launch_files() {
+            match std::fs::remove_file(&other) {
+                Ok(()) => log::info!("removed {} from {device}", other.display()),
+                Err(e) => self.notify(tr!("Could not remove {file}: {error}", file = other.display(), error = e)),
+            }
         }
     }
 
