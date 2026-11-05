@@ -121,6 +121,8 @@ pub fn steam_roots() -> Vec<PathBuf> {
     let home = home();
     let mut roots = Vec::new();
     if cfg!(windows) {
+        // Where Steam itself says it lives, so installs outside Program Files are found too.
+        roots.extend(windows_registry::steam_paths());
         for var in ["ProgramFiles(x86)", "ProgramFiles"] {
             if let Some(base) = std::env::var_os(var) {
                 roots.push(PathBuf::from(base).join("Steam"));
@@ -181,14 +183,61 @@ fn steam_game(root: &Path, library: &Path, manifest: &Path) -> Option<Found> {
         return None;
     }
     let cache = root.join("appcache/librarycache");
-    let icon = [cache.join(appid).join("library_600x900.jpg"), cache.join(format!("{appid}_library_600x900.jpg"))]
-        .into_iter()
-        .find(|p| p.is_file());
+    // Newer Steam keeps covers in hash-named subfolders, often as library_capsule.jpg.
+    let icon = crate::metadata::steam_cover_in(&cache.join(appid))
+        .or_else(|| Some(cache.join(format!("{appid}_library_600x900.jpg"))).filter(|p| p.is_file()));
     Some(Found {
         entry: game_entry(name.to_owned(), format!("steam://rungameid/{appid}"), icon),
         source: "Steam".into(),
         location: library.join("steamapps/common").join(installdir),
     })
+}
+
+#[cfg(windows)]
+mod windows_registry {
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::PathBuf;
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW};
+
+    fn wide(s: &str) -> Vec<u16> {
+        std::ffi::OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    }
+
+    fn read_string(root: HKEY, key: &str, value: &str) -> Option<String> {
+        let (key, value) = (wide(key), wide(value));
+        let mut bytes = 0u32;
+        let status = unsafe { RegGetValueW(root, key.as_ptr(), value.as_ptr(), RRF_RT_REG_SZ, std::ptr::null_mut(), std::ptr::null_mut(), &mut bytes) };
+        if status != ERROR_SUCCESS || bytes == 0 {
+            return None;
+        }
+        let mut buf = vec![0u16; (bytes as usize).div_ceil(2)];
+        let status = unsafe { RegGetValueW(root, key.as_ptr(), value.as_ptr(), RRF_RT_REG_SZ, std::ptr::null_mut(), buf.as_mut_ptr().cast(), &mut bytes) };
+        if status != ERROR_SUCCESS {
+            return None;
+        }
+        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        Some(String::from_utf16_lossy(&buf[..len])).filter(|s| !s.is_empty())
+    }
+
+    pub fn steam_paths() -> Vec<PathBuf> {
+        [
+            (HKEY_CURRENT_USER, r"Software\Valve\Steam", "SteamPath"),
+            (HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath"),
+            (HKEY_LOCAL_MACHINE, r"SOFTWARE\Valve\Steam", "InstallPath"),
+        ]
+        .into_iter()
+        .filter_map(|(root, key, value)| read_string(root, key, value))
+        .map(PathBuf::from)
+        .collect()
+    }
+}
+
+#[cfg(not(windows))]
+mod windows_registry {
+    pub fn steam_paths() -> Vec<std::path::PathBuf> {
+        Vec::new()
+    }
 }
 
 fn is_steam_tool(appid: &str, name: &str) -> bool {

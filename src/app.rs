@@ -209,6 +209,8 @@ pub struct App {
     videos: RefCell<Videos>,
     crt_visible: Vec<usize>,
     fullscreen: bool,
+    /// Windows only: enter fullscreen once the window is visible (see main.rs).
+    fullscreen_on_show: bool,
     taskbar_hidden: bool,
     autostart: bool,
     bg_current: Option<PathBuf>,
@@ -312,6 +314,7 @@ impl App {
             videos: RefCell::default(),
             crt_visible: Vec::new(),
             fullscreen,
+            fullscreen_on_show: fullscreen && cfg!(windows),
             taskbar_hidden: false,
             autostart: autostart::is_enabled(),
             bg_current: None,
@@ -630,6 +633,17 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if self.fullscreen_on_show {
+            // eframe shows the window after the first frame, so ask from the second one on.
+            if ctx.cumulative_frame_nr() > 0 {
+                self.fullscreen_on_show = false;
+                if self.fullscreen {
+                    ctx.send_viewport_cmd(ViewportCommand::Fullscreen(true));
+                }
+            } else {
+                ctx.request_repaint();
+            }
+        }
         if self.restarting {
             let screen = ui.max_rect();
             ui.painter().rect_filled(screen, 0, Color32::BLACK);

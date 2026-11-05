@@ -177,6 +177,11 @@ fn steam(appid: &str) -> Found {
     Found { cover, background, source: "Steam" }
 }
 
+/// The cover Steam cached in one game's `librarycache/<appid>` folder, if any.
+pub fn steam_cover_in(dir: &Path) -> Option<PathBuf> {
+    STEAM_COVERS.iter().find_map(|name| find_file(dir, name))
+}
+
 fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
     let direct = dir.join(name);
     if direct.is_file() {

@@ -58,7 +58,10 @@ fn main() -> eframe::Result {
             .with_title("YASAFF")
             .with_inner_size([1280.0, 720.0])
             .with_min_inner_size([800.0, 450.0])
-            .with_fullscreen(fullscreen)
+            // On Windows, fullscreen set while eframe still keeps the window hidden is lost when it
+            // is shown, and winit then ignores a repeat request. App enters it once visible instead.
+            .with_fullscreen(fullscreen && !cfg!(windows))
+            .with_maximized(fullscreen && cfg!(windows))
             .with_icon(eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon-256.png")).expect("valid icon")),
         ..Default::default()
     };

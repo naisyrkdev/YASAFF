@@ -137,10 +137,9 @@ fn detect_heroic() -> Option<Vec<String>> {
 
 #[cfg(windows)]
 fn detect_steam() -> Option<Vec<String>> {
-    ["ProgramFiles(x86)", "ProgramFiles"]
-        .iter()
-        .filter_map(std::env::var_os)
-        .map(|base| PathBuf::from(base).join(r"Steam\steam.exe"))
+    crate::scan::steam_roots()
+        .into_iter()
+        .map(|root| root.join("steam.exe"))
         .find(|p| p.is_file())
         .map(path_cmd)
         .or_else(|| in_path("steam").map(path_cmd))
