@@ -20,7 +20,7 @@ more centered about physical devices:
 (https://github.com/naisyrkdev/YasaffDiscoverServer) (or directly from github [within app])
 
 
-It runs on Windows and Linux. A macOS build is available too, but it's new and less tested.
+It runs on Windows and Linux. A macOS build is available too, but it's **experimental and hasn't been tested on a Mac at all**: it compiles, and that's all that is known. Reports are welcome.
 
 ## Launching games from a physical device
 
@@ -96,7 +96,7 @@ Yea, created here: https://discord.gg/fMRpS6Jmr
 
 **Linux:** download `yasaff.AppImage`, make it executable (`chmod +x yasaff.AppImage`) and run it. On Debian, Ubuntu and Mint you can instead install `yasaff_<version>_amd64.deb` (`sudo apt install ./yasaff_<version>_amd64.deb`), which adds YASAFF to the applications menu. On Fedora, RHEL and openSUSE install `yasaff-<version>-1.x86_64.rpm` (`sudo dnf install ./yasaff-<version>-1.x86_64.rpm`), and on Arch, Manjaro and EndeavourOS `yasaff-<version>-1-x86_64.pkg.tar.zst` (`sudo pacman -U yasaff-<version>-1-x86_64.pkg.tar.zst`).
 
-**macOS** (11 Big Sur or newer, Apple silicon or Intel): open `YASAFF-<version>-macos-universal.dmg` and drag YASAFF to Applications. The app isn't notarized by Apple, so the first time macOS refuses to open it: go to **System Settings → Privacy & Security** and click **Open Anyway** (or run `xattr -dr com.apple.quarantine /Applications/YASAFF.app`). For videos, install ffmpeg with [Homebrew](https://brew.sh) (`brew install ffmpeg`). Burning discs isn't supported on macOS.
+**macOS** (experimental, untested; 11 Big Sur or newer, Apple silicon or Intel): open `YASAFF-<version>-macos-universal.dmg` and drag YASAFF to Applications. The app isn't notarized by Apple, so the first time macOS refuses to open it: go to **System Settings → Privacy & Security** and click **Open Anyway** (or run `xattr -dr com.apple.quarantine /Applications/YASAFF.app`). For videos, install ffmpeg with [Homebrew](https://brew.sh) (`brew install ffmpeg`). Burning discs isn't supported on macOS.
 
 The Windows installer, the portable .zip and the AppImage come with everything YASAFF uses: **ffmpeg** for preview and idle videos, and on Linux **xorriso** for **Burn to CD/DVD…**. You don't have to install anything else. The .deb, .rpm and Arch packages install ffmpeg and xorriso from your distribution instead (on Arch they're optional: `sudo pacman -S ffmpeg libisoburn`).
 
