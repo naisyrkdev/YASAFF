@@ -446,7 +446,9 @@ impl App {
             }
         }
         let counter = tr!("Page {page} / {pages}", page = page + 1, pages = pages);
-        let pos = pos2(screen.left() + 110.0 * s, self.bar_rect(BarSlot::Bottom, screen, s).center().y);
+        // After the system options hint, which takes the bottom left corner.
+        let left = self.system_hint_right(painter, screen, s) + 30.0 * s;
+        let pos = pos2(left, self.bar_rect(BarSlot::Bottom, screen, s).center().y);
         shadow_text(painter, pos, Align2::LEFT_CENTER, &counter, 22.0 * s, Color32::from_gray(210));
         clicked
     }

@@ -53,12 +53,8 @@ impl App {
         }
     }
 
-    /// "Hold [button] System options" in the bottom left corner, filling up while the button is held.
-    pub(super) fn draw_system_hint(&self, ui: &Ui, screen: Rect, s: f32) -> Option<Action> {
-        if self.system_menu.is_some() {
-            return None;
-        }
-        let painter = ui.painter();
+    /// Where the parts of the system options hint go; `area` is the whole hint, including its hover padding.
+    fn system_hint_layout(&self, painter: &Painter, screen: Rect, s: f32) -> SystemHintLayout {
         let font = FontId::proportional(20.0 * s);
         let h = 30.0 * s;
         let y = self.bar_rect(BarSlot::Bottom, screen, s).center().y;
@@ -70,6 +66,21 @@ impl App {
         let button_left = left + hold.size().x + 10.0 * s;
         let label_left = button_left + button_width(painter, &skin, &font, h, s) + 10.0 * s;
         let area = Rect::from_min_max(pos2(left, y - h / 2.0), pos2(label_left + label.size().x, y + h / 2.0)).expand(6.0 * s);
+        SystemHintLayout { font, h, y, color, skin, hold, label, left, button_left, label_left, area }
+    }
+
+    /// The right edge of the system options hint, so other things in the bottom bar can start after it.
+    pub(super) fn system_hint_right(&self, painter: &Painter, screen: Rect, s: f32) -> f32 {
+        self.system_hint_layout(painter, screen, s).area.right()
+    }
+
+    /// "Hold [button] System options" in the bottom left corner, filling up while the button is held.
+    pub(super) fn draw_system_hint(&self, ui: &Ui, screen: Rect, s: f32) -> Option<Action> {
+        if self.system_menu.is_some() {
+            return None;
+        }
+        let painter = ui.painter();
+        let SystemHintLayout { font, h, y, color, skin, hold, label, left, button_left, label_left, area } = self.system_hint_layout(painter, screen, s);
 
         let resp = ui.interact(area, Id::new("system-hint"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
         if resp.hovered() {
@@ -123,4 +134,18 @@ impl App {
             self.handle(&ctx, action);
         }
     }
+}
+
+struct SystemHintLayout {
+    font: FontId,
+    h: f32,
+    y: f32,
+    color: Color32,
+    skin: ButtonSkin,
+    hold: std::sync::Arc<egui::Galley>,
+    label: std::sync::Arc<egui::Galley>,
+    left: f32,
+    button_left: f32,
+    label_left: f32,
+    area: Rect,
 }
