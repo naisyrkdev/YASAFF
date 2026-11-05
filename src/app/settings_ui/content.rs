@@ -90,9 +90,10 @@ impl App {
                 RowValue::Summary(tr!("{count} installed", count = self.addons.installed.len())),
             ),
             SettingRow::AboutSource => (tr!("Source code").into(), "github.com/naisyrkdev/YASAFF", Action(tr!("Open"))),
+            SettingRow::AboutAuthor => (tr!("Author").into(), "NaisyrkDev · github.com/naisyrkdev", Action(tr!("Open"))),
             SettingRow::AboutServer => (
                 tr!("YASAFF Discover Server").into(),
-                tr!("YasaffStuffServer: the website apps and themes come from"),
+                tr!("YasaffDiscoverServer: the website apps and themes come from"),
                 Action(tr!("Open")),
             ),
             SettingRow::VirtualMouse if self.global_mouse.connected() => (

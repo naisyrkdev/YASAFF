@@ -296,7 +296,7 @@ The existing apps share one style:
    Add a Windows build with `WINDOWS_EXE=path/to/my-app.exe ./package.sh`.
 8. **Install:** in YASAFF use **Add → Import application from file…** and pick the zip. The file window opens in `apps_installation_packs` in the profile's data folder (YASAFF creates it), a handy place to keep app packages. The app appears in the library with your icon and background.
 9. **Update:** bump `version` in `Cargo.toml`, re-run `package.sh`, import again. The same `id` replaces the old install and keeps its data.
-10. **Publish (optional):** upload the zip to a YASAFF Discover Server ([YasaffStuffServer](YasaffStuffServer/), *My apps*). YASAFF lists it in Discover for the platforms in `run`, and checks the download against its sha256.
+10. **Publish (optional):** upload the zip to a YASAFF Discover Server ([YasaffDiscoverServer](https://github.com/naisyrkdev/YasaffDiscoverServer), *My apps*). YASAFF lists it in Discover for the platforms in `run`, and checks the download against its sha256.
 
 ---
 

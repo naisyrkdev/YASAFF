@@ -270,7 +270,7 @@ impl App {
         }
         rows.extend([R::DiscOnInsert, R::DiscScanAtStart, R::DiscRemovable, R::DiscHideFileWindow, R::DiscKeepSaves]);
         rows.push(R::AddonManager);
-        rows.extend([R::AboutApp, R::AboutSource, R::AboutServer, R::AppReset]);
+        rows.extend([R::AboutApp, R::AboutSource, R::AboutAuthor, R::AboutServer, R::AppReset]);
         rows
     }
 

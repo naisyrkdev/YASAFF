@@ -141,8 +141,12 @@ impl App {
             SettingRow::ProfileImport => self.import_profile(),
             SettingRow::ProfileReset => self.mode = Mode::ConfirmRemove { what: Removal::Profile, yes: false },
             SettingRow::AppReset => self.mode = Mode::ConfirmRemove { what: Removal::Everything, yes: false },
-            SettingRow::AboutSource | SettingRow::AboutServer => {
-                let url = if row == SettingRow::AboutSource { SOURCE_URL } else { SERVER_URL };
+            SettingRow::AboutSource | SettingRow::AboutAuthor | SettingRow::AboutServer => {
+                let url = match row {
+                    SettingRow::AboutSource => SOURCE_URL,
+                    SettingRow::AboutAuthor => AUTHOR_URL,
+                    _ => SERVER_URL,
+                };
                 if let Err(e) = open::that_detached(url) {
                     self.notify(tr!("Could not open {url}: {error}", url = url, error = e));
                 }

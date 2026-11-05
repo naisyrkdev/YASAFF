@@ -269,7 +269,7 @@ Each copy is written to a temporary folder first and then renamed, so pulling th
 
 ## YASAFF Discover, apps and addons
 
-The **Discover** tile lists apps, games, themes and addons from a YASAFF Discover Server ([YasaffDiscoverfServer](https://github.com/naisyrkdev/YasaffDiscoverServer)), where you install and update them. Add the store address in **Settings → YASAFF Discover**. You can add several stores and switch between them.
+The **Discover** tile lists apps, games, themes and addons from a YASAFF Discover Server ([YasaffDiscoverServer](https://github.com/naisyrkdev/YasaffDiscoverServer)), where you install and update them. Add the store address in **Settings → YASAFF Discover**. You can add several stores and switch between them.
 
 - **Apps** are separate programs that YASAFF starts and holds inside its own window. Press Guide to come back to YASAFF while they keep running.
 - **Addons** are bar widgets, for example device info or a clock. Manage them in **Settings → Addons → Addons Manager…** and show each one in the top bar, the bottom bar or anywhere on the screen, at 50–300 % size.
@@ -321,6 +321,14 @@ YASAFF writes a log to `<YASAFF data>/logs/yasaff.log` (the previous run's log i
 - Windows: `%APPDATA%\yasaff\data\logs\`
 
 Attach it when reporting a problem.
+
+## Credentials
+
+Development and idea from me ([NaisyrkDev](https://github.com/naisyrkdev))!
+
+Yea, with small help of AI.
+
+Everything is now open-source - I know.
 
 ## License
 

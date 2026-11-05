@@ -189,6 +189,7 @@ pub(super) enum SettingRow {
     AddonManager,
     AboutApp,
     AboutSource,
+    AboutAuthor,
     AboutServer,
 }
 
@@ -220,7 +221,9 @@ pub(super) enum ButtonRow {
 
 pub(super) const SOURCE_URL: &str = "https://github.com/naisyrkdev/YASAFF";
 
-pub(super) const SERVER_URL: &str = "https://github.com/naisyrkdev/YasaffStuffServer";
+pub(super) const AUTHOR_URL: &str = "https://github.com/naisyrkdev";
+
+pub(super) const SERVER_URL: &str = "https://github.com/naisyrkdev/YasaffDiscoverServer";
 
 impl SettingRow {
     pub(super) fn page(self) -> Page {
