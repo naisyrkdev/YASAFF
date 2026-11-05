@@ -123,7 +123,7 @@ impl App {
             return rows;
         }
         let theme = &self.theme().settings;
-        let mut rows = vec![R::Fullscreen, R::Language, R::GalleryKeepAll, R::Autostart];
+        let mut rows = vec![R::Fullscreen, R::Language, R::ShowLastPlayed, R::GalleryKeepAll, R::Autostart];
         if cfg!(windows) {
             rows.push(R::TaskbarHide);
         }

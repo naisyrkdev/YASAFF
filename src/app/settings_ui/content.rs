@@ -40,6 +40,11 @@ impl App {
                 };
                 (tr!("Last played games first").into(), sub, Toggle(order.moves_played()))
             }
+            SettingRow::ShowLastPlayed => (
+                tr!("Show when a game was last played").into(),
+                tr!("Under the selected game's name"),
+                Toggle(self.settings.show_last_played),
+            ),
             SettingRow::GalleryKeepAll => (
                 tr!("Keep every image in gallery, manage it manually").into(),
                 tr!("Off: a new image deletes the one it replaces, unless another tile style still shows it"),

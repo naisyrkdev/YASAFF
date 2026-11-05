@@ -92,7 +92,7 @@
   "%d %b %Y, %H:%M": "%d/%m/%Y, %H:%M",
   "Never played": "Nunca jugado",
   "Running": "En ejecución",
-  "{status}  ·  Update to {version} in Options": "{status}  ·  Actualiza a {version} en Opciones",
+  "Update to {version} in Options": "Actualiza a {version} en Opciones",
   "Switch": "Cambiar",
   "Start": "Jugar",
   "Apps, games and themes from YASAFF Discover, installed and updated right here": "Aplicaciones, juegos y temas de YASAFF Discover, instalados y actualizados aquí mismo",
@@ -880,7 +880,7 @@
   "Static order is off. Games keep their places until something moves them": "Orden fijo desactivado. Los juegos mantienen su posición hasta que algo los mueva",
   "Stays in slot {slot}, whatever else moves": "Se queda en la posición {slot}, pase lo que pase",
   "Turn on": "Activar",
-  "{status}  ·  Static position: slot {slot}": "{status}  ·  Posición fija: {slot}",
+  "Static position: slot {slot}": "Posición fija: {slot}",
   "Select an icon for {tile}": "Selecciona un icono para {tile}",
   "Icons": "Iconos",
   "Tile icons": "Iconos de los mosaicos",
@@ -1135,5 +1135,7 @@
   "Hold": "Mantén",
   "System options": "Opciones del sistema",
   "Shut down": "Apagar",
-  "Minimize": "Minimizar"
+  "Minimize": "Minimizar",
+  "Show when a game was last played": "Mostrar cuándo se jugó por última vez",
+  "Under the selected game's name": "Bajo el nombre del juego seleccionado"
 }

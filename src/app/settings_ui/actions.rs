@@ -89,6 +89,10 @@ impl App {
                     self.save_settings();
                 }
             }
+            SettingRow::ShowLastPlayed => {
+                self.settings.show_last_played ^= true;
+                self.save_settings();
+            }
             SettingRow::GalleryKeepAll => {
                 self.settings.gallery.keep_all ^= true;
                 self.library.prune_gallery = !self.settings.gallery.keep_all;
@@ -538,7 +542,7 @@ impl App {
             return self.adjust_theme_option(i, delta);
         }
         match row {
-            SettingRow::ControllerSwap | SettingRow::OrderLastPlayed | SettingRow::OrderStatic | SettingRow::GalleryKeepAll => {
+            SettingRow::ControllerSwap | SettingRow::OrderLastPlayed | SettingRow::OrderStatic | SettingRow::GalleryKeepAll | SettingRow::ShowLastPlayed => {
                 return self.activate_setting(row);
             }
             SettingRow::ControllerPrompts => {

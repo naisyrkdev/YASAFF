@@ -278,6 +278,8 @@ impl Default for WindowsSettings {
 #[serde(default)]
 pub struct Settings {
     pub start_fullscreen: bool,
+    /// The line under the selected game's name says when it was last played.
+    pub show_last_played: bool,
     pub language: Language,
     pub theme: String,
     pub heroic: StoreSettings,
@@ -307,6 +309,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             start_fullscreen: true,
+            show_last_played: false,
             language: Language::default(),
             theme: String::new(),
             heroic: StoreSettings::default(),

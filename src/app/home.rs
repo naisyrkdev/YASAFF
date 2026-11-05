@@ -795,29 +795,30 @@ impl App {
 
     /// The line under the selected game's name: when it was played, and what is going on with it.
     pub(super) fn game_status(&self, game: &Game) -> String {
-        let sub = match game.last_played.and_then(|t| chrono::DateTime::from_timestamp(t as i64, 0)) {
-            Some(t) => tr!("Last played {date}", date = t.with_timezone(&chrono::Local).format(tr!("%d %b %Y, %H:%M"))),
-            None => tr!("Never played").to_owned(),
-        };
-        let sub = match self.artwork.status(&game.id) {
-            Some(metadata::Status::Done(at, _)) if at.elapsed() >= metadata::DONE_BADGE => sub,
-            Some(status) => format!("{sub}  ·  {}", status.describe()),
-            None => sub,
-        };
-        let index = self.library.position(&game.id);
-        let sub = if index.is_some_and(|i| self.is_active(i)) {
-            tr!("Running").to_owned()
-        } else if let Some(update) = self.game_update(game) {
-            tr!("{status}  ·  Update to {version} in Options", status = sub, version = update.latest.version)
-        } else {
-            sub
-        };
-        match (game.fixed_slot, index) {
-            (Some(_), Some(i)) if self.is_standard() && !self.settings.order.static_order => {
-                tr!("{status}  ·  Static position: slot {slot}", status = sub, slot = i + 1)
-            }
-            _ => sub,
+        let mut parts: Vec<String> = Vec::new();
+        if self.settings.show_last_played {
+            parts.push(match game.last_played.and_then(|t| chrono::DateTime::from_timestamp(t as i64, 0)) {
+                Some(t) => tr!("Last played {date}", date = t.with_timezone(&chrono::Local).format(tr!("%d %b %Y, %H:%M"))),
+                None => tr!("Never played").to_owned(),
+            });
         }
+        match self.artwork.status(&game.id) {
+            Some(metadata::Status::Done(at, _)) if at.elapsed() >= metadata::DONE_BADGE => {}
+            Some(status) => parts.push(status.describe()),
+            None => {}
+        }
+        let index = self.library.position(&game.id);
+        if index.is_some_and(|i| self.is_active(i)) {
+            parts = vec![tr!("Running").to_owned()];
+        } else if let Some(update) = self.game_update(game) {
+            parts.push(tr!("Update to {version} in Options", version = update.latest.version));
+        }
+        if let (Some(_), Some(i)) = (game.fixed_slot, index) {
+            if self.is_standard() && !self.settings.order.static_order {
+                parts.push(tr!("Static position: slot {slot}", slot = i + 1));
+            }
+        }
+        parts.join("  ·  ")
     }
 
     pub(super) fn click_tile(&mut self, i: usize) {
