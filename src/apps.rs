@@ -167,6 +167,7 @@ fn entry_for_scan(path: &Path, _on_desktop: bool) -> Option<AppEntry> {
     (path.extension()? == "app").then(|| AppEntry::plain(path))
 }
 
+#[cfg(not(target_os = "macos"))]
 fn desktop_dir() -> Option<PathBuf> {
     directories::UserDirs::new().and_then(|u| u.desktop_dir().map(Path::to_path_buf))
 }

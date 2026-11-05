@@ -93,6 +93,7 @@ fn spawn(command: &[String], extra: impl Iterator<Item = String>) -> Result<()> 
     Ok(())
 }
 
+#[cfg(not(target_os = "macos"))]
 fn in_path(name: &str) -> Option<PathBuf> {
     let exe = if cfg!(windows) { format!("{name}.exe") } else { name.to_owned() };
     std::env::split_paths(&std::env::var_os("PATH")?).map(|d| d.join(&exe)).find(|p| p.is_file())
