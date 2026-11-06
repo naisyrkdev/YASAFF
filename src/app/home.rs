@@ -813,10 +813,11 @@ impl App {
         } else if let Some(update) = self.game_update(game) {
             parts.push(tr!("Update to {version} in Options", version = update.latest.version));
         }
-        if let (Some(_), Some(i)) = (game.fixed_slot, index) {
-            if self.is_standard() && !self.settings.order.static_order {
-                parts.push(tr!("Static position: slot {slot}", slot = i + 1));
-            }
+        if let (Some(_), Some(i)) = (game.fixed_slot, index)
+            && self.is_standard()
+            && !self.settings.order.static_order
+        {
+            parts.push(tr!("Static position: slot {slot}", slot = i + 1));
         }
         parts.join("  ·  ")
     }
