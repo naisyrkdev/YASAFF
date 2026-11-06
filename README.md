@@ -10,30 +10,31 @@
 
 ![YASAFF demo](assets/for_docs/gif_src/1.gif)
 
-**YASAFF Launcher** is a software/layer that tries mimic console experience and allow you makes games. It runs on Windows and Linux. A macOS build is available too, but it's **experimental**
-more centered about physical devices.
+**YASAFF Launcher** is a software that aims for full console experience. It runs on Windows and Linux. A macOS it's **experimental**
+
+Focused more on physical devices.
 
 ## Features
 
 - Fully customizable console-alike menu
-- Dedicated apps available to imitate working in background
 - Boot your games from physical devices
 - Manage your saves (on physical devices)
+- Dedicated apps running within app (alike at least)
 - Install application, themes & more from discover servers
-(https://github.com/naisyrkdev/YasaffDiscoverServer) (or directly from github [within app])
+(https://github.com/naisyrkdev/YasaffDiscoverServer) (also direct GitHub support)
 
 
 ## Download
 
 | Platform | Download |
 | --- | --- |
-| Windows (installer) | [YASAFF-Setup-&lt;version&gt;.exe](https://github.com/naisyrkdev/YASAFF/releases/latest) |
-| Windows (portable) | [YASAFF-&lt;version&gt;-portable-win64.zip](https://github.com/naisyrkdev/YASAFF/releases/latest) |
-| macOS (experimental) | [YASAFF-&lt;version&gt;-macos-universal.dmg](https://github.com/naisyrkdev/YASAFF/releases/latest) |
-| Linux (AppImage) | [YASAFF-&lt;version&gt;-x86_64.AppImage](https://github.com/naisyrkdev/YASAFF/releases/latest) |
-| Linux (deb) | [yasaff_&lt;version&gt;_amd64.deb](https://github.com/naisyrkdev/YASAFF/releases/latest) |
-| Linux (rpm) | [yasaff-&lt;version&gt;-1.x86_64.rpm](https://github.com/naisyrkdev/YASAFF/releases/latest) |
-| Arch Linux | [yasaff-&lt;version&gt;-1-x86_64.pkg.tar.zst](https://github.com/naisyrkdev/YASAFF/releases/latest) |
+| Windows (installer) | [YASAFF-Setup.exe](https://github.com/naisyrkdev/YASAFF/releases/latest) |
+| Windows (portable) | [YASAFF-portable-win64.zip](https://github.com/naisyrkdev/YASAFF/releases/latest) |
+| macOS (experimental) | [YASAFF-macos-universal.dmg](https://github.com/naisyrkdev/YASAFF/releases/latest) |
+| Linux (AppImage) | [YASAFF-x86_64.AppImage](https://github.com/naisyrkdev/YASAFF/releases/latest) |
+| Linux (deb) | [yasaff_amd64.deb](https://github.com/naisyrkdev/YASAFF/releases/latest) |
+| Linux (rpm) | [yasaff-1.x86_64.rpm](https://github.com/naisyrkdev/YASAFF/releases/latest) |
+| Arch Linux | [yasaff-1-x86_64.pkg.tar.zst](https://github.com/naisyrkdev/YASAFF/releases/latest) |
 
 Download from [GitHub Releases](https://github.com/naisyrkdev/YASAFF/releases). See [Installing and building](#installing-and-building) for how to install each one.
 
