@@ -547,17 +547,19 @@ impl App {
         }
     }
 
+    /// Fullscreen to a window or back: F11, or the system options.
+    fn toggle_fullscreen(&mut self, ctx: &Context) {
+        self.fullscreen = !self.fullscreen;
+        ctx.send_viewport_cmd(ViewportCommand::Fullscreen(self.fullscreen));
+        self.sync_taskbar();
+    }
+
     fn handle(&mut self, ctx: &Context, action: Action) {
         if self.restarting || (self.dialog_open() && !matches!(action, Action::ToggleFullscreen)) {
             return;
         }
         match action {
-            Action::ToggleFullscreen => {
-                self.fullscreen = !self.fullscreen;
-                ctx.send_viewport_cmd(ViewportCommand::Fullscreen(self.fullscreen));
-                self.sync_taskbar();
-                return;
-            }
+            Action::ToggleFullscreen => return self.toggle_fullscreen(ctx),
             Action::SystemMenu => {
                 self.system_menu.get_or_insert(0);
                 return;

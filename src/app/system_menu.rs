@@ -1,5 +1,5 @@
-//! The system options: shut down or minimize YASAFF, opened by holding Guide or Esc. In
-//! fullscreen there is no window frame, so this is the way out.
+//! The system options: shut down or minimize YASAFF, or switch between fullscreen and a window,
+//! opened by holding Guide or Esc. In fullscreen there is no window frame, so this is the way out.
 
 use super::*;
 
@@ -7,16 +7,20 @@ use super::*;
 enum SystemOption {
     ShutDown,
     Minimize,
+    /// Fullscreen to a window or back, like F11.
+    WindowMode,
     Cancel,
 }
 
 impl SystemOption {
-    const ALL: [Self; 3] = [Self::ShutDown, Self::Minimize, Self::Cancel];
+    const ALL: [Self; 4] = [Self::ShutDown, Self::Minimize, Self::WindowMode, Self::Cancel];
 
-    fn label(self) -> &'static str {
+    fn label(self, fullscreen: bool) -> &'static str {
         match self {
             Self::ShutDown => tr!("Shut down"),
             Self::Minimize => tr!("Minimize"),
+            Self::WindowMode if fullscreen => tr!("Switch to windowed mode"),
+            Self::WindowMode => tr!("Switch to fullscreen mode"),
             Self::Cancel => tr!("Cancel"),
         }
     }
@@ -37,6 +41,7 @@ impl App {
                         self.focus_guard_until = None;
                         ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
                     }
+                    SystemOption::WindowMode => self.toggle_fullscreen(ctx),
                     SystemOption::Cancel => {}
                 }
             }
@@ -120,7 +125,7 @@ impl App {
             let focused = self.system_menu.unwrap_or(cursor) == i;
             painter.rect_filled(btn, (4.0 * s) as u8, if focused { Color32::WHITE } else { Color32::from_white_alpha(25) });
             let text = if focused { Color32::BLACK } else { Color32::WHITE };
-            painter.text(btn.center(), Align2::CENTER_CENTER, option.label(), FontId::proportional(22.0 * s), text);
+            painter.text(btn.center(), Align2::CENTER_CENTER, option.label(self.fullscreen), FontId::proportional(22.0 * s), text);
         }
 
         let hints = [Hint(Action::Confirm, tr!("Select")), Hint(Action::Back, tr!("Cancel"))];

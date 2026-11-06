@@ -1137,5 +1137,7 @@
   "Shut down": "Apagar",
   "Minimize": "Minimizar",
   "Show when a game was last played": "Mostrar cuándo se jugó por última vez",
-  "Under the selected game's name": "Bajo el nombre del juego seleccionado"
+  "Under the selected game's name": "Bajo el nombre del juego seleccionado",
+  "Switch to windowed mode": "Cambiar a modo ventana",
+  "Switch to fullscreen mode": "Cambiar a pantalla completa"
 }

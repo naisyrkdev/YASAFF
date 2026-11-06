@@ -8,10 +8,13 @@
 
 </div>
 
-![YASAFF demo](assets/for_docs/1.gif)
+![YASAFF demo](assets/for_docs/gif_src/1.gif)
 
-**YASAFF Launcher** is a software/layer that tries mimic console experience and allow you makes games
-more centered about physical devices:
+**YASAFF Launcher** is a software/layer that tries mimic console experience and allow you makes games. It runs on Windows and Linux. A macOS build is available too, but it's **experimental**
+more centered about physical devices.
+
+## Features
+
 - Fully customizable console-alike menu
 - Dedicated apps available to imitate working in background
 - Boot your games from physical devices
@@ -20,7 +23,19 @@ more centered about physical devices:
 (https://github.com/naisyrkdev/YasaffDiscoverServer) (or directly from github [within app])
 
 
-It runs on Windows and Linux. A macOS build is available too, but it's **experimental and hasn't been tested on a Mac at all**: it compiles, and that's all that is known. Reports are welcome.
+## Download
+
+| Platform | Download |
+| --- | --- |
+| Windows (installer) | [YASAFF-Setup-&lt;version&gt;.exe](https://github.com/naisyrkdev/YASAFF/releases/latest) |
+| Windows (portable) | [YASAFF-&lt;version&gt;-portable-win64.zip](https://github.com/naisyrkdev/YASAFF/releases/latest) |
+| macOS (experimental) | [YASAFF-&lt;version&gt;-macos-universal.dmg](https://github.com/naisyrkdev/YASAFF/releases/latest) |
+| Linux (AppImage) | [YASAFF-&lt;version&gt;-x86_64.AppImage](https://github.com/naisyrkdev/YASAFF/releases/latest) |
+| Linux (deb) | [yasaff_&lt;version&gt;_amd64.deb](https://github.com/naisyrkdev/YASAFF/releases/latest) |
+| Linux (rpm) | [yasaff-&lt;version&gt;-1.x86_64.rpm](https://github.com/naisyrkdev/YASAFF/releases/latest) |
+| Arch Linux | [yasaff-&lt;version&gt;-1-x86_64.pkg.tar.zst](https://github.com/naisyrkdev/YASAFF/releases/latest) |
+
+Download from [GitHub Releases](https://github.com/naisyrkdev/YASAFF/releases). See [Installing and building](#installing-and-building) for how to install each one.
 
 ## Launching games from a physical device
 
@@ -47,9 +62,6 @@ For USB sticks and SD cards, make sure **USB stick and SD card support** is on i
 - NFC - support on the way. 
 
 ## FAQ
-### Is this project AI-generated ("vibe-coded")?
-
-Yes, mostly, indeed.
 
 ### Is there commnity server?
 
@@ -74,21 +86,6 @@ Yea, created here: https://discord.gg/fMRpS6Jmr
 
 ## Support 
 <a href='https://ko-fi.com/T3T7280TZN' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi5.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
-
-## Features
-
-- A fullscreen library you use with a controller. Keyboard and mouse work too.
-- Finds installed games in **Steam**, **Heroic Games Launcher** and desktop shortcuts, and uses their artwork.
-- Starts games directly or through their store. YASAFF follows the game process, so it knows when the game is running and comes back when the game closes.
-- Two layouts (**Row view** and **Grid view**), a **Bubbles** theme, and eight tile styles, from flat cards to 3D boxes, opening cases, spinning discs and CRT screens.
-- **Custom themes** that bring their own code and draw the home screen their own way, with their own options in Settings.
-- Themes with their own backgrounds, bars, button looks, icons, fonts and sounds. You can export and import them.
-- **Physical games:** insert a disc, USB stick or SD card that holds a `.yasaff` file and its game starts, like on a console. YASAFF can also burn that file to a CD or DVD.
-- Save backups, and save syncing to the USB stick or SD card a game was started from.
-- A virtual mouse on the right analog stick and button remapping.
-- **YASAFF Discover** for apps, games, themes and addons, and bar widgets you can place on the screen.
-- Several profiles, each with its own library and settings.
-- Available in English, French, Spanish and Polish.
 
 ## Installing and building
 
