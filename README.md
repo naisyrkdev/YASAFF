@@ -4,7 +4,6 @@
 
 ![Rust Percentage](https://img.shields.io/github/languages/top/naisyrkdev/YASAFF?logo=rust&logoColor=white)
 [![License](https://img.shields.io/github/license/naisyrkdev/YASAFF)](LICENSE)
-![Status](https://img.shields.io/badge/status-alpha-red)
 
 </div>
 
@@ -16,7 +15,7 @@ Focused more on physical devices.
 
 ## Features
 
-- Fully customizable console-alike menu
+- Fully customizable console experience
 - Boot your games from physical devices
 - Manage your saves (on physical devices)
 - Dedicated apps running within app (alike at least)
@@ -36,7 +35,7 @@ Focused more on physical devices.
 | Linux (rpm) | [yasaff-1.x86_64.rpm](https://github.com/naisyrkdev/YASAFF/releases/latest) |
 | Arch Linux | [yasaff-1-x86_64.pkg.tar.zst](https://github.com/naisyrkdev/YASAFF/releases/latest) |
 
-Download from [GitHub Releases](https://github.com/naisyrkdev/YASAFF/releases). See [Installing and building](#installing-and-building) for how to install each one.
+Download from [yasaff.com](https://yasaff.com) or [GitHub Releases](https://github.com/naisyrkdev/YASAFF/releases). See [Installing and building](#installing-and-building) for how to install each one.
 
 ## Launching games from a physical device
 
