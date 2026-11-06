@@ -24,6 +24,8 @@ pub struct Label<'a> {
     pub color: Color32,
     pub size: f32,
     pub down: bool,
+    /// A white icon drawn in place of `text`, tinted with `color`.
+    pub icon: Option<egui::ImageSource<'static>>,
 }
 
 pub struct Art<'a> {
@@ -297,6 +299,13 @@ pub(crate) fn paint_label(ui: &Ui, view: &View, face: &Face, label: &Label, brig
     };
     let painter = ui.painter();
     let color = shade(label.color, brightness);
+    if let Some(icon) = &label.icon {
+        let side = label.size * short;
+        let center = face.center();
+        return paint_icon_quad(ui, icon, side * view.scale, color, |u, v| {
+            view.project(center + along * ((u - 0.5) * side) + across * ((v - 0.5) * side))
+        });
+    }
     let max_len = long * 0.88 * view.scale;
     let mut size = label.size * short * view.scale;
     let mut galley = painter.layout_no_wrap(label.text.to_owned(), FontId::new(size, label.font.clone()), color);
@@ -322,6 +331,20 @@ pub(crate) fn paint_label(ui: &Ui, view: &View, face: &Face, label: &Label, brig
         }));
     }
     painter.add(Shape::mesh(mesh));
+}
+
+/// Paints a white icon, tinted with `color`, onto a square whose corners `corner(u, v)` puts on
+/// screen; `px` is its rough size on screen, for rasterising.
+pub(crate) fn paint_icon_quad(ui: &Ui, icon: &egui::ImageSource<'static>, px: f32, color: Color32, corner: impl Fn(f32, f32) -> Pos2) {
+    let image = egui::Image::new(icon.clone());
+    let Ok(egui::load::TexturePoll::Ready { texture }) = image.load_for_size(ui.ctx(), Vec2::splat(px.max(1.0))) else { return };
+    let mut mesh = Mesh::with_texture(texture.id);
+    for (u, v) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)] {
+        mesh.vertices.push(Vertex { pos: corner(u, v), uv: pos2(u, v), color });
+    }
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    ui.painter().add(Shape::mesh(mesh));
 }
 
 pub fn shade(color: Color32, factor: f32) -> Color32 {

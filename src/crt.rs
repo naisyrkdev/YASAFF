@@ -16,6 +16,8 @@ pub enum Picture {
 pub struct Art {
     pub picture: Picture,
     pub label: Option<(String, FontFamily)>,
+    /// A white icon shown in place of `label`.
+    pub icon: Option<egui::ImageSource<'static>>,
     pub filter: bool,
 }
 
@@ -166,7 +168,16 @@ pub fn paint(ui: &Ui, rect: Rect, art: &Art, state: State, shadow: Vec2, stroke:
         let uv = if uv_half == Vec2::ZERO { WHITE_UV } else { pos2(0.5, 0.5) + barrel(q) * uv_half };
         (screen.at(q * squish), uv, scale(base, vignette(q) * flicker))
     }));
-    if let (Some((text, family)), true) = (&art.label, sy > 0.5) {
+    if let (Some(icon), true) = (&art.icon, sy > 0.5) {
+        let side = screen.half.y * 0.9 * sy;
+        let image = egui::Image::new(icon.clone());
+        if let Ok(egui::load::TexturePoll::Ready { texture }) = image.load_for_size(ui.ctx(), Vec2::splat(side)) {
+            let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+            let at = |c: Pos2| Rect::from_center_size(c, Vec2::splat(side));
+            painter.image(texture.id, at(screen.center + vec2(2.0, 2.0)), uv, Color32::from_black_alpha(120));
+            painter.image(texture.id, at(screen.center), uv, Color32::from_white_alpha((230.0 * sy) as u8));
+        }
+    } else if let (Some((text, family)), true) = (&art.label, sy > 0.5) {
         let size = screen.half.y * 0.75 * sy;
         painter.text(screen.center + vec2(2.0, 2.0), Align2::CENTER_CENTER, text, FontId::new(size, family.clone()), Color32::from_black_alpha(120));
         painter.text(screen.center, Align2::CENTER_CENTER, text, FontId::new(size, family.clone()), Color32::from_white_alpha((230.0 * sy) as u8));

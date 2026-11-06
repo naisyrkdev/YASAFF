@@ -34,6 +34,8 @@ pub struct Label<'a> {
     pub font: egui::FontFamily,
     pub color: Color32,
     pub size: f32,
+    /// A white icon drawn in place of `text`, tinted with `color`.
+    pub icon: Option<egui::ImageSource<'static>>,
 }
 
 pub struct Art<'a> {
@@ -242,6 +244,13 @@ fn paint_label_side(ui: &Ui, view: &View, art: &Art, brightness: f32) {
 fn paint_label(ui: &Ui, view: &View, label: &Label, brightness: f32) {
     let painter = ui.painter();
     let color = shade(label.color, brightness);
+    if let Some(icon) = &label.icon {
+        let side = label.size * 2.0 * R_OUTER;
+        let center = v3(0.0, (R_PRINT.0 + R_OUTER) / 2.0, HALF_THICKNESS);
+        return crate::box3d::paint_icon_quad(ui, icon, side * view.scale, color, |u, v| {
+            view.project(center + v3((u - 0.5) * side, (0.5 - v) * side, 0.0))
+        });
+    }
     let max_len = 0.62 * view.scale;
     let mut size = label.size * 2.0 * R_OUTER * view.scale;
     let mut galley = painter.layout_no_wrap(label.text.to_owned(), FontId::new(size, label.font.clone()), color);

@@ -55,6 +55,14 @@ pub(super) fn paint_icon(painter: &Painter, icon: egui::ImageSource<'static>, ce
 
 
 impl App {
+    /// The icon a tile without a game shows (a special tile's), if it has one.
+    pub(super) fn tile_icon(&self, i: usize) -> Option<egui::ImageSource<'static>> {
+        if self.library.games.get(i).is_some() {
+            return None;
+        }
+        self.special(i).and_then(|s| self.special_icon(s))
+    }
+
     /// Paints a special tile's mark: its icon if it has one, else its glyph.
     fn paint_special_mark(&self, painter: &Painter, special: Option<Special>, center: Pos2, size: f32) {
         match special.and_then(|s| self.special_icon(s)) {
@@ -265,6 +273,11 @@ impl App {
             let stroke = Stroke::new(3.0 * s, Color32::WHITE.gamma_multiply(focus.max(0.4)));
             painter.add(Shape::ellipse_stroke(floor, radius, stroke));
         }
+        if let Some(icon) = self.tile_icon(i) {
+            let center = pos2(rect.center().x, (rect.top() + floor.y) / 2.0);
+            paint_icon(painter, icon, center, rect.height() * 0.4, Color32::WHITE);
+            return;
+        }
 
         let name = match game {
             Some(g) => g.name.as_str(),
@@ -331,6 +344,7 @@ impl App {
             None => self.special(i).map_or("", Special::name),
         };
         let font = game.map_or(egui::FontFamily::Proportional, |g| self.game_font(g));
+        let icon = self.tile_icon(i);
         let cover = game.and_then(|g| g.asset(AssetKind::Cover));
         let spine = game.and_then(|g| g.asset(AssetKind::Spine));
         let image = |kind: AssetKind, fallback: Color32| match game.and_then(|g| Some((g.asset(kind)?, g.placement(kind)))) {
@@ -340,11 +354,11 @@ impl App {
         };
         let art = box3d::Art {
             front: image(AssetKind::Cover, placeholder),
-            front_label: cover.is_none().then(|| Label { text: &front_text, font: font.clone(), color: Color32::WHITE, size: 0.3, down: false }),
+            front_label: cover.is_none().then(|| Label { text: &front_text, font: font.clone(), color: Color32::WHITE, size: 0.3, down: false, icon }),
             back: image(AssetKind::Back, look.spine_color),
             spine: image(AssetKind::Spine, look.spine_color),
             spine_label: (spine.is_none() && look.spine_label == SpineLabel::Name)
-                .then(|| Label { text: name, font: font.clone(), color: look.spine_text_color, size: 0.5, down: true }),
+                .then(|| Label { text: name, font: font.clone(), color: look.spine_text_color, size: 0.5, down: true, icon: None }),
             top: image(AssetKind::Top, look.top_color),
             side: image(AssetKind::Side, look.top_color),
             bottom: image(AssetKind::Bottom, look.top_color),
@@ -405,7 +419,7 @@ impl App {
                 Some(path) => box3d::Fill::Cover(path, placeholder, game.map(|g| g.placement(AssetKind::Cover)).unwrap_or_default()),
                 None => box3d::Fill::Color(placeholder),
             },
-            label: cover.is_none().then(|| disc3d::Label { text: &text, font, color: Color32::WHITE, size: 0.2 }),
+            label: cover.is_none().then(|| disc3d::Label { text: &text, font, color: Color32::WHITE, size: 0.2, icon: self.tile_icon(i) }),
         };
         f(&art)
     }
@@ -468,7 +482,7 @@ impl App {
             (_, None) => Some((self.special(i).map_or("", Special::glyph).to_owned(), egui::FontFamily::Proportional)),
         };
         let crt_look = &self.theme().settings.crt;
-        let art = crt::Art { picture, label, filter: crt_look.filter };
+        let art = crt::Art { picture, label, icon: self.tile_icon(i), filter: crt_look.filter };
         let stroke = (i == self.selected).then(|| Stroke::new(3.0 * s, Color32::WHITE.gamma_multiply(focus.max(0.4))));
         crt::paint(ui, rect, &art, state, vec2(0.0, 8.0 * s + lift * 0.6), stroke);
     }
