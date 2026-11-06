@@ -7,7 +7,7 @@
 
 </div>
 
-![YASAFF demo](assets/for_docs/gif_src/1.gif)
+![YASAFF demo](assets/for_docs/showcase.gif)
 
 **YASAFF Launcher** is a software that aims for full console experience. It runs on Windows and Linux. A macOS it's **experimental**
 
