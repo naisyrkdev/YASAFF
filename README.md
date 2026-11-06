@@ -16,8 +16,8 @@ Focused more on physical devices.
 ## Features
 
 - Fully customizable console experience
-- Boot your games from physical devices
-- Manage your saves (on physical devices)
+- Boot your games from physical devices (CD/DVD, USB Stick, SD Card)
+- Manage your saves (on physical devices - USB Stick, SD Card)
 - Dedicated apps running within app (alike at least)
 - Install application, themes & more from discover servers
 (https://github.com/naisyrkdev/YasaffDiscoverServer) (also direct GitHub support)
