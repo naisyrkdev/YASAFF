@@ -2,7 +2,7 @@
 """Build an animated GIF slideshow (with crossfade transitions) from every image in this folder.
 
 Usage:
-    python3 make_gif.py                      # writes ../1.gif
+    python3 make_gif.py                      # writes ../showcase.gif
     python3 make_gif.py -o out.gif --width 800 --hold 3 --fade 0.8
 
 Requires Pillow (pip install pillow).
@@ -18,7 +18,10 @@ EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
 
 def load_images(folder: Path, width: int) -> list[Image.Image]:
-    files = sorted(p for p in folder.iterdir() if p.suffix.lower() in EXTENSIONS)
+    files = sorted(
+        (p for p in folder.iterdir() if p.suffix.lower() in EXTENSIONS),
+        key=lambda p: (p.name.startswith("physical_device"), p.name),
+    )
     if not files:
         raise SystemExit(f"No images found in {folder}")
     images = []
@@ -67,7 +70,7 @@ def shared_palette(images) -> Image.Image:
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-i", "--input", type=Path, default=HERE, help="folder with source images")
-    parser.add_argument("-o", "--output", type=Path, default=HERE.parent / "1.gif", help="output gif path")
+    parser.add_argument("-o", "--output", type=Path, default=HERE.parent / "showcase.gif", help="output gif path")
     parser.add_argument("--width", type=int, default=800, help="output width in px (height keeps aspect)")
     parser.add_argument("--hold", type=float, default=2.5, help="seconds each image is shown")
     parser.add_argument("--fade", type=float, default=0.6, help="seconds of crossfade between images")
