@@ -96,9 +96,9 @@ impl App {
 
         let candidates = match crate::physical::resolve(&manifests, &self.library.disc_ids()) {
             Resolution::NotFound => {
-                if self.last_focused.elapsed() < DISC_FOCUS_GRACE {
-                    self.focus_guard_until = Some(Instant::now() + FOCUS_GUARD);
-                }
+                ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(ViewportCommand::Focus);
+                self.focus_guard_until = Some(Instant::now() + FOCUS_GUARD);
                 self.mode = Mode::DiscNotFound { name };
                 return;
             }
