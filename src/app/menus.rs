@@ -39,6 +39,7 @@ pub(super) enum PromptKind {
     AddCommand,
     EditCommand,
     StoreCommand(Store),
+    SteamApiKey,
     ThemeName,
     AppStoreUrl,
     /// A GitHub repository to install from; Discover's Installed tab is under it.
@@ -71,6 +72,8 @@ pub(super) enum Removal {
     /// Not a removal: writing to the USB stick or SD card picked on the Physical Devices page,
     /// so the user sees which device it lands on first.
     DeviceWrite(DeviceWrite),
+    /// Not a removal: installing the Steam game with this appid, picked in the Library.
+    InstallGame(u32),
     /// Not a removal: the device already has other .yasaff files. "Yes" replaces them with
     /// this game's, "no" keeps them next to it.
     OtherLaunchFiles,
@@ -210,6 +213,11 @@ impl App {
                 self.save_settings();
                 self.mode = self.settings_at(SettingRow::StoreCommand(store));
             }
+            PromptKind::SteamApiKey => {
+                self.settings.steam_api_key = text.trim().to_owned();
+                self.save_settings();
+                self.mode = self.settings_at(SettingRow::SteamApiKey);
+            }
             PromptKind::AppStoreUrl => {
                 let store = self.settings.app_store_mut();
                 store.url = text.to_owned();
@@ -330,6 +338,7 @@ impl App {
         self.mode = match &self.mode {
             Mode::Prompt { kind: PromptKind::AddCommand, .. } => Mode::AddMenu { cursor: add_menu_index(AddSource::Command) },
             Mode::Prompt { kind: PromptKind::StoreCommand(store), .. } => self.settings_at(SettingRow::StoreCommand(*store)),
+            Mode::Prompt { kind: PromptKind::SteamApiKey, .. } => self.settings_at(SettingRow::SteamApiKey),
             Mode::Prompt { kind: PromptKind::ThemeName, .. } => self.settings_at(SettingRow::ThemeRename),
             Mode::Prompt { kind: PromptKind::ProfileName, .. } => self.settings_at(SettingRow::ProfileRename),
             Mode::Prompt { kind: PromptKind::ProfileNew, .. } => self.settings_at(SettingRow::ProfileNew),
@@ -389,6 +398,10 @@ impl App {
                 tr!("Reset YASAFF?").to_owned(),
                 tr!("Every profile and all data are deleted. YASAFF restarts as on a fresh install."),
             ),
+            Removal::InstallGame(appid) => {
+                let name = self.library_game_name(appid);
+                (tr!("Install \"{name}\"?", name = name), tr!("Steam downloads it. The Library shows the progress, and it joins your games when it finishes."))
+            }
             Removal::StaticOrder => (
                 tr!("Mark all games static?").to_owned(),
                 tr!("Each stays in its current slot. You place games yourself with Swap position."),
@@ -452,6 +465,7 @@ impl App {
             Removal::Addon(_) => tr!("Uninstall"),
             Removal::Profile | Removal::Everything => tr!("Reset"),
             Removal::StaticOrder => tr!("Turn on"),
+            Removal::InstallGame(_) => tr!("Install"),
             Removal::InitialRepo => tr!("Download"),
             Removal::DeviceWrite(DeviceWrite::LaunchConfig) => tr!("Write"),
             Removal::DeviceWrite(DeviceWrite::SaveCatalog) => tr!("Create"),
@@ -497,6 +511,10 @@ impl App {
                     Store::Steam => tr!("Steam command"),
                 },
                 Some(tr!("Leave empty to auto-detect. Example: flatpak run com.heroicgameslauncher.hgl")),
+            ),
+            PromptKind::SteamApiKey => (
+                tr!("Steam Web API key"),
+                Some(tr!("Get a key at steamcommunity.com/dev/apikey (any domain name works). It is only sent to Steam.")),
             ),
             PromptKind::ThemeName => (tr!("Rename theme"), None),
             PromptKind::ProfileName => (tr!("Rename profile"), Some(tr!("YASAFF restarts after renaming."))),
@@ -738,6 +756,13 @@ impl App {
                         }
                     }
                     Removal::InitialRepo => self.answer_offer(yes),
+                    Removal::InstallGame(appid) => {
+                        self.mode = Mode::Library;
+                        if yes {
+                            let name = self.library_game_name(appid);
+                            self.install_steam_game(&appid.to_string(), &name);
+                        }
+                    }
                     Removal::DeviceWrite(write) => {
                         self.mode = self.settings_at(write.row());
                         if yes && write == DeviceWrite::LaunchConfig && !self.other_launch_files().is_empty() {
@@ -771,6 +796,7 @@ impl App {
                     Removal::Everything => self.settings_at(SettingRow::AppReset),
                     Removal::StaticOrder => self.settings_at(SettingRow::OrderStatic),
                     Removal::InitialRepo => return self.answer_offer(false),
+                    Removal::InstallGame(_) => Mode::Library,
                     Removal::DeviceWrite(write) => self.settings_at(write.row()),
                     Removal::OtherLaunchFiles => self.settings_at(SettingRow::DeviceInsertConfig),
                 }

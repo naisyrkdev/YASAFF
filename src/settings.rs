@@ -19,6 +19,30 @@ pub struct StoreSettings {
     pub command: String,
 }
 
+/// How YASAFF learns which Steam games the account owns.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Default, Debug)]
+pub enum SteamSource {
+    /// Signing in once by scanning a QR code with the Steam mobile app.
+    #[default]
+    SignIn,
+    /// Guessing from Steam's files on this computer; no account access needed, but not exact.
+    LocalFiles,
+    /// A Steam Web API key the user creates.
+    ApiKey,
+}
+
+impl SteamSource {
+    pub const ALL: [SteamSource; 3] = [SteamSource::SignIn, SteamSource::LocalFiles, SteamSource::ApiKey];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SteamSource::SignIn => tr!("Sign in with QR code"),
+            SteamSource::LocalFiles => tr!("Local files (guess)"),
+            SteamSource::ApiKey => tr!("API key"),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Default)]
 pub enum DiscAction {
     #[default]
@@ -284,6 +308,12 @@ pub struct Settings {
     pub theme: String,
     pub heroic: StoreSettings,
     pub steam: StoreSettings,
+    /// Lists the Steam games the account owns but hasn't installed, so they can be installed from YASAFF.
+    pub steam_show_owned: bool,
+    pub steam_source: SteamSource,
+    /// Steam Web API key used to read the owned games; never sent anywhere but api.steampowered.com.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub steam_api_key: String,
     pub discs: DiscSettings,
     pub mouse: MouseSettings,
     pub controls: ControlSettings,
@@ -314,6 +344,9 @@ impl Default for Settings {
             theme: String::new(),
             heroic: StoreSettings::default(),
             steam: StoreSettings::default(),
+            steam_show_owned: false,
+            steam_source: SteamSource::default(),
+            steam_api_key: String::new(),
             discs: DiscSettings::default(),
             mouse: MouseSettings::default(),
             controls: ControlSettings::default(),

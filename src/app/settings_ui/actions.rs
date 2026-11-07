@@ -245,6 +245,39 @@ impl App {
                 }
                 self.save_settings();
             }
+            SettingRow::SteamShowOwned => {
+                self.settings.steam_show_owned ^= true;
+                if self.settings.steam_show_owned {
+                    match self.settings.steam_source {
+                        SteamSource::SignIn if self.installs.signed_in.is_none() => self.notify(tr!("Sign in to Steam below so YASAFF can list your games")),
+                        SteamSource::ApiKey if self.settings.steam_api_key.trim().is_empty() => {
+                            self.notify(tr!("Set your Steam Web API key below so YASAFF can list your games"))
+                        }
+                        _ => {}
+                    }
+                }
+                self.save_settings();
+            }
+            SettingRow::SteamSignIn => {
+                if self.installs.signed_in.is_some() {
+                    crate::steam::Session::sign_out();
+                    self.installs.signed_in = None;
+                    self.notify(tr!("Signed out of Steam"));
+                } else {
+                    self.open_steam_sign_in();
+                }
+            }
+            SettingRow::SteamApiKey => {
+                let buffer = self.settings.steam_api_key.clone();
+                self.mode = Mode::Prompt { kind: PromptKind::SteamApiKey, buffer };
+            }
+            SettingRow::SteamAccount => {
+                self.installs.refresh_steam_id();
+                match self.installs.steam_id.clone() {
+                    Some(id) => self.notify(tr!("Steam account found: {id}", id = id)),
+                    None => self.notify(tr!("No Steam account found. Log into Steam on this computer once")),
+                }
+            }
             SettingRow::StoreCommand(store) => {
                 let custom = self.settings.store(store).command.clone();
                 let buffer = if custom.is_empty() {
@@ -474,6 +507,7 @@ impl App {
                 self.mode = self.settings_at(next);
             }
             SettingRow::DiscOnInsert
+            | SettingRow::SteamSource
             | SettingRow::Language
             | SettingRow::AppStoreActive
             | SettingRow::MouseSpeed
@@ -604,11 +638,16 @@ impl App {
             | SettingRow::VirtualMouse
             | SettingRow::StoreEnabled(_)
             | SettingRow::StoreBackground(_)
+            | SettingRow::SteamShowOwned
             | SettingRow::DiscScanAtStart
             | SettingRow::DiscRemovable
             | SettingRow::DiscHideFileWindow
             | SettingRow::DiscKeepSaves => {
                 return self.activate_setting(row);
+            }
+            SettingRow::SteamSource => {
+                self.settings.steam_source = cycle(&SteamSource::ALL, self.settings.steam_source, delta);
+                return self.save_settings();
             }
             SettingRow::DiscOnInsert => {
                 self.settings.discs.on_insert = cycle(&DiscAction::ALL, self.settings.discs.on_insert, delta);

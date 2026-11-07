@@ -635,6 +635,35 @@ impl App {
                 let custom = !self.settings.store(st).command.trim().is_empty();
                 (tr!("{store} command", store = st.short_name()), if custom { tr!("Custom") } else { tr!("Auto-detected") }, Action(tr!("Edit…")))
             }
+            SettingRow::SteamShowOwned => (
+                tr!("Show Steam games you don't have installed").into(),
+                tr!("Adds a Library tile listing them. Install them from there with Steam"),
+                Toggle(self.settings.steam_show_owned),
+            ),
+            SettingRow::SteamSource => (
+                tr!("How to find your Steam games").into(),
+                tr!("Signing in and an API key list exactly what you own. Local files is a guess"),
+                Choice(self.settings.steam_source.label().into()),
+            ),
+            SettingRow::SteamSignIn => match &self.installs.signed_in {
+                Some(name) => (tr!("Signed in to Steam as {name}", name = name), tr!("Only used to read which games you own"), Action(tr!("Sign out"))),
+                None => (tr!("Sign in to Steam").into(), tr!("Scan a QR code with the Steam mobile app. No password is typed here"), Action(tr!("Sign in…"))),
+            },
+            SettingRow::SteamApiKey => {
+                let key = self.settings.steam_api_key.trim();
+                let value = match key.len() {
+                    0 => tr!("Not set").to_owned(),
+                    n => tr!("Set (…{end})", end = &key[n.saturating_sub(4)..]),
+                };
+                (tr!("Steam Web API key").into(), tr!("Needed to list your games. Get one at steamcommunity.com/dev/apikey"), RowValue::Summary(value))
+            }
+            SettingRow::SteamAccount => {
+                let value = match &self.installs.steam_id {
+                    Some(id) => id.clone(),
+                    None => tr!("Not found").to_owned(),
+                };
+                (tr!("Steam account").into(), tr!("The account last logged into Steam on this computer. Enter to check again"), RowValue::Summary(value))
+            }
             SettingRow::DiscOnInsert => (
                 tr!("When a disc is inserted").into(),
                 tr!("Asks anyway while YASAFF is in the background"),

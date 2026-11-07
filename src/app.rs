@@ -10,12 +10,15 @@ mod custom_theme;
 mod font_ui;
 mod gallery_ui;
 mod home;
+mod installs;
 mod keyboard;
+mod library_screen;
 mod menus;
 mod paint;
 mod profile_ui;
 mod saves_ui;
 mod settings_ui;
+mod steam_sign_in;
 mod store_screen;
 mod system_menu;
 mod tiles;
@@ -40,7 +43,7 @@ use crate::object3d::{self, Objects};
 use crate::profiles;
 use crate::scan;
 use crate::sound::Sounds;
-use crate::settings::{DiscAction, Language, MouseSettings, Settings};
+use crate::settings::{DiscAction, Language, MouseSettings, Settings, SteamSource};
 use crate::stores::Store;
 use crate::taskbar;
 use crate::video::{self, Videos};
@@ -61,6 +64,9 @@ use std::time::{Duration, Instant};
 use crate::physical::burn::{self, BurnJob, Burner};
 use active_game::*;
 use add_games::*;
+use installs::Installs;
+use library_screen::LibraryView;
+use steam_sign_in::SignInScreen;
 use buttons::*;
 use cover_editor::*;
 use device_ui::*;
@@ -93,20 +99,22 @@ const VIDEO_DELAY: Duration = Duration::from_millis(700);
 
 #[derive(Clone, Copy, PartialEq)]
 enum Special {
+    /// Steam games owned but not installed; only shown while Settings lists them.
+    Library,
     Store,
     Add,
     Settings,
 }
 
 impl Special {
-    const ALL: [Special; 3] = [Special::Store, Special::Add, Special::Settings];
+    const ALL: [Special; 4] = [Special::Library, Special::Store, Special::Add, Special::Settings];
     const PLACEABLE: [Special; 2] = [Special::Store, Special::Add];
 
     fn action(self) -> Option<Action> {
         match self {
             Special::Store => Some(Action::OpenStore),
             Special::Add => Some(Action::AddGame),
-            Special::Settings => None,
+            Special::Settings | Special::Library => None,
         }
     }
 
@@ -115,6 +123,7 @@ impl Special {
             Special::Store => "",
             Special::Add => "+",
             Special::Settings => "",
+            Special::Library => "⬇",
         }
     }
 
@@ -124,6 +133,7 @@ impl Special {
             Special::Store => "discover",
             Special::Add => "add",
             Special::Settings => "settings",
+            Special::Library => "library",
         }
     }
 
@@ -133,6 +143,7 @@ impl Special {
             Special::Store => Some(egui::include_image!("../assets/ui/squares-plus.svg")),
             Special::Add => Some(egui::include_image!("../assets/ui/plus.svg")),
             Special::Settings => Some(egui::include_image!("../assets/ui/gears.svg")),
+            Special::Library => Some(egui::include_image!("../assets/ui/arrow-down-tray.svg")),
         }
     }
 
@@ -141,6 +152,7 @@ impl Special {
             Special::Store => tr!("Discover"),
             Special::Add => tr!("Add game"),
             Special::Settings => tr!("Settings"),
+            Special::Library => tr!("Library"),
         }
     }
 }
@@ -175,6 +187,9 @@ enum Mode {
     Store { cursor: usize, scroll: usize },
     StoreTheme { index: usize, image: usize },
     ProfileImported { name: String, missing: Vec<String>, switch: bool },
+    SteamSignIn(Box<SignInScreen>),
+    /// The Library tile: Steam games owned but not installed.
+    Library,
 }
 
 #[derive(Clone, Copy)]
@@ -229,6 +244,8 @@ pub struct App {
     autoplay: Option<crate::autoplay::Suppression>,
     _disc_watcher: Watcher,
     artwork: Fetcher,
+    installs: Installs,
+    library_view: LibraryView,
     fonts: Vec<String>,
     fonts_pending: Option<Vec<String>>,
     burning: Option<Burning>,
@@ -329,6 +346,8 @@ impl App {
             autoplay,
             _disc_watcher: disc_watcher,
             artwork: Fetcher::new(cc.egui_ctx.clone()),
+            installs: Installs::new(cc.egui_ctx.clone()),
+            library_view: LibraryView::default(),
             fonts: Vec::new(),
             fonts_pending: None,
             burning: None,
@@ -403,7 +422,10 @@ impl App {
     }
 
     fn special_tiles(&self) -> impl Iterator<Item = Special> + '_ {
-        Special::ALL.into_iter().filter(|s| self.special_bar(*s).is_none())
+        Special::ALL
+            .into_iter()
+            .filter(|s| *s != Special::Library || self.settings.steam_show_owned)
+            .filter(|s| self.special_bar(*s).is_none())
     }
 
     fn special_button(&self, special: Special) -> Option<PadButton> {
@@ -414,7 +436,7 @@ impl App {
         match special {
             Special::Store => Some(&mut settings.shortcuts.store),
             Special::Add => Some(&mut settings.shortcuts.add_game),
-            Special::Settings => None,
+            Special::Settings | Special::Library => None,
         }
     }
 
@@ -423,7 +445,7 @@ impl App {
         match special {
             Special::Store => self.settings.shortcuts.store,
             Special::Add => self.settings.shortcuts.add_game,
-            Special::Settings => None,
+            Special::Settings | Special::Library => None,
         }
     }
 
@@ -600,6 +622,8 @@ impl App {
                 }
             }
             Mode::ProfileImported { .. } => self.handle_profile_imported(action),
+            Mode::SteamSignIn(_) => self.handle_steam_sign_in(action),
+            Mode::Library => self.handle_library(action),
             Mode::Burn(_) => self.handle_burn(action),
             Mode::Store { .. } => self.handle_store(action),
             Mode::StoreTheme { .. } => self.handle_store_theme(action),
@@ -676,6 +700,9 @@ impl eframe::App for App {
         self.poll_scan();
         self.poll_burn();
         self.poll_artwork();
+        self.poll_installs();
+        self.poll_steam_sign_in();
+        self.poll_library();
         self.poll_store();
         self.poll_running(&ctx);
         self.poll_game(&ctx);
@@ -716,6 +743,7 @@ impl eframe::App for App {
         self.draw_add_menu(ui, screen, s);
         self.draw_picker(ui, screen, s);
         self.draw_scan(ui, screen, s);
+        self.draw_library(ui, screen, s);
         self.draw_welcome(ui, screen, s);
         self.draw_store(ui, screen, s);
         self.draw_store_theme(ui, screen, s);
@@ -734,6 +762,7 @@ impl eframe::App for App {
         self.draw_addon_manager(ui, screen, s);
         self.draw_disc_chooser(ui, screen, s);
         self.draw_disc_not_found(ui, screen, s);
+        self.draw_steam_sign_in(ui, screen, s);
         self.draw_profile_imported(ui, screen, s);
         self.draw_image_source(ui, screen, s);
         self.draw_gallery_pick(ui, screen, s);

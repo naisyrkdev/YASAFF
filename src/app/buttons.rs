@@ -347,6 +347,13 @@ impl App {
             ],
             Mode::DiscChooser { .. } => &[Hint(Action::Confirm, tr!("Start")), Hint(Action::Back, tr!("Cancel"))],
             Mode::DiscNotFound { .. } => &[Hint(Action::Confirm, tr!("OK"))],
+            Mode::SteamSignIn(_) => &[Hint(Action::Back, tr!("Cancel"))],
+            Mode::Library => &[
+                Hint(Action::Confirm, tr!("Install")),
+                Hint(Action::Left, tr!("Page")),
+                Hint(Action::Options, tr!("Check again")),
+                Hint(Action::Back, tr!("Back")),
+            ],
             Mode::WelcomeTheme { preview: true, .. } => &[
                 Hint(Action::Left, tr!("Change look")),
                 Hint(Action::Confirm, tr!("Use this look")),

@@ -553,5 +553,6 @@ pub(super) fn special_description(special: Special) -> &'static str {
         Special::Store => tr!("Apps, games and themes from YASAFF Discover, installed and updated right here"),
         Special::Add => tr!("Scan for installed games, or add an app, a .desktop/shortcut file, or a command or URL"),
         Special::Settings => tr!("Change theme, appearance, set discover server and more"),
+        Special::Library => tr!("Steam games you own but haven't installed. Install them from here"),
     }
 }

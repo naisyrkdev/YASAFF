@@ -267,6 +267,14 @@ impl App {
         rows.extend([R::FontTitle, R::FontImport, R::FontManage]);
         for store in Store::ALL {
             rows.extend([R::StoreEnabled(store), R::StoreBackground(store), R::StoreCommand(store)]);
+            if store == Store::Steam {
+                rows.extend([R::SteamShowOwned, R::SteamSource]);
+                match self.settings.steam_source {
+                    SteamSource::SignIn => rows.push(R::SteamSignIn),
+                    SteamSource::ApiKey => rows.extend([R::SteamApiKey, R::SteamAccount]),
+                    SteamSource::LocalFiles => rows.push(R::SteamAccount),
+                }
+            }
         }
         rows.extend([R::DiscOnInsert, R::DiscScanAtStart, R::DiscRemovable, R::DiscHideFileWindow, R::DiscKeepSaves]);
         rows.push(R::AddonManager);

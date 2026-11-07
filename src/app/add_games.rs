@@ -74,8 +74,11 @@ impl Picker {
     }
 }
 
+/// What a scan found and how many it found in all, before dropping those already in the library.
+pub(super) type Scanned = (Vec<scan::Found>, usize);
+
 pub(super) struct ScanState {
-    pub(super) pending: Option<mpsc::Receiver<(Vec<scan::Found>, usize)>>,
+    pub(super) pending: Option<mpsc::Receiver<Scanned>>,
     pub(super) found: Vec<scan::Found>,
     pub(super) checked: Vec<bool>,
     pub(super) in_library: usize,
@@ -152,9 +155,7 @@ pub(super) const COMMAND_HELP: &str = tr_key!("Examples:  steam://rungameid/570 
 impl App {
     pub(super) fn run_add_source(&mut self, source: AddSource) {
         match source {
-            AddSource::Scan => {
-                self.mode = Mode::Scan(Box::new(ScanState::start(&self.ctx, scan::Known::of(&self.library), true, false)));
-            }
+            AddSource::Scan => self.mode = Mode::Scan(Box::new(self.start_scan(true, false))),
             AddSource::Installed => self.mode = Mode::Picker(Box::new(Picker::new())),
             AddSource::Browse => {
                 let dialog = rfd::FileDialog::new().set_title(tr!("Select a game executable, script or shortcut"));
@@ -166,6 +167,10 @@ impl App {
             AddSource::ImportApp => self.import_app_file(),
             AddSource::Github => self.ask_github_repo(String::new()),
         }
+    }
+
+    pub(super) fn start_scan(&self, fetch_artwork: bool, first_run: bool) -> ScanState {
+        ScanState::start(&self.ctx, scan::Known::of(&self.library), fetch_artwork, first_run)
     }
 
     pub(super) fn import_entry(&mut self, entry: AppEntry) {
@@ -620,7 +625,7 @@ impl App {
         }
     }
 
-    pub(super) fn handle_scan(&mut self, ctx: &Context, action: Action) {
+    pub(super) fn handle_scan(&mut self, _ctx: &Context, action: Action) {
         let Mode::Scan(sc) = &mut self.mode else { return };
         match action {
             Action::Up => sc.cursor = sc.cursor.saturating_sub(1),
@@ -639,7 +644,10 @@ impl App {
                 let all = sc.checked.iter().all(|c| *c);
                 sc.checked.fill(!all);
             }
-            Action::Options => **sc = ScanState::start(ctx, scan::Known::of(&self.library), sc.fetch_artwork, sc.first_run),
+            Action::Options => {
+                let (fetch_artwork, first_run) = (sc.fetch_artwork, sc.first_run);
+                self.mode = Mode::Scan(Box::new(self.start_scan(fetch_artwork, first_run)));
+            }
             Action::Back if sc.first_run => self.mode = Mode::Welcome { cursor: 0 },
             Action::Back => self.mode = Mode::AddMenu { cursor: add_menu_index(AddSource::Scan) },
             _ => {}

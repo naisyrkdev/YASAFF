@@ -145,7 +145,12 @@ pub fn local(external: &[ExternalId]) -> Option<Found> {
 }
 
 fn artwork(request: &Request) -> Result<Artwork> {
-    let Some(found) = local(&request.ids) else { bail!(tr!("none on this computer yet. Open the game once in its launcher, or set it by hand")) };
+    let Some(found) = local(&request.ids) else {
+        if let Some(steam) = request.ids.iter().find(|id| id.store == ids::STEAM) {
+            return steam_cdn(request, &steam.id);
+        }
+        bail!(tr!("none on this computer yet. Open the game once in its launcher, or set it by hand"))
+    };
 
     let dir = crate::library::Library::data_dir().join("downloads");
     let mut downloads = Vec::new();
@@ -168,6 +173,37 @@ fn artwork(request: &Request) -> Result<Artwork> {
     let background = resolve(found.background, "background")?;
     let source = tr!("{source} (on this computer)", source = found.source);
     Ok(Artwork { game_id: request.game_id.clone(), cover, background, downloads, source })
+}
+
+/// Steam's own art for a game it hasn't cached here, such as one that was never installed.
+fn steam_cdn(request: &Request, appid: &str) -> Result<Artwork> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(10)))
+        .timeout_recv_body(Some(Duration::from_secs(30)))
+        .build()
+        .into();
+    let dir = crate::library::Library::data_dir().join("downloads");
+    fs::create_dir_all(&dir)?;
+    let mut downloads = Vec::new();
+    let mut fetched = HashMap::new();
+    for (kind, url) in crate::steam::cdn_art(appid) {
+        let bytes = match agent.get(&url).call() {
+            Ok(response) => response.into_body().with_config().limit(16 * 1024 * 1024).read_to_vec()?,
+            Err(e) if kind == "cover" => bail!(tr!("Steam has no cover for this game ({error})", error = e)),
+            Err(_) => continue,
+        };
+        let path = dir.join(format!("{}-{kind}.jpg", request.game_id));
+        fs::write(&path, bytes).with_context(|| format!("saving {}", path.display()))?;
+        downloads.push(path.clone());
+        fetched.insert(kind, path);
+    }
+    Ok(Artwork {
+        game_id: request.game_id.clone(),
+        cover: fetched.remove("cover"),
+        background: fetched.remove("background"),
+        downloads,
+        source: "Steam".to_owned(),
+    })
 }
 
 fn steam(appid: &str) -> Found {

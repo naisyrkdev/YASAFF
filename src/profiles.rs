@@ -15,7 +15,8 @@ const STATE: &str = "profiles.json";
 const MARKER: &str = "yasaffProfile.json";
 const SETTINGS_FILE: &str = "userSettings.json";
 const PATH_FILES: [&str; 2] = ["library.json", SETTINGS_FILE];
-const SKIPPED: [&str; 1] = ["cache"];
+/// Left out of exported profiles: caches, and the Steam sign-in, which works like a password.
+const SKIPPED: [&str; 2] = ["cache", crate::steam::SESSION_FILE];
 
 static ACTIVE: OnceLock<(String, PathBuf)> = OnceLock::new();
 
@@ -320,6 +321,7 @@ fn without_secrets(settings: &str) -> String {
             *key = serde_json::Value::String(String::new());
         }
     }
+    json_map.remove("steam_api_key");
     serde_json::to_string_pretty(&json).unwrap_or_else(|_| "{}".to_owned())
 }
 
@@ -447,7 +449,7 @@ mod tests {
 
     #[test]
     fn exports_leave_api_keys_out() {
-        let settings = r#"{"theme":"x","app_stores":[{"url":"a","api_key":"secret1","name":"A"}],"app_store":{"url":"b","api_key":"secret2"}}"#;
+        let settings = r#"{"theme":"x","app_stores":[{"url":"a","api_key":"secret1","name":"A"}],"app_store":{"url":"b","api_key":"secret2"},"steam_api_key":"secret3"}"#;
         let clean = without_secrets(settings);
         assert!(!clean.contains("secret"), "{clean}");
         let json: serde_json::Value = serde_json::from_str(&clean).unwrap();

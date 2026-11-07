@@ -31,6 +31,7 @@ mod device_saves;
 mod scan;
 mod settings;
 mod sound;
+mod steam;
 mod stores;
 mod taskbar;
 mod theme;

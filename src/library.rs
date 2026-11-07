@@ -61,6 +61,10 @@ pub struct Game {
     /// The theme picture was started from the cover once; it is not copied again after that.
     #[serde(default, alias = "axis_seeded", skip_serializing_if = "std::ops::Not::not")]
     pub picture_seeded: bool,
+    /// Set on games in `Library::uninstalled`. Earlier versions kept such games among the others;
+    /// loading moves them over.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub not_installed: bool,
 }
 
 /// The cover image and placement of every tile style. The shown style's live in `Assets` (what
@@ -452,6 +456,10 @@ impl AssetKind {
 #[derive(Serialize, Deserialize, Default)]
 pub struct Library {
     pub games: Vec<Game>,
+    /// Store games that were installed (or are being installed) and no longer are. Kept with
+    /// their images and settings, off the home screen, until the store installs them again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub uninstalled: Vec<Game>,
     /// Category names, in the order custom themes show them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub categories: Vec<String>,
@@ -493,6 +501,9 @@ impl Library {
             }
         };
         lib.data_dir = data_dir;
+        let (gone, games): (Vec<Game>, Vec<Game>) = std::mem::take(&mut lib.games).into_iter().partition(|g| g.not_installed);
+        lib.games = games;
+        lib.uninstalled.extend(gone);
         lib.arrange();
         lib.tidy_categories();
         for game in &mut lib.games {
@@ -553,9 +564,43 @@ impl Library {
     }
 
     pub fn add(&mut self, entry: &AppEntry) -> usize {
-        let id = new_id();
-        self.games.push(Game {
-            id: id.clone(),
+        let game = Self::new_game(entry);
+        let id = game.id.clone();
+        self.games.push(game);
+        self.arrange();
+        self.games.iter().position(|g| g.id == id).unwrap()
+    }
+
+    /// Adds a store game that isn't installed to `uninstalled`, returning its id.
+    pub fn add_uninstalled(&mut self, entry: &AppEntry) -> String {
+        let mut game = Self::new_game(entry);
+        game.not_installed = true;
+        let id = game.id.clone();
+        self.uninstalled.push(game);
+        id
+    }
+
+    /// Takes the game at `index` off the home screen into `uninstalled`.
+    pub fn move_to_uninstalled(&mut self, index: usize) {
+        let mut game = self.games.remove(index);
+        game.not_installed = true;
+        self.uninstalled.push(game);
+        self.arrange();
+    }
+
+    /// Puts an uninstalled game back on the home screen; returns its index there.
+    pub fn move_to_installed(&mut self, id: &str) -> Option<usize> {
+        let at = self.uninstalled.iter().position(|g| g.id == id)?;
+        let mut game = self.uninstalled.remove(at);
+        game.not_installed = false;
+        self.games.push(game);
+        self.arrange();
+        self.position(id)
+    }
+
+    fn new_game(entry: &AppEntry) -> Game {
+        Game {
+            id: new_id(),
             name: entry.name.clone(),
             target: entry.target.clone(),
             args: entry.args.clone(),
@@ -576,9 +621,8 @@ impl Library {
             categories: Vec::new(),
             main_category: None,
             picture_seeded: false,
-        });
-        self.arrange();
-        self.games.iter().position(|g| g.id == id).unwrap()
+            not_installed: false,
+        }
     }
 
     /// Drops category names the library doesn't have, and makes sure a game with categories has a

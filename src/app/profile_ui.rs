@@ -292,7 +292,7 @@ impl App {
         match start {
             Start::Import => {
                 initial::mark_done();
-                self.mode = Mode::Scan(Box::new(ScanState::start(&self.ctx, scan::Known::of(&self.library), true, true)));
+                self.mode = Mode::Scan(Box::new(self.start_scan(true, true)));
             }
             Start::Blank => {
                 initial::mark_done();

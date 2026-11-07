@@ -108,6 +108,7 @@ impl App {
             None => self.launch_selected(),
             Some(Special::Store) => self.open_store(),
             Some(Special::Add) => self.mode = Mode::AddMenu { cursor: 0 },
+            Some(Special::Library) => self.open_library(),
             Some(Special::Settings) => self.mode = Mode::Settings { cursor: 0, page: Page::App, in_rows: false },
         }
     }

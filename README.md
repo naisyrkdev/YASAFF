@@ -141,6 +141,25 @@ Open the **Add game** tile, or press **Y** / **Insert**. From there you can:
 
 Games installed from YASAFF Discover are added to the library automatically.
 
+### Steam games you haven't installed
+
+YASAFF can also list the Steam games you own but haven't installed, in a **Library** tile next to Discover, and install them through Steam.
+
+1. In **Settings → Steam**, turn on **Show Steam games you don't have installed**.
+2. Pick **How to find your Steam games**:
+
+   | Method | Setup | Accuracy |
+   | --- | --- | --- |
+   | **Sign in with QR code** (default) | Press **Sign in…** and scan the QR code with the Steam mobile app (shield icon → *Scan a QR code*). No password or key is typed into YASAFF. | Exact |
+   | **Local files (guess)** | Nothing. Reads Steam's files on this computer for the account last logged into Steam. | A guess: can miss games and list some you don't own (free weekends, games you only opened) |
+   | **API key** | Get a key at [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey) (any domain name works) and set **Steam Web API key**. | Exact; needs **Game details** set to *Public* in your Steam privacy settings |
+
+3. Open the **Library** tile. It lists every owned game that isn't installed (**Menu / Tab** checks again). Pick one and confirm **Install**, and Steam opens its install dialog.
+
+While Steam downloads, the Library shows the progress. When it finishes, the game joins your games on the home screen. A game uninstalled in Steam leaves the home screen and goes back to the Library, keeping its images and settings. YASAFF never downloads games itself, it reads Steam's own install files, so installs and uninstalls done in Steam show up too.
+
+The sign-in and the API key are only used to read which games you own, and are left out of exported profiles. Without a connection, YASAFF uses the last list it fetched.
+
 ## Controls
 
 These are the default bindings. You can remap every controller button in **Settings → Controller**.
@@ -290,7 +309,7 @@ Each profile has its own library, settings, themes, images and apps. In **Settin
 | Profiles | Change, rename, create, export, import, reset |
 | Power options | Reset application |
 | YASAFF Discover | Active store, address, test connection, add or remove stores |
-| Steam / Heroic | Launch games through the store, start the store in the background with YASAFF, custom launch command (auto-detected by default) |
+| Steam / Heroic | Launch games through the store, start the store in the background with YASAFF, custom launch command (auto-detected by default); Steam: show games you own but haven't installed, found by QR sign-in, local files or an API key |
 | Physical Devices | When a disc is inserted, check the drive at startup, USB stick and SD card support, keep saves on the launch device |
 | Mouse | Virtual mouse on the right stick, speed, custom cursor and cursor size |
 | Controller | Button hints, swap A/B (for Nintendo Switch habits), remap every button, Discover and Add game shortcuts, reset bindings |

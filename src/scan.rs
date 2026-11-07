@@ -77,7 +77,7 @@ pub fn scan() -> Vec<Found> {
     found
 }
 
-fn game_entry(name: String, target: String, icon: Option<PathBuf>) -> AppEntry {
+pub(crate) fn game_entry(name: String, target: String, icon: Option<PathBuf>) -> AppEntry {
     AppEntry {
         name,
         target,
@@ -240,7 +240,7 @@ mod windows_registry {
     }
 }
 
-fn is_steam_tool(appid: &str, name: &str) -> bool {
+pub(crate) fn is_steam_tool(appid: &str, name: &str) -> bool {
     const TOOL_IDS: &[&str] = &["228980", "1070560", "1391110", "1628350", "4183110"];
     TOOL_IDS.contains(&appid)
         || ["Proton ", "Steam Linux Runtime", "Steamworks Common"].iter().any(|p| name.starts_with(p))
@@ -248,7 +248,7 @@ fn is_steam_tool(appid: &str, name: &str) -> bool {
         || name == "Proton Hotfix"
 }
 
-fn vdf_strings(text: &str) -> Vec<String> {
+pub(crate) fn vdf_strings(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut chars = text.chars();
     while let Some(c) = chars.next() {
@@ -268,7 +268,7 @@ fn vdf_strings(text: &str) -> Vec<String> {
     out
 }
 
-fn vdf_values<'a>(tokens: &'a [String], key: &'a str) -> impl Iterator<Item = &'a str> {
+pub(crate) fn vdf_values<'a>(tokens: &'a [String], key: &'a str) -> impl Iterator<Item = &'a str> {
     tokens.windows(2).filter(move |w| w[0].eq_ignore_ascii_case(key)).map(|w| w[1].as_str())
 }
 
