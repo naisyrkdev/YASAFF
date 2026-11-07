@@ -111,6 +111,7 @@ impl App {
                     menu.push((item, tr!("Switch to game").to_owned()));
                     menu.push((MenuItem::CloseApp, tr!("Close game").to_owned()));
                 }
+                MenuItem::Start if let Some(g) = game.filter(|g| g.installing) => menu.push((item, self.install_label(&g.id))),
                 MenuItem::SwapBubble if !self.is_bubbles() => {}
                 MenuItem::SwapTile if !self.is_standard() || self.library.games.len() < 2 => {}
                 MenuItem::LockSlot if !self.is_standard() || self.settings.order.static_order => {}
@@ -400,7 +401,7 @@ impl App {
             ),
             Removal::InstallGame(appid) => {
                 let name = self.library_game_name(appid);
-                (tr!("Install \"{name}\"?", name = name), tr!("Steam downloads it. The Library shows the progress, and it joins your games when it finishes."))
+                (tr!("Install \"{name}\"?", name = name), tr!("Steam downloads it. It shows on your home screen with its progress, and is ready to play when it finishes."))
             }
             Removal::StaticOrder => (
                 tr!("Mark all games static?").to_owned(),

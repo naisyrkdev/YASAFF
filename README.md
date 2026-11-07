@@ -156,7 +156,7 @@ YASAFF can also list the Steam games you own but haven't installed, in a **Libra
 
 3. Open the **Library** tile. It lists every owned game that isn't installed (**Menu / Tab** checks again). Pick one and confirm **Install**, and Steam opens its install dialog.
 
-While Steam downloads, the Library shows the progress. When it finishes, the game joins your games on the home screen. A game uninstalled in Steam leaves the home screen and goes back to the Library, keeping its images and settings. YASAFF never downloads games itself, it reads Steam's own install files, so installs and uninstalls done in Steam show up too.
+The game moves to the home screen right away, dimmed, with a ring showing Steam's progress (or *Paused*), and becomes playable when Steam finishes. Installs started in Steam itself move there too. A canceled install, or a game uninstalled in Steam, goes back to the Library, keeping its images and settings. YASAFF never downloads games itself, it reads Steam's own install files, so installs and uninstalls done in Steam show up too.
 
 The sign-in and the API key are only used to read which games you own, and are left out of exported profiles. Without a connection, YASAFF uses the last list it fetched.
 

@@ -42,9 +42,16 @@ pub struct OwnedGame {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Install {
     NotInstalled,
-    /// Steam has the game queued or is downloading it; `None` until it knows the size.
-    Downloading(Option<f32>),
+    /// Steam has the game queued, is downloading it, or paused it.
+    Downloading(Progress),
     Installed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct Progress {
+    /// How much is done, `None` until Steam knows the size.
+    pub fraction: Option<f32>,
+    pub paused: bool,
 }
 
 /// The owned list, and why it may be stale or missing.
@@ -600,25 +607,106 @@ impl Reader<'_> {
 // ---------------------------------------------------------------------------------------------
 // Install state
 
-/// The appid's manifest in any of `libraries`.
-fn manifest(libraries: &[PathBuf], appid: &str) -> Option<String> {
-    libraries.iter().find_map(|l| fs::read_to_string(l.join(format!("steamapps/appmanifest_{appid}.acf"))).ok())
+/// `StateFlags` bit Steam sets while an install is paused.
+const UPDATE_PAUSED: u32 = 512;
+/// How much of Steam's content log is read: its end has the newest entries.
+const LOG_TAIL: u64 = 512 * 1024;
+
+/// The appid's manifest in any of `libraries`, with the library it is in.
+fn manifest<'a>(libraries: &'a [PathBuf], appid: &str) -> Option<(&'a PathBuf, String)> {
+    libraries.iter().find_map(|l| Some((l, fs::read_to_string(l.join(format!("steamapps/appmanifest_{appid}.acf"))).ok()?)))
 }
 
 /// Where Steam is with `appid`, read from the Steam libraries on this computer.
+///
+/// Steam rewrites the manifest's byte counts only now and then (on pause, stop and finish), so
+/// while it downloads, progress is the size of the game's `steamapps/downloading/<appid>` folder
+/// against the size its content log gave when the download (re)started.
 pub fn install_status(libraries: &[PathBuf], appid: &str) -> Install {
-    manifest(libraries, appid).map_or(Install::NotInstalled, |text| status_of(&text))
+    let Some((library, acf)) = manifest(libraries, appid) else { return Install::NotInstalled };
+    let mut status = status_of(&acf);
+    if let Install::Downloading(progress) = &mut status {
+        let log = steam_roots().iter().find_map(|r| read_tail(&r.join("logs/content_log.txt"), LOG_TAIL)).map(|log| log_state(&log, appid));
+        let staging = library.join("steamapps/downloading").join(appid);
+        if let Some(log) = log {
+            progress.paused |= log.paused;
+            if log.stage_total > 0 && staging.is_dir() {
+                progress.fraction = Some((dir_size(&staging) as f64 / log.stage_total as f64).clamp(0.0, 1.0) as f32);
+            }
+        }
+    }
+    status
 }
 
+/// What the manifest alone says: installed, or downloading with its last saved byte counts.
 fn status_of(acf: &str) -> Install {
     let tokens = vdf_strings(acf);
     let number = |key: &str| vdf_values(&tokens, key).next().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
-    if number("StateFlags") as u32 & FULLY_INSTALLED != 0 {
+    let flags = number("StateFlags") as u32;
+    if flags & FULLY_INSTALLED != 0 {
         return Install::Installed;
     }
-    let total = number("BytesToDownload") + number("BytesToStage");
-    let done = number("BytesDownloaded") + number("BytesStaged");
-    Install::Downloading((total > 0).then(|| (done as f64 / total as f64).clamp(0.0, 1.0) as f32))
+    let ratio = |done: u64, total: u64| (total > 0).then(|| (done as f64 / total as f64).clamp(0.0, 1.0) as f32);
+    let fraction = ratio(number("BytesStaged"), number("BytesToStage")).or_else(|| ratio(number("BytesDownloaded"), number("BytesToDownload")));
+    Install::Downloading(Progress { fraction, paused: flags & UPDATE_PAUSED != 0 })
+}
+
+/// An app's download as Steam's `content_log.txt` last described it.
+#[derive(Debug, Default, PartialEq)]
+struct LogState {
+    /// Bytes the finished files take, from the last "update started" line.
+    stage_total: u64,
+    paused: bool,
+}
+
+/// Reads lines like `AppID 367520 update started : download 0/1091282960, …, stage 0/5231995691`
+/// and `AppID 367520 update canceled : Disabled (Suspended)`.
+fn log_state(log: &str, appid: &str) -> LogState {
+    let prefix = format!("AppID {appid} ");
+    let mut state = LogState::default();
+    for line in log.lines() {
+        let Some(rest) = line.find(&prefix).map(|i| &line[i + prefix.len()..]) else { continue };
+        if let Some(sizes) = rest.strip_prefix("update started :") {
+            state.paused = false;
+            let total = |name: &str| {
+                sizes.split(',').map(str::trim).find_map(|part| part.strip_prefix(name)?.trim().split_once('/')?.1.trim().parse::<u64>().ok())
+            };
+            state.stage_total = total("stage").filter(|t| *t > 0).or_else(|| total("download")).unwrap_or(0);
+        } else if rest.starts_with("update canceled") || rest.contains("(Suspended)") {
+            state.paused = true;
+        } else if rest.starts_with("App update changed") && rest.contains("Downloading") {
+            state.paused = false;
+        }
+    }
+    state
+}
+
+/// The last `max` bytes of a file, from the start of a line.
+fn read_tail(path: &std::path::Path, max: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(len.saturating_sub(max))).ok()?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).ok()?;
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    Some(if len > max { text.split_once('\n').map_or(text.clone(), |(_, rest)| rest.to_owned()) } else { text })
+}
+
+/// Bytes the files under `dir` hold.
+fn dir_size(dir: &std::path::Path) -> u64 {
+    let mut total = 0;
+    let mut dirs = vec![dir.to_path_buf()];
+    while let Some(current) = dirs.pop() {
+        for entry in fs::read_dir(&current).into_iter().flatten().flatten() {
+            match entry.file_type() {
+                Ok(t) if t.is_dir() => dirs.push(entry.path()),
+                Ok(t) if t.is_file() => total += entry.metadata().map_or(0, |m| m.len()),
+                _ => {}
+            }
+        }
+    }
+    total
 }
 
 /// Steam's libraries, when any can be read; without them a missing manifest means "can't tell"
@@ -669,10 +757,26 @@ mod tests {
 
     #[test]
     fn download_progress() {
-        let acf = r#""AppState" { "appid" "570" "StateFlags" "1026" "BytesToDownload" "1000" "BytesDownloaded" "250" "BytesToStage" "1000" "BytesStaged" "250" }"#;
-        assert_eq!(status_of(acf), Install::Downloading(Some(0.25)));
+        let acf = r#""AppState" { "appid" "570" "StateFlags" "1026" "BytesToDownload" "1000" "BytesDownloaded" "500" "BytesToStage" "4000" "BytesStaged" "1000" }"#;
+        assert_eq!(status_of(acf), Install::Downloading(Progress { fraction: Some(0.25), paused: false }));
         let queued = r#""AppState" { "appid" "570" "StateFlags" "1026" }"#;
-        assert_eq!(status_of(queued), Install::Downloading(None));
+        assert_eq!(status_of(queued), Install::Downloading(Progress::default()));
+        let paused = r#""AppState" { "appid" "570" "StateFlags" "1538" }"#;
+        assert!(matches!(status_of(paused), Install::Downloading(Progress { paused: true, .. })));
+    }
+
+    #[test]
+    fn content_log_progress() {
+        let log = "[2026-11-07 11:07:53] AppID 367520 update started : download 0/1091282960, store 0/0, reuse 0/0, delta 0/0, stage 0/5231995691 \n\
+            [2026-11-07 11:07:53] AppID 367520 App update changed : Running Update,Downloading,Staging,\n\
+            [2026-11-07 11:07:53] AppID 99 update started : download 0/10, stage 0/0\n";
+        assert_eq!(log_state(log, "367520"), LogState { stage_total: 5231995691, paused: false });
+        assert_eq!(log_state(log, "99").stage_total, 10, "no staging: the download size");
+        let paused = format!("{log}[2026-11-07 11:08:54] AppID 367520 update canceled : Disabled (Suspended)\n");
+        assert!(log_state(&paused, "367520").paused);
+        let resumed = format!("{paused}[2026-11-07 11:20:00] AppID 367520 App update changed : Running Update,Downloading,Staging,\n");
+        assert!(!log_state(&resumed, "367520").paused);
+        assert_eq!(log_state(log, "1"), LogState::default());
     }
 
     #[test]
@@ -793,6 +897,16 @@ mod tests {
 mod this_computer {
     /// Prints the local-files guess for the Steam account on this computer:
     /// `cargo test local_guess -- --ignored --nocapture`.
+    /// Prints what YASAFF reads for a game Steam is installing:
+    /// `STEAM_APPID=367520 cargo test install_progress -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn install_progress() {
+        let appid = std::env::var("STEAM_APPID").unwrap_or_else(|_| "367520".into());
+        let libraries = super::libraries().unwrap_or_default();
+        println!("{appid}: {:?}", super::install_status(&libraries, &appid));
+    }
+
     #[test]
     #[ignore]
     fn local_guess() {

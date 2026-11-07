@@ -1205,11 +1205,15 @@
   "Library": "Biblioteka",
   "Not installed": "Niezainstalowana",
   "Page": "Strona",
-  "Steam downloads it. The Library shows the progress, and it joins your games when it finishes.": "Steam ją pobierze. Biblioteka pokazuje postęp, a po zakończeniu gra dołączy do twoich gier.",
+  "Steam downloads it. It shows on your home screen with its progress, and is ready to play when it finishes.": "Steam ją pobierze. Pojawi się na ekranie głównym z postępem i będzie gotowa do gry po zakończeniu.",
   "Steam games you own but haven't installed. Install them from here": "Twoje gry ze Steam, których nie zainstalowano. Zainstaluj je stąd",
   "{n} games you own aren't installed": [
     "{n} posiadana gra nie jest zainstalowana",
     "{n} posiadane gry nie są zainstalowane",
     "{n} posiadanych gier nie jest zainstalowanych"
-  ]
+  ],
+  "Installing {name} was canceled": "Anulowano instalację {name}",
+  "Paused": "Wstrzymano",
+  "Paused at {percent} %": "Wstrzymano przy {percent} %",
+  "Waiting for Steam…": "Czekanie na Steam…"
 }

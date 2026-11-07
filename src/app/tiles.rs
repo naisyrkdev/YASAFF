@@ -187,6 +187,7 @@ impl App {
     pub(super) fn paint_tile(&self, ui: &Ui, i: usize, rect: Rect, radius: u8, s: f32, focus: f32) {
         self.paint_running_glow(ui, i, rect, s);
         self.paint_tile_art(ui, i, rect, radius, s, focus);
+        self.paint_install_badge(ui, i, rect, radius, s);
         self.paint_artwork_badge(ui, i, rect, s);
         self.paint_app_badges(ui, i, rect, s);
         self.paint_swap_mark(ui, i, rect, radius, s);
@@ -211,6 +212,49 @@ impl App {
             TileStyle::Case => self.paint_case(ui, i, rect, s, focus),
             TileStyle::Crt => self.paint_crt(ui, i, rect, s, focus),
         }
+    }
+
+    /// A game Steam is installing is dimmed, with a ring around a download arrow filling up and
+    /// the percentage (or "Paused") under it.
+    pub(super) fn paint_install_badge(&self, ui: &Ui, i: usize, rect: Rect, radius: u8, s: f32) {
+        let Some(game) = self.library.games.get(i).filter(|g| g.installing) else { return };
+        let progress = self.installs.progress.get(&game.id).copied().unwrap_or_default();
+        let painter = ui.painter();
+        painter.rect_filled(rect, radius, Color32::from_black_alpha(130));
+        let r = (rect.width() * 0.16).clamp(18.0 * s, 34.0 * s);
+        let center = rect.center();
+        painter.circle_filled(center, r, Color32::from_black_alpha(200));
+        painter.text(center, Align2::CENTER_CENTER, if progress.paused { "⏸" } else { "⬇" }, FontId::proportional(r), Color32::WHITE);
+        let ring = r + 3.0 * s;
+        painter.circle_stroke(center, ring, Stroke::new(4.0 * s, Color32::from_white_alpha(40)));
+        let color = if progress.paused { PAD_Y } else { PAD_A };
+        match progress.fraction {
+            Some(p) => {
+                let p = p.clamp(0.0, 1.0);
+                let steps = ((64.0 * p).ceil() as usize).max(2);
+                let start = -std::f32::consts::FRAC_PI_2;
+                let points: Vec<Pos2> = (0..=steps)
+                    .map(|k| {
+                        let a = start + std::f32::consts::TAU * p * k as f32 / steps as f32;
+                        center + vec2(a.cos(), a.sin()) * ring
+                    })
+                    .collect();
+                painter.add(egui::Shape::line(points, Stroke::new(4.0 * s, color)));
+            }
+            None if !progress.paused => {
+                let size = ring * 2.0;
+                egui::Spinner::new().size(size).color(color).paint_at(ui, Rect::from_center_size(center, vec2(size, size)));
+            }
+            None => {}
+        }
+        let label = match (progress.paused, progress.fraction) {
+            (true, _) => tr!("Paused").to_owned(),
+            (false, Some(p)) => format!("{}%", (p * 100.0).floor() as u32),
+            (false, None) => String::new(),
+        };
+        let below = center + vec2(0.0, ring + 14.0 * s);
+        painter.text(below + vec2(1.0, 1.0) * s, Align2::CENTER_CENTER, &label, FontId::proportional(16.0 * s), Color32::BLACK);
+        painter.text(below, Align2::CENTER_CENTER, label, FontId::proportional(16.0 * s), Color32::WHITE);
     }
 
     pub(super) fn paint_artwork_badge(&self, ui: &Ui, i: usize, rect: Rect, s: f32) {

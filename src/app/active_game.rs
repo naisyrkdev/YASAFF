@@ -119,6 +119,10 @@ impl App {
         if game.app_id.is_some() {
             return self.launch_app();
         }
+        if game.installing {
+            let status = self.install_label(&game.id);
+            return self.notify(tr!("{name}: {status}", name = game.name, status = status));
+        }
         if self.game.as_ref().is_some_and(|g| g.game_id == game.id) {
             return self.switch_to_game();
         }

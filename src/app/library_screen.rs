@@ -1,6 +1,6 @@
 //! The Library tile: Steam games the account owns that aren't installed, to install from here.
-//! The list comes straight from Steam (by the method picked in Settings); a game Steam finishes
-//! installing joins the home screen.
+//! The list comes straight from Steam (by the method picked in Settings); a game being installed
+//! moves to the home screen.
 
 use super::*;
 use crate::steam::{self, OwnedGame, Owned};
@@ -24,13 +24,11 @@ pub(super) struct LibraryView {
 pub(super) struct LibraryRow {
     appid: String,
     name: String,
-    /// Set once an install was started from here: the game waiting in `Library::uninstalled`.
-    game_id: Option<String>,
 }
 
 impl App {
-    /// Steam games owned but not on the home screen, by name: the fetched list plus games
-    /// waiting in `Library::uninstalled` (being installed, or uninstalled in Steam).
+    /// Steam games owned but not on the home screen, by name: the fetched list plus games kept in
+    /// `Library::uninstalled` (uninstalled in Steam, or whose install was canceled).
     pub(super) fn library_rows(&self) -> Vec<LibraryRow> {
         let home: HashSet<String> = self.library.games.iter().filter_map(Self::steam_appid).collect();
         let waiting: HashMap<String, &Game> = self.library.uninstalled.iter().filter_map(|g| Some((Self::steam_appid(g)?, g))).collect();
@@ -39,11 +37,11 @@ impl App {
             .owned
             .iter()
             .filter(|g| !home.contains(&g.appid))
-            .map(|g| LibraryRow { appid: g.appid.clone(), name: g.name.clone(), game_id: waiting.get(&g.appid).map(|w| w.id.clone()) })
+            .map(|g| LibraryRow { appid: g.appid.clone(), name: g.name.clone() })
             .collect();
         let listed: HashSet<String> = rows.iter().map(|r| r.appid.clone()).collect();
         for (appid, game) in waiting.into_iter().filter(|(appid, _)| !listed.contains(appid) && !home.contains(appid)) {
-            rows.push(LibraryRow { appid, name: game.name.clone(), game_id: Some(game.id.clone()) });
+            rows.push(LibraryRow { appid, name: game.name.clone() });
         }
         rows.sort_by_key(|r| r.name.to_lowercase());
         rows
@@ -110,10 +108,6 @@ impl App {
             Action::Back => self.mode = Mode::Home,
             Action::Confirm => {
                 let Some(row) = rows.get(view.cursor) else { return };
-                if row.game_id.as_ref().is_some_and(|id| self.installs.progress.contains_key(id)) {
-                    let status = self.install_label(row.game_id.as_deref());
-                    return self.notify(tr!("{name}: {status}", name = row.name, status = status));
-                }
                 let Ok(appid) = row.appid.parse() else { return };
                 self.mode = Mode::ConfirmRemove { what: Removal::InstallGame(appid), yes: true };
             }
@@ -205,18 +199,11 @@ impl App {
             let uri = self.library_cover(&row.appid);
             paint_placed(ui, egui::Image::new(uri), icon, 1.0, (4.0 * s) as u8, CoverPlacement::default());
 
-            let label = self.install_label(row.game_id.as_deref());
-            let installing = row.game_id.as_ref().is_some_and(|id| self.installs.progress.contains_key(id));
-            let color = if installing { PAD_A } else { Color32::from_gray(200) };
-            let tag = painter.layout_no_wrap(label, FontId::proportional(15.0 * s), color);
+            let color = Color32::from_gray(200);
+            let tag = painter.layout_no_wrap(tr!("Not installed").to_owned(), FontId::proportional(15.0 * s), color);
             let t = Rect::from_min_size(pos2(r.right() - 40.0 * s - tag.size().x, r.center().y - 13.0 * s), tag.size() + vec2(20.0 * s, 10.0 * s));
             painter.rect_filled(t, (t.height() / 2.0) as u8, Color32::from_white_alpha(30));
             painter.galley(t.center() - tag.size() / 2.0, tag, color);
-            if let Some(Some(p)) = row.game_id.as_ref().and_then(|id| self.installs.progress.get(id)) {
-                let bar = Rect::from_min_size(pos2(icon.right() + 18.0 * s, r.bottom() - 18.0 * s), vec2((t.left() - icon.right() - 40.0 * s).max(0.0), 6.0 * s));
-                painter.rect_filled(bar, (3.0 * s) as u8, Color32::from_white_alpha(30));
-                painter.rect_filled(Rect::from_min_size(bar.min, vec2(bar.width() * p.clamp(0.0, 1.0), bar.height())), (3.0 * s) as u8, PAD_A);
-            }
 
             let text_x = icon.right() + 18.0 * s;
             let clip = painter.with_clip_rect(Rect::from_min_max(r.min, pos2(t.left() - 12.0 * s, r.bottom())));

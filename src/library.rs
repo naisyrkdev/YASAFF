@@ -65,6 +65,9 @@ pub struct Game {
     /// loading moves them over.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub not_installed: bool,
+    /// On the home screen while its store installs it; playable once the store is done.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub installing: bool,
 }
 
 /// The cover image and placement of every tile style. The shown style's live in `Assets` (what
@@ -584,6 +587,7 @@ impl Library {
     pub fn move_to_uninstalled(&mut self, index: usize) {
         let mut game = self.games.remove(index);
         game.not_installed = true;
+        game.installing = false;
         self.uninstalled.push(game);
         self.arrange();
     }
@@ -622,6 +626,7 @@ impl Library {
             main_category: None,
             picture_seeded: false,
             not_installed: false,
+            installing: false,
         }
     }
 
