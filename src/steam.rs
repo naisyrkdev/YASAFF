@@ -715,11 +715,6 @@ pub fn libraries() -> Option<Vec<PathBuf>> {
     Some(steam_libraries()).filter(|l| !l.is_empty())
 }
 
-/// The appid of a `steam://rungameid/<appid>` style target.
-pub fn appid_of(target: &str, args: &[String]) -> Option<String> {
-    crate::physical::ids::from_command(target, args).into_iter().find(|id| id.store == crate::physical::ids::STEAM).map(|id| id.id)
-}
-
 pub fn install_uri(appid: &str) -> String {
     format!("steam://install/{appid}")
 }
@@ -801,12 +796,6 @@ mod tests {
     fn private_profile_is_explained() {
         assert!(parse_owned(&serde_json::json!({"response":{}})).is_err());
         assert!(parse_owned(&serde_json::json!({"response":{"game_count":0}})).unwrap().is_empty());
-    }
-
-    #[test]
-    fn steam_appid_from_target() {
-        assert_eq!(appid_of("steam://rungameid/570", &[]).as_deref(), Some("570"));
-        assert_eq!(appid_of("/usr/bin/game", &[]), None);
     }
 
     fn jwt(claims: &str) -> String {

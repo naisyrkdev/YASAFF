@@ -20,6 +20,7 @@ mod input;
 mod launcher;
 mod library;
 mod logging;
+mod lutris;
 mod metadata;
 mod mock_game;
 mod object3d;

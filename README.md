@@ -141,11 +141,23 @@ Open the **Add game** tile, or press **Y** / **Insert**. From there you can:
 
 Games installed from YASAFF Discover are added to the library automatically.
 
-### Steam games you haven't installed
+## Third-party stores
 
-YASAFF can also list the Steam games you own but haven't installed, in a **Library** tile next to Discover, and install them through Steam.
+**Settings → Third-party stores** lists the stores and launchers YASAFF works with, each marked *Set*, *Not set* or *Not installed*. Select one to open its settings.
 
-1. In **Settings → Steam**, turn on **Show Steam games you don't have installed**.
+| Store | Needs | What it does |
+| --- | --- | --- |
+| **Steam** | Steam | Launches Steam games through Steam; lists the games you own but haven't installed and installs them (see below) |
+| **Heroic (GOG, Epic)** | [Heroic Games Launcher](https://heroicgameslauncher.com), logged into Epic and GOG | Launches Heroic games through Heroic; lists the Epic and GOG games you own but haven't installed and installs them |
+| **Lutris** (Linux) | [Lutris](https://lutris.net) | **Import Lutris games now** adds the games installed in Lutris. **Keep Lutris games in sync** also adds games as you add them to Lutris, and takes off the ones you remove |
+
+The settings page of Heroic and Lutris says whether they're installed on this computer; while Heroic isn't, **Open website** takes you to its download page.
+
+### Games you haven't installed
+
+With **Show … games you don't have installed** on for Steam or Heroic, a **Library** tile shows next to Discover. It lists the games you own in those stores that aren't installed, and installs them through their store.
+
+1. In **Settings → Third-party stores → Steam**, turn on **Show Steam games you don't have installed**.
 2. Pick **How to find your Steam games**:
 
    | Method | Setup | Accuracy |
@@ -159,6 +171,8 @@ YASAFF can also list the Steam games you own but haven't installed, in a **Libra
 The game moves to the home screen right away, dimmed, with a ring showing Steam's progress (or *Paused*), and becomes playable when Steam finishes. Installs started in Steam itself move there too. A canceled install, or a game uninstalled in Steam, goes back to the Library, keeping its images and settings. YASAFF never downloads games itself, it reads Steam's own install files, so installs and uninstalls done in Steam show up too.
 
 The sign-in and the API key are only used to read which games you own, and are left out of exported profiles. Without a connection, YASAFF uses the last list it fetched.
+
+For Epic and GOG, turn on **Show Epic and GOG games you don't have installed** in **Settings → Third-party stores → Heroic (GOG, Epic)**. The list comes from Heroic, so log into Epic and GOG in Heroic first. Installing asks Heroic, which offers to install the game. Heroic doesn't share its download progress, so the tile shows *Installing in Heroic…* until the game is ready. **Move back to Library** in the game's options stops following an install you canceled.
 
 ## Controls
 
@@ -309,7 +323,7 @@ Each profile has its own library, settings, themes, images and apps. In **Settin
 | Profiles | Change, rename, create, export, import, reset |
 | Power options | Reset application |
 | YASAFF Discover | Active store, address, test connection, add or remove stores |
-| Steam / Heroic | Launch games through the store, start the store in the background with YASAFF, custom launch command (auto-detected by default); Steam: show games you own but haven't installed, found by QR sign-in, local files or an API key |
+| Third-party stores | Steam, Heroic (GOG, Epic) and Lutris, each on its own page: launch games through the store, start it in the background with YASAFF, custom launch command; games you own but haven't installed (Steam: by QR sign-in, local files or an API key; Heroic: from its library); Lutris import and sync |
 | Physical Devices | When a disc is inserted, check the drive at startup, USB stick and SD card support, keep saves on the launch device |
 | Mouse | Virtual mouse on the right stick, speed, custom cursor and cursor size |
 | Controller | Button hints, swap A/B (for Nintendo Switch habits), remap every button, Discover and Add game shortcuts, reset bindings |

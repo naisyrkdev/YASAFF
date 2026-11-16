@@ -1,59 +1,60 @@
-//! The Library tile: Steam games the account owns that aren't installed, to install from here.
-//! The list comes straight from Steam (by the method picked in Settings); a game being installed
-//! moves to the home screen.
+//! The Library tile: games the user owns in Steam, Epic or GOG that aren't installed, to install
+//! from here. The lists come straight from Steam (by the method picked in Settings) and from
+//! Heroic's library files; a game being installed moves to the home screen.
 
 use super::*;
-use crate::steam::{self, OwnedGame, Owned};
+use crate::steam;
+use installs::StoreGame;
 use std::collections::{HashMap, HashSet};
 
 /// Rows Left/Right jump by.
 const PAGE: usize = 8;
 
-#[derive(Default)]
-pub(super) struct LibraryView {
-    owned: Vec<OwnedGame>,
-    fetching: Option<mpsc::Receiver<Owned>>,
-    warning: Option<String>,
-    cursor: usize,
-    scroll: usize,
-    /// Cover image address by appid: Steam's cached file when there is one, else its CDN.
-    covers: HashMap<String, String>,
+/// One owned game a store listed.
+#[derive(Clone)]
+pub(super) struct Listed {
+    key: StoreGame,
+    name: String,
+    /// The store's cover address, when it gives one.
+    art: Option<String>,
 }
 
-/// One game in the Library list.
-pub(super) struct LibraryRow {
-    appid: String,
-    name: String,
+#[derive(Default)]
+pub(super) struct LibraryView {
+    owned: Vec<Listed>,
+    fetching: Option<mpsc::Receiver<(Vec<Listed>, Vec<String>)>>,
+    warnings: Vec<String>,
+    cursor: usize,
+    scroll: usize,
+    /// Cover image address by game: a cached file when there is one, else the store's web address.
+    covers: HashMap<StoreGame, Option<String>>,
+    /// The game the install dialog is about.
+    pub(super) pending: Option<Listed>,
 }
 
 impl App {
-    /// Steam games owned but not on the home screen, by name: the fetched list plus games kept in
-    /// `Library::uninstalled` (uninstalled in Steam, or whose install was canceled).
-    pub(super) fn library_rows(&self) -> Vec<LibraryRow> {
-        let home: HashSet<String> = self.library.games.iter().filter_map(Self::steam_appid).collect();
-        let waiting: HashMap<String, &Game> = self.library.uninstalled.iter().filter_map(|g| Some((Self::steam_appid(g)?, g))).collect();
-        let mut rows: Vec<LibraryRow> = self
-            .library_view
-            .owned
-            .iter()
-            .filter(|g| !home.contains(&g.appid))
-            .map(|g| LibraryRow { appid: g.appid.clone(), name: g.name.clone() })
-            .collect();
-        let listed: HashSet<String> = rows.iter().map(|r| r.appid.clone()).collect();
-        for (appid, game) in waiting.into_iter().filter(|(appid, _)| !listed.contains(appid) && !home.contains(appid)) {
-            rows.push(LibraryRow { appid, name: game.name.clone() });
+    /// Whether any store's games that aren't installed are listed: the Library tile shows then.
+    pub(super) fn library_enabled(&self) -> bool {
+        self.settings.steam_show_owned || self.settings.heroic_show_owned
+    }
+
+    /// Owned games not on the home screen, by name: the fetched lists plus games kept in
+    /// `Library::uninstalled` (uninstalled in their store, or whose install was canceled).
+    pub(super) fn library_rows(&self) -> Vec<Listed> {
+        let home: HashSet<StoreGame> = self.library.games.iter().filter_map(StoreGame::of).collect();
+        let mut rows: Vec<Listed> = self.library_view.owned.iter().filter(|g| !home.contains(&g.key)).cloned().collect();
+        let listed: HashSet<StoreGame> = rows.iter().map(|r| r.key.clone()).collect();
+        let shown = |key: &StoreGame| match key {
+            StoreGame::Steam(_) => self.settings.steam_show_owned,
+            StoreGame::Heroic { .. } => self.settings.heroic_show_owned,
+        };
+        for game in &self.library.uninstalled {
+            if let Some(key) = StoreGame::of(game).filter(|k| shown(k) && !listed.contains(k) && !home.contains(k)) {
+                rows.push(Listed { key, name: game.name.clone(), art: None });
+            }
         }
         rows.sort_by_key(|r| r.name.to_lowercase());
         rows
-    }
-
-    /// The name of an owned game, for the install dialog.
-    pub(super) fn library_game_name(&self, appid: u32) -> String {
-        let appid = appid.to_string();
-        let owned = self.library_view.owned.iter().find(|g| g.appid == appid).map(|g| g.name.clone());
-        owned
-            .or_else(|| self.library.uninstalled.iter().find(|g| Self::steam_appid(g).as_deref() == Some(appid.as_str())).map(|g| g.name.clone()))
-            .unwrap_or(appid)
     }
 
     pub(super) fn open_library(&mut self) {
@@ -65,15 +66,37 @@ impl App {
 
     fn refresh_library(&mut self) {
         self.installs.refresh_steam_id();
-        let account = steam::Account {
+        let steam_account = self.settings.steam_show_owned.then(|| steam::Account {
             source: self.settings.steam_source,
             api_key: self.settings.steam_api_key.clone(),
             detected_id: self.installs.steam_id.clone(),
-        };
+        });
+        let heroic = self.settings.heroic_show_owned;
         let (tx, rx) = mpsc::channel();
         let ctx = self.ctx.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(steam::owned_games(&account));
+            let mut games = Vec::new();
+            let mut warnings = Vec::new();
+            if let Some(account) = steam_account {
+                let owned = steam::owned_games(&account);
+                warnings.extend(owned.warning);
+                games.extend(owned.games.into_iter().map(|g| Listed { key: StoreGame::Steam(g.appid), name: g.name, art: None }));
+            }
+            if heroic {
+                let installed = scan::heroic_installed();
+                let owned = scan::heroic_owned();
+                if installed.is_none() || owned.is_empty() {
+                    warnings.push(tr!("No Epic or GOG games found. Open Heroic and log into Epic and GOG").to_owned());
+                }
+                let installed = installed.unwrap_or_default();
+                games.extend(
+                    owned
+                        .into_iter()
+                        .filter(|g| !installed.contains(&(g.runner.to_owned(), g.app.clone())))
+                        .map(|g| Listed { key: StoreGame::Heroic { runner: g.runner.to_owned(), app: g.app }, name: g.title, art: g.art }),
+                );
+            }
+            let _ = tx.send((games, warnings));
             ctx.request_repaint();
         });
         self.library_view.fetching = Some(rx);
@@ -81,18 +104,18 @@ impl App {
 
     pub(super) fn poll_library(&mut self) {
         let Some(rx) = &self.library_view.fetching else { return };
-        let owned = match rx.try_recv() {
-            Ok(owned) => owned,
+        let (games, warnings) = match rx.try_recv() {
+            Ok(listed) => listed,
             Err(mpsc::TryRecvError::Empty) => return,
-            Err(mpsc::TryRecvError::Disconnected) => Owned { games: Vec::new(), warning: None },
+            Err(mpsc::TryRecvError::Disconnected) => (Vec::new(), Vec::new()),
         };
         let view = &mut self.library_view;
         view.fetching = None;
         // A failed refresh keeps the list already shown.
-        if !owned.games.is_empty() || owned.warning.is_none() {
-            view.owned = owned.games;
+        if !games.is_empty() || warnings.is_empty() {
+            view.owned = games;
         }
-        view.warning = owned.warning;
+        view.warnings = warnings;
     }
 
     pub(super) fn handle_library(&mut self, action: Action) {
@@ -108,24 +131,40 @@ impl App {
             Action::Back => self.mode = Mode::Home,
             Action::Confirm => {
                 let Some(row) = rows.get(view.cursor) else { return };
-                let Ok(appid) = row.appid.parse() else { return };
-                self.mode = Mode::ConfirmRemove { what: Removal::InstallGame(appid), yes: true };
+                view.pending = Some(row.clone());
+                self.mode = Mode::ConfirmRemove { what: Removal::InstallGame, yes: true };
             }
             _ => {}
         }
     }
 
-    /// Where a game's cover comes from: Steam's cache on this computer, or Steam's CDN.
-    fn library_cover(&mut self, appid: &str) -> String {
-        if let Some(uri) = self.library_view.covers.get(appid) {
+    /// Installs the game the install dialog was about.
+    pub(super) fn install_pending(&mut self) {
+        if let Some(game) = self.library_view.pending.take() {
+            self.install_store_game(&game.key, &game.name);
+        }
+    }
+
+    /// The name of the game the install dialog is about.
+    pub(super) fn pending_name(&self) -> String {
+        self.library_view.pending.as_ref().map(|g| g.name.clone()).unwrap_or_default()
+    }
+
+    /// Where a game's cover comes from: the store's files on this computer, or its website.
+    fn library_cover(&mut self, game: &Listed) -> Option<String> {
+        if let Some(uri) = self.library_view.covers.get(&game.key) {
             return uri.clone();
         }
-        let cached = scan::steam_roots().into_iter().find_map(|r| crate::metadata::steam_cover_in(&r.join("appcache/librarycache").join(appid)));
-        let uri = match cached {
-            Some(path) => file_uri(&path),
-            None => steam::cdn_art(appid)[0].1.clone(),
+        let local = match &game.key {
+            StoreGame::Steam(appid) => scan::steam_roots().into_iter().find_map(|r| crate::metadata::steam_cover_in(&r.join("appcache/librarycache").join(appid))),
+            key => crate::metadata::local(&crate::physical::ids::from_command(&key.target(), &[])).and_then(|f| f.cover),
         };
-        self.library_view.covers.insert(appid.to_owned(), uri.clone());
+        let uri = match (local, &game.key) {
+            (Some(path), _) => Some(file_uri(&path)),
+            (None, StoreGame::Steam(appid)) => Some(steam::cdn_art(appid)[0].1.clone()),
+            (None, _) => game.art.clone(),
+        };
+        self.library_view.covers.insert(game.key.clone(), uri.clone());
         uri
     }
 
@@ -151,16 +190,16 @@ impl App {
             status_x += 40.0 * s;
         }
         let status = if fetching && rows.is_empty() {
-            tr!("Getting your Steam games…").to_owned()
+            tr!("Getting your games…").to_owned()
         } else {
             let n = rows.len();
             tr_n!(n, "{n} game you own isn't installed", "{n} games you own aren't installed")
         };
         painter.text(pos2(status_x, status_pos.y), Align2::LEFT_CENTER, status, font.clone(), gray);
         let mut list_top = status_pos.y + 36.0 * s;
-        if let Some(warning) = &self.library_view.warning {
+        for warning in &self.library_view.warnings {
             let clip = painter.with_clip_rect(panel.shrink(20.0 * s));
-            clip.text(pos2(status_pos.x, status_pos.y + 32.0 * s), Align2::LEFT_CENTER, warning, FontId::proportional(16.0 * s), PAD_Y);
+            clip.text(pos2(status_pos.x, list_top - 4.0 * s), Align2::LEFT_CENTER, warning, FontId::proportional(16.0 * s), PAD_Y);
             list_top += 28.0 * s;
         }
 
@@ -181,7 +220,7 @@ impl App {
         let (cursor, scroll) = (view.cursor, view.scroll);
 
         if !fetching && rows.is_empty() {
-            let text = tr!("Every Steam game you own is installed. Press Menu / Tab to check again.");
+            let text = tr!("Every game you own is installed. Press Menu / Tab to check again.");
             painter.text(pos2(panel.center().x, list_top + 60.0 * s), Align2::CENTER_CENTER, text, font, Color32::from_gray(150));
         }
         let mut hovered = None;
@@ -196,8 +235,9 @@ impl App {
             let icon = Rect::from_min_size(pos2(r.left() + 24.0 * s, r.top() + 6.0 * s), vec2(cover_h * 2.0 / 3.0, cover_h));
             painter.rect_filled(icon, (4.0 * s) as u8, placeholder_color(&row.name));
             painter.text(icon.center(), Align2::CENTER_CENTER, initials(&row.name), FontId::proportional(icon.height() * 0.3), Color32::WHITE);
-            let uri = self.library_cover(&row.appid);
-            paint_placed(ui, egui::Image::new(uri), icon, 1.0, (4.0 * s) as u8, CoverPlacement::default());
+            if let Some(uri) = self.library_cover(row) {
+                paint_placed(ui, egui::Image::new(uri), icon, 1.0, (4.0 * s) as u8, CoverPlacement::default());
+            }
 
             let color = Color32::from_gray(200);
             let tag = painter.layout_no_wrap(tr!("Not installed").to_owned(), FontId::proportional(15.0 * s), color);
@@ -208,7 +248,7 @@ impl App {
             let text_x = icon.right() + 18.0 * s;
             let clip = painter.with_clip_rect(Rect::from_min_max(r.min, pos2(t.left() - 12.0 * s, r.bottom())));
             clip.text(pos2(text_x, r.top() + 14.0 * s), Align2::LEFT_TOP, &row.name, FontId::proportional(22.0 * s), Color32::WHITE);
-            clip.text(pos2(text_x, r.top() + 44.0 * s), Align2::LEFT_TOP, "Steam", FontId::proportional(15.0 * s), Color32::from_gray(140));
+            clip.text(pos2(text_x, r.top() + 44.0 * s), Align2::LEFT_TOP, row.key.store_name(), FontId::proportional(15.0 * s), Color32::from_gray(140));
 
             let resp = ui.interact(r, Id::new(("library", i)), Sense::click());
             if resp.hovered() && ui.input(|inp| inp.pointer.delta() != egui::Vec2::ZERO) {

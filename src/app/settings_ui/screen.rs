@@ -11,6 +11,7 @@ impl App {
             (Page::GameBox, Some(game)) => tr!("Appearance · {name}", name = game.name),
             (Page::GameDevice, Some(game)) => tr!("Physical Devices · {name}", name = game.name),
             (Page::GameDetails, Some(game)) => tr!("Details · {name}", name = game.name),
+            (Page::Integration(integration), _) => integration.name().to_owned(),
             (Page::ThemePictures, _) => match self.pictures_row() {
                 SettingRow::ThemeOption(i) => self.theme_manifest().and_then(|m| m.options.get(i)).map(|o| o.label.trim_end_matches('…').to_owned()).unwrap_or_default(),
                 _ => String::new(),
@@ -237,6 +238,7 @@ impl App {
                 Page::GameDevice => Mode::Options { cursor: self.menu_index(MenuItem::PhysicalDevices) },
                 Page::GameDetails => Mode::Options { cursor: self.menu_index(MenuItem::Details) },
                 Page::ThemePictures => self.settings_at(self.pictures_row()),
+                Page::Integration(integration) => self.settings_at(SettingRow::Integration(integration)),
             }
         }
     }

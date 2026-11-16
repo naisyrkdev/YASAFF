@@ -258,6 +258,32 @@ impl App {
                 }
                 self.save_settings();
             }
+            SettingRow::Integration(integration) => {
+                self.mode = Mode::Settings { cursor: 0, page: Page::Integration(integration), in_rows: true };
+            }
+            SettingRow::HeroicStatus => {
+                if Store::Heroic.detect().is_none()
+                    && let Err(e) = open::that_detached("https://heroicgameslauncher.com")
+                {
+                    self.notify(tr!("Could not open {url}: {error}", url = "https://heroicgameslauncher.com", error = e));
+                }
+            }
+            SettingRow::HeroicShowOwned => {
+                self.settings.heroic_show_owned ^= true;
+                if self.settings.heroic_show_owned && Store::Heroic.detect().is_none() {
+                    self.notify(tr!("Install Heroic Games Launcher first, then log into Epic and GOG in it"));
+                }
+                self.save_settings();
+            }
+            SettingRow::LutrisStatus => {}
+            SettingRow::LutrisSync => {
+                self.settings.lutris_sync ^= true;
+                self.save_settings();
+                if self.settings.lutris_sync {
+                    self.sync_lutris(true);
+                }
+            }
+            SettingRow::LutrisImport => self.import_lutris(),
             SettingRow::SteamSignIn => {
                 if self.installs.signed_in.is_some() {
                     crate::steam::Session::sign_out();
@@ -639,6 +665,8 @@ impl App {
             | SettingRow::StoreEnabled(_)
             | SettingRow::StoreBackground(_)
             | SettingRow::SteamShowOwned
+            | SettingRow::HeroicShowOwned
+            | SettingRow::LutrisSync
             | SettingRow::DiscScanAtStart
             | SettingRow::DiscRemovable
             | SettingRow::DiscHideFileWindow

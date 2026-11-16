@@ -13,6 +13,28 @@ impl App {
             rows.extend((0..self.library.categories.len()).map(R::GameCategory));
             return rows;
         }
+        if let Page::Integration(integration) = page {
+            return match integration {
+                Integration::Steam => {
+                    let mut rows = vec![R::StoreEnabled(Store::Steam), R::StoreBackground(Store::Steam), R::StoreCommand(Store::Steam)];
+                    rows.extend([R::SteamShowOwned, R::SteamSource]);
+                    match self.settings.steam_source {
+                        SteamSource::SignIn => rows.push(R::SteamSignIn),
+                        SteamSource::ApiKey => rows.extend([R::SteamApiKey, R::SteamAccount]),
+                        SteamSource::LocalFiles => rows.push(R::SteamAccount),
+                    }
+                    rows
+                }
+                Integration::Heroic => vec![
+                    R::HeroicStatus,
+                    R::StoreEnabled(Store::Heroic),
+                    R::StoreBackground(Store::Heroic),
+                    R::StoreCommand(Store::Heroic),
+                    R::HeroicShowOwned,
+                ],
+                Integration::Lutris => vec![R::LutrisStatus, R::LutrisSync, R::LutrisImport],
+            };
+        }
         if page == Page::ThemePictures {
             let mut rows = Vec::new();
             for slot in self.picture_slots() {
@@ -265,16 +287,9 @@ impl App {
         }
         rows.extend(Special::PLACEABLE.map(R::SpecialPlace));
         rows.extend([R::FontTitle, R::FontImport, R::FontManage]);
-        for store in Store::ALL {
-            rows.extend([R::StoreEnabled(store), R::StoreBackground(store), R::StoreCommand(store)]);
-            if store == Store::Steam {
-                rows.extend([R::SteamShowOwned, R::SteamSource]);
-                match self.settings.steam_source {
-                    SteamSource::SignIn => rows.push(R::SteamSignIn),
-                    SteamSource::ApiKey => rows.extend([R::SteamApiKey, R::SteamAccount]),
-                    SteamSource::LocalFiles => rows.push(R::SteamAccount),
-                }
-            }
+        rows.extend([R::Integration(Integration::Steam), R::Integration(Integration::Heroic)]);
+        if cfg!(all(unix, not(target_os = "macos"))) {
+            rows.push(R::Integration(Integration::Lutris));
         }
         rows.extend([R::DiscOnInsert, R::DiscScanAtStart, R::DiscRemovable, R::DiscHideFileWindow, R::DiscKeepSaves]);
         rows.push(R::AddonManager);
@@ -301,6 +316,35 @@ impl App {
 
     pub(in crate::app) fn settings_at(&self, row: SettingRow) -> Mode {
         Mode::Settings { cursor: self.settings_cursor(row), page: row.page(), in_rows: true }
+    }
+
+    /// Whether a launcher YASAFF needs is on this computer, as a section status.
+    fn app_status(&self, installed: bool) -> (String, Color32) {
+        if installed {
+            (tr!("Installed on this computer").to_owned(), Color32::from_gray(140))
+        } else {
+            (tr!("Not installed").to_owned(), PAD_B)
+        }
+    }
+
+    /// What Third-party stores shows next to each integration.
+    pub(in crate::app) fn integration_status(&self, integration: Integration) -> String {
+        let set = |on: bool| if on { tr!("Set") } else { tr!("Not set") }.to_owned();
+        match integration {
+            Integration::Steam => {
+                let library = self.settings.steam_show_owned
+                    && match self.settings.steam_source {
+                        SteamSource::SignIn => self.installs.signed_in.is_some(),
+                        SteamSource::ApiKey => !self.settings.steam_api_key.trim().is_empty(),
+                        SteamSource::LocalFiles => true,
+                    };
+                set(self.settings.steam.enabled || library)
+            }
+            Integration::Heroic if Store::Heroic.detect().is_none() => tr!("Not installed").to_owned(),
+            Integration::Heroic => set(self.settings.heroic.enabled || self.settings.heroic_show_owned),
+            Integration::Lutris if crate::stores::lutris_command().is_none() => tr!("Not installed").to_owned(),
+            Integration::Lutris => set(self.settings.lutris_sync),
+        }
     }
 
     pub(in crate::app) fn setting_heading(&self, row: SettingRow) -> Option<(&'static str, Option<(String, Color32)>)> {
@@ -390,13 +434,20 @@ impl App {
                 Some((tr!("Shows the 3D model, or the name in 3D letters without one").to_owned(), Color32::from_gray(140))),
             )),
             SettingRow::GameTitleFont => Some((tr!("Title"), None)),
+            SettingRow::Integration(Integration::Steam) => Some((
+                tr!("Third-party stores"),
+                Some((tr!("Steam, Heroic and Lutris games, launched and installed from here").to_owned(), Color32::from_gray(140))),
+            )),
             SettingRow::StoreEnabled(store) => {
                 let status = match self.settings.store_command(store) {
                     Some(c) => (tr!("Found: {command}", command = apps::join_command(&c[0], &c[1..])), Color32::from_gray(140)),
                     None => (tr!("Not found").to_owned(), PAD_B),
                 };
-                Some((store.name(), Some(status)))
+                Some((tr!("Launching"), Some(status)))
             }
+            SettingRow::SteamShowOwned | SettingRow::HeroicShowOwned => Some((tr!("Library"), None)),
+            SettingRow::HeroicStatus => Some(("Heroic Games Launcher", Some(self.app_status(Store::Heroic.detect().is_some())))),
+            SettingRow::LutrisStatus => Some(("Lutris", Some(self.app_status(crate::stores::lutris_command().is_some())))),
             SettingRow::DiscOnInsert => {
                 Some((tr!("Physical Devices"), Some((tr!("A disc or USB stick with a .yasaff file").to_owned(), Color32::from_gray(140)))))
             }

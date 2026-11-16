@@ -17,12 +17,60 @@ const START_GRACE: Duration = Duration::from_secs(10 * 60);
 /// How often the list of Steam games in the library is handed to the watcher again.
 const RESYNC: Duration = Duration::from_secs(2);
 
-/// One library game the watcher follows: its id, its Steam appid and whether the library thinks
+/// A game in a store YASAFF can install from: its Steam appid, or Heroic's runner and app name.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub(super) enum StoreGame {
+    Steam(String),
+    Heroic { runner: String, app: String },
+}
+
+impl StoreGame {
+    /// The store game a library game launches, `None` for anything else.
+    pub(super) fn of(game: &Game) -> Option<StoreGame> {
+        if game.app_id.is_some() {
+            return None;
+        }
+        let ids = crate::physical::ids::from_command(&game.target, &game.args);
+        ids.into_iter().find_map(|id| {
+            let runner = match id.store.as_str() {
+                crate::physical::ids::STEAM => return Some(StoreGame::Steam(id.id)),
+                crate::physical::ids::EPIC => "legendary",
+                crate::physical::ids::GOG => "gog",
+                crate::physical::ids::AMAZON => "nile",
+                _ => return None,
+            };
+            Some(StoreGame::Heroic { runner: runner.to_owned(), app: id.id })
+        })
+    }
+
+    /// What starts the game.
+    pub(super) fn target(&self) -> String {
+        match self {
+            StoreGame::Steam(appid) => steam::run_uri(appid),
+            StoreGame::Heroic { runner, app } => scan::heroic_uri(runner, app),
+        }
+    }
+
+    pub(super) fn store_name(&self) -> &'static str {
+        match self {
+            StoreGame::Steam(_) => "Steam",
+            StoreGame::Heroic { runner, .. } if runner == "legendary" => "Epic",
+            StoreGame::Heroic { runner, .. } if runner == "gog" => "GOG",
+            StoreGame::Heroic { .. } => "Amazon",
+        }
+    }
+
+    fn is_heroic(&self) -> bool {
+        matches!(self, StoreGame::Heroic { .. })
+    }
+}
+
+/// One library game the watcher follows: its id, its store game and whether the library thinks
 /// it is installed.
 #[derive(Clone, PartialEq)]
 struct Watched {
     game_id: String,
-    appid: String,
+    key: StoreGame,
     installed: bool,
 }
 
@@ -73,14 +121,27 @@ fn watcher(ctx: Context, list: mpsc::Receiver<Vec<Watched>>, updates: mpsc::Send
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
         }
         tick = tick.wrapping_add(1);
-        // No Steam library readable (Steam missing, drive not mounted): change nothing.
-        let Some(libraries) = steam::libraries() else { continue };
+        // Without readable Steam libraries or Heroic data (not installed, drive not mounted),
+        // nothing is said about that store's games.
+        let wants = |heroic: bool| games.iter().any(|g| g.key.is_heroic() == heroic);
+        let libraries = if wants(false) { steam::libraries() } else { None };
+        let heroic = if wants(true) { scan::heroic_installed() } else { None };
         let mut changed = false;
         for game in &games {
             if game.installed && tick % INSTALLED_EVERY != 1 && known.contains_key(&game.game_id) {
                 continue;
             }
-            let status = steam::install_status(&libraries, &game.appid);
+            let status = match &game.key {
+                StoreGame::Steam(appid) => match &libraries {
+                    Some(libraries) => steam::install_status(libraries, appid),
+                    None => continue,
+                },
+                StoreGame::Heroic { runner, app } => match &heroic {
+                    Some(installed) if installed.contains(&(runner.clone(), app.clone())) => Install::Installed,
+                    Some(_) => Install::NotInstalled,
+                    None => continue,
+                },
+            };
             let expected = if game.installed { Install::Installed } else { Install::NotInstalled };
             let previous = known.insert(game.game_id.clone(), status);
             if previous.map_or(status != expected, |p| p != status) {
@@ -97,14 +158,6 @@ fn watcher(ctx: Context, list: mpsc::Receiver<Vec<Watched>>, updates: mpsc::Send
 }
 
 impl App {
-    /// The appid of a Steam game in the library, `None` for anything else.
-    pub(super) fn steam_appid(game: &Game) -> Option<String> {
-        if game.app_id.is_some() {
-            return None;
-        }
-        steam::appid_of(&game.target, &game.args)
-    }
-
     /// Hands the watcher the library's Steam games when they changed, and applies what it found:
     /// a game Steam starts installing moves from the Library to the home screen, one it finished
     /// becomes playable, and one that is gone (uninstalled, or its install canceled) moves to the
@@ -115,7 +168,7 @@ impl App {
             let watched = |games: &[Game], home: bool| -> Vec<Watched> {
                 games
                     .iter()
-                    .filter_map(|g| Some(Watched { game_id: g.id.clone(), appid: Self::steam_appid(g)?, installed: home && !g.installing }))
+                    .filter_map(|g| Some(Watched { game_id: g.id.clone(), key: StoreGame::of(g)?, installed: home && !g.installing }))
                     .collect()
             };
             let mut list = watched(&self.library.games, true);
@@ -182,8 +235,10 @@ impl App {
                 let had_progress = self.installs.progress.remove(game_id).is_some();
                 let Some(i) = home else { return false };
                 let running = self.game.as_ref().is_some_and(|g| g.game_id == game_id);
-                // Handed to Steam but not started yet: wait for the user to confirm in Steam.
-                if running || (installing && !had_progress && self.installs.waiting_since.contains_key(game_id)) {
+                // Heroic leaves nothing on disk until an install is done, so its installing games
+                // wait; so does a game handed to Steam that Steam hasn't started on yet.
+                let heroic = StoreGame::of(&self.library.games[i]).is_some_and(|k| k.is_heroic());
+                if running || (installing && (heroic || (!had_progress && self.installs.waiting_since.contains_key(game_id)))) {
                     return false;
                 }
                 if installing {
@@ -202,7 +257,7 @@ impl App {
         let stale: Vec<usize> = (0..self.library.games.len())
             .filter(|&i| {
                 let game = &self.library.games[i];
-                game.installing && !self.installs.progress.contains_key(&game.id)
+                game.installing && !self.installs.progress.contains_key(&game.id) && StoreGame::of(game).is_some_and(|k| !k.is_heroic())
             })
             .filter(|&i| {
                 let since = *self.installs.waiting_since.entry(self.library.games[i].id.clone()).or_insert(now);
@@ -234,28 +289,32 @@ impl App {
     }
 
     /// Selects the game with `id` again after games moved, or keeps the selection in range.
-    fn reselect(&mut self, id: Option<String>) {
+    pub(super) fn reselect(&mut self, id: Option<String>) {
         if let Some(i) = id.and_then(|id| self.library.position(&id)) {
             self.selected = i;
         }
         self.clamp_selection();
     }
 
-    /// Asks Steam to install `appid`; Steam shows its own install dialog. The game goes to the
-    /// home screen right away, marked as installing, and is playable once Steam is done.
-    pub(super) fn install_steam_game(&mut self, appid: &str, name: &str) {
-        let id = match self.library.uninstalled.iter().find(|g| Self::steam_appid(g).as_deref() == Some(appid)) {
+    /// Asks the store to install a game: Steam shows its install dialog, Heroic offers to install a
+    /// game it is asked to start that isn't installed. The game goes to the home screen right away,
+    /// marked as installing, and is playable once the store is done.
+    pub(super) fn install_store_game(&mut self, key: &StoreGame, name: &str) {
+        let id = match self.library.uninstalled.iter().find(|g| StoreGame::of(g).as_ref() == Some(key)) {
             Some(game) => game.id.clone(),
-            None => self.library.add_uninstalled(&scan::game_entry(name.to_owned(), steam::run_uri(appid), None)),
+            None => self.library.add_uninstalled(&scan::game_entry(name.to_owned(), key.target(), None)),
         };
-        let uri = steam::install_uri(appid);
-        let result = match self.settings.store_command(Store::Steam) {
-            Some(command) => Store::Steam.launch_uri(&command, &uri),
+        let (store, uri) = match key {
+            StoreGame::Steam(appid) => (Store::Steam, steam::install_uri(appid)),
+            StoreGame::Heroic { .. } => (Store::Heroic, key.target()),
+        };
+        let result = match self.settings.store_command(store) {
+            Some(command) => store.launch_uri(&command, &uri),
             None => open::that_detached(&uri).map_err(anyhow::Error::from),
         };
         if let Err(e) = result {
             self.save();
-            return self.notify(tr!("Could not ask Steam to install {name}: {error}", name = name, error = format!("{e:#}")));
+            return self.notify(tr!("Could not ask {store} to install {name}: {error}", store = store.short_name(), name = name, error = format!("{e:#}")));
         }
         if let Some(i) = self.move_home(&id) {
             let game = &mut self.library.games[i];
@@ -267,7 +326,19 @@ impl App {
         self.installs.waiting_since.insert(id, Instant::now());
         self.installs.sent.clear();
         self.save();
-        self.notify(tr!("Steam is installing {name}. Confirm in Steam's window", name = name));
+        self.notify(tr!("{store} is installing {name}. Confirm in its window", store = store.short_name(), name = name));
+    }
+
+    /// Stops following an install and puts the selected game back in the Library.
+    pub(super) fn stop_install_selected(&mut self) {
+        let Some(game) = self.selected_game().filter(|g| g.installing) else { return };
+        let (id, name) = (game.id.clone(), game.name.clone());
+        self.installs.progress.remove(&id);
+        self.installs.waiting_since.remove(&id);
+        self.move_to_library(self.selected);
+        self.installs.sent.clear();
+        self.save();
+        self.notify(tr!("{name} is back in the Library", name = name));
     }
 
     /// How far Steam is with an installing game.
@@ -277,6 +348,9 @@ impl App {
             Some(Progress { paused: true, fraction: None }) => tr!("Paused").to_owned(),
             Some(Progress { fraction: Some(p), .. }) => tr!("Installing… {percent} %", percent = (p * 100.0).floor() as u32),
             Some(Progress { fraction: None, .. }) => tr!("Installing…").to_owned(),
+            None if self.library.position(game_id).and_then(|i| StoreGame::of(&self.library.games[i])).is_some_and(|k| k.is_heroic()) => {
+                tr!("Installing in Heroic…").to_owned()
+            }
             None => tr!("Waiting for Steam…").to_owned(),
         }
     }

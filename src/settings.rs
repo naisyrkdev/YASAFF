@@ -311,6 +311,10 @@ pub struct Settings {
     /// Lists the Steam games the account owns but hasn't installed, so they can be installed from YASAFF.
     pub steam_show_owned: bool,
     pub steam_source: SteamSource,
+    /// Lists the Epic and GOG games Heroic knows the account owns but aren't installed.
+    pub heroic_show_owned: bool,
+    /// Linux: adds games added to Lutris, and takes off the ones removed from it.
+    pub lutris_sync: bool,
     /// Steam Web API key used to read the owned games; never sent anywhere but api.steampowered.com.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub steam_api_key: String,
@@ -346,6 +350,8 @@ impl Default for Settings {
             steam: StoreSettings::default(),
             steam_show_owned: false,
             steam_source: SteamSource::default(),
+            heroic_show_owned: false,
+            lutris_sync: false,
             steam_api_key: String::new(),
             discs: DiscSettings::default(),
             mouse: MouseSettings::default(),

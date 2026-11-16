@@ -14,6 +14,24 @@ mod theme_options;
 use super::*;
 pub(super) use content::slot_label;
 
+/// A game store or launcher YASAFF works with, each set up on a page of its own.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum Integration {
+    Steam,
+    Heroic,
+    Lutris,
+}
+
+impl Integration {
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            Integration::Steam => "Steam",
+            Integration::Heroic => tr!("Heroic (GOG, Epic)"),
+            Integration::Lutris => "Lutris",
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum SettingRow {
     Fullscreen,
@@ -126,6 +144,13 @@ pub(super) enum SettingRow {
     StoreEnabled(Store),
     StoreBackground(Store),
     StoreCommand(Store),
+    /// Opens an integration's page.
+    Integration(Integration),
+    HeroicStatus,
+    HeroicShowOwned,
+    LutrisStatus,
+    LutrisSync,
+    LutrisImport,
     SteamShowOwned,
     SteamSource,
     SteamSignIn,
@@ -287,6 +312,18 @@ impl SettingRow {
             | R::DeviceSaveFolder
             | R::DeviceAddFiles
             | R::DeviceAddFolders => Page::GameDevice,
+            R::StoreEnabled(Store::Steam)
+            | R::StoreBackground(Store::Steam)
+            | R::StoreCommand(Store::Steam)
+            | R::SteamShowOwned
+            | R::SteamSource
+            | R::SteamSignIn
+            | R::SteamApiKey
+            | R::SteamAccount => Page::Integration(Integration::Steam),
+            R::StoreEnabled(Store::Heroic) | R::StoreBackground(Store::Heroic) | R::StoreCommand(Store::Heroic) | R::HeroicStatus | R::HeroicShowOwned => {
+                Page::Integration(Integration::Heroic)
+            }
+            R::LutrisStatus | R::LutrisSync | R::LutrisImport => Page::Integration(Integration::Lutris),
             _ => Page::App,
         }
     }
@@ -302,6 +339,8 @@ pub(super) enum Page {
     GameDetails,
     /// The custom theme's pictures.
     ThemePictures,
+    /// One store or launcher's settings, opened from Third-party stores.
+    Integration(Integration),
 }
 
 impl Page {

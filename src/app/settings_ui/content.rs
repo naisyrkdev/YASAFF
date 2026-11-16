@@ -635,6 +635,41 @@ impl App {
                 let custom = !self.settings.store(st).command.trim().is_empty();
                 (tr!("{store} command", store = st.short_name()), if custom { tr!("Custom") } else { tr!("Auto-detected") }, Action(tr!("Edit…")))
             }
+            SettingRow::Integration(integration) => (
+                integration.name().into(),
+                match integration {
+                    Integration::Steam => tr!("Launch Steam games through Steam, and install the games you own"),
+                    Integration::Heroic => tr!("Needs Heroic Games Launcher installed. Launch and install Epic and GOG games"),
+                    Integration::Lutris => tr!("Add the games you have in Lutris, and keep them in sync"),
+                },
+                RowValue::Summary(self.integration_status(integration)),
+            ),
+            SettingRow::HeroicStatus => {
+                let installed = Store::Heroic.detect().is_some();
+                let (label, sub) = if installed {
+                    (tr!("Heroic Games Launcher is installed"), tr!("Log into Epic and GOG in Heroic so YASAFF can see your games"))
+                } else {
+                    (tr!("Heroic Games Launcher is not installed"), tr!("Install it from heroicgameslauncher.com, then log into Epic and GOG in it"))
+                };
+                (label.into(), sub, if installed { RowValue::Summary(tr!("Installed").to_owned()) } else { Action(tr!("Open website")) })
+            }
+            SettingRow::HeroicShowOwned => (
+                tr!("Show Epic and GOG games you don't have installed").into(),
+                tr!("Adds them to the Library tile. Heroic installs them"),
+                Toggle(self.settings.heroic_show_owned),
+            ),
+            SettingRow::LutrisStatus => {
+                let installed = crate::stores::lutris_command().is_some();
+                let label = if installed { tr!("Lutris is installed") } else { tr!("Lutris is not installed") };
+                let sub = if installed { tr!("Games installed in Lutris can be added here") } else { tr!("Install Lutris from your distribution or lutris.net") };
+                (label.into(), sub, RowValue::Summary(if installed { tr!("Installed") } else { tr!("Not installed") }.to_owned()))
+            }
+            SettingRow::LutrisSync => (
+                tr!("Keep Lutris games in sync").into(),
+                tr!("A game added to Lutris shows up here, and one removed from it leaves"),
+                Toggle(self.settings.lutris_sync),
+            ),
+            SettingRow::LutrisImport => (tr!("Import Lutris games now").into(), tr!("Adds the games installed in Lutris once"), Action(tr!("Import"))),
             SettingRow::SteamShowOwned => (
                 tr!("Show Steam games you don't have installed").into(),
                 tr!("Adds a Library tile listing them. Install them from there with Steam"),

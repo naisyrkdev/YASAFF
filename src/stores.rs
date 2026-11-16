@@ -99,6 +99,18 @@ fn in_path(name: &str) -> Option<PathBuf> {
     std::env::split_paths(&std::env::var_os("PATH")?).map(|d| d.join(&exe)).find(|p| p.is_file())
 }
 
+/// The command that runs Lutris (Linux), installed natively or as a Flatpak.
+pub fn lutris_command() -> Option<Vec<String>> {
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        in_path("lutris").map(path_cmd).or_else(|| flatpak_cmd("net.lutris.Lutris"))
+    }
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    {
+        None
+    }
+}
+
 fn path_cmd(p: PathBuf) -> Vec<String> {
     vec![p.to_string_lossy().into_owned()]
 }

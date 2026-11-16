@@ -13,6 +13,7 @@ mod home;
 mod installs;
 mod keyboard;
 mod library_screen;
+mod lutris_sync;
 mod menus;
 mod paint;
 mod profile_ui;
@@ -66,6 +67,7 @@ use active_game::*;
 use add_games::*;
 use installs::Installs;
 use library_screen::LibraryView;
+use lutris_sync::LutrisSync;
 use steam_sign_in::SignInScreen;
 use buttons::*;
 use cover_editor::*;
@@ -246,6 +248,7 @@ pub struct App {
     artwork: Fetcher,
     installs: Installs,
     library_view: LibraryView,
+    lutris: LutrisSync,
     fonts: Vec<String>,
     fonts_pending: Option<Vec<String>>,
     burning: Option<Burning>,
@@ -348,6 +351,7 @@ impl App {
             artwork: Fetcher::new(cc.egui_ctx.clone()),
             installs: Installs::new(cc.egui_ctx.clone()),
             library_view: LibraryView::default(),
+            lutris: LutrisSync::default(),
             fonts: Vec::new(),
             fonts_pending: None,
             burning: None,
@@ -424,7 +428,7 @@ impl App {
     fn special_tiles(&self) -> impl Iterator<Item = Special> + '_ {
         Special::ALL
             .into_iter()
-            .filter(|s| *s != Special::Library || self.settings.steam_show_owned)
+            .filter(|s| *s != Special::Library || self.library_enabled())
             .filter(|s| self.special_bar(*s).is_none())
     }
 
@@ -703,6 +707,7 @@ impl eframe::App for App {
         self.poll_installs();
         self.poll_steam_sign_in();
         self.poll_library();
+        self.poll_lutris();
         self.poll_store();
         self.poll_running(&ctx);
         self.poll_game(&ctx);

@@ -6,6 +6,8 @@ use super::*;
 pub(super) enum MenuItem {
     Start,
     CloseApp,
+    /// For a game being installed: stop following the install, back to the Library.
+    StopInstall,
     Update,
     FetchArtwork,
     Appearance,
@@ -72,8 +74,8 @@ pub(super) enum Removal {
     /// Not a removal: writing to the USB stick or SD card picked on the Physical Devices page,
     /// so the user sees which device it lands on first.
     DeviceWrite(DeviceWrite),
-    /// Not a removal: installing the Steam game with this appid, picked in the Library.
-    InstallGame(u32),
+    /// Not a removal: installing the game picked in the Library.
+    InstallGame,
     /// Not a removal: the device already has other .yasaff files. "Yes" replaces them with
     /// this game's, "no" keeps them next to it.
     OtherLaunchFiles,
@@ -111,7 +113,10 @@ impl App {
                     menu.push((item, tr!("Switch to game").to_owned()));
                     menu.push((MenuItem::CloseApp, tr!("Close game").to_owned()));
                 }
-                MenuItem::Start if let Some(g) = game.filter(|g| g.installing) => menu.push((item, self.install_label(&g.id))),
+                MenuItem::Start if let Some(g) = game.filter(|g| g.installing) => {
+                    menu.push((item, self.install_label(&g.id)));
+                    menu.push((MenuItem::StopInstall, tr!("Move back to Library").to_owned()));
+                }
                 MenuItem::SwapBubble if !self.is_bubbles() => {}
                 MenuItem::SwapTile if !self.is_standard() || self.library.games.len() < 2 => {}
                 MenuItem::LockSlot if !self.is_standard() || self.settings.order.static_order => {}
@@ -149,6 +154,10 @@ impl App {
             }
             MenuItem::CloseApp if game.app_id.is_some() => self.close_running(),
             MenuItem::CloseApp => self.close_game(),
+            MenuItem::StopInstall => {
+                self.mode = Mode::Home;
+                self.stop_install_selected();
+            }
             MenuItem::PhysicalDevices => self.open_device_settings(),
             MenuItem::Update => self.update_selected(),
             MenuItem::FetchArtwork => {
@@ -399,9 +408,9 @@ impl App {
                 tr!("Reset YASAFF?").to_owned(),
                 tr!("Every profile and all data are deleted. YASAFF restarts as on a fresh install."),
             ),
-            Removal::InstallGame(appid) => {
-                let name = self.library_game_name(appid);
-                (tr!("Install \"{name}\"?", name = name), tr!("Steam downloads it. It shows on your home screen with its progress, and is ready to play when it finishes."))
+            Removal::InstallGame => {
+                let name = self.pending_name();
+                (tr!("Install \"{name}\"?", name = name), tr!("Its store downloads it. It shows on your home screen while it installs, and is ready to play when it finishes."))
             }
             Removal::StaticOrder => (
                 tr!("Mark all games static?").to_owned(),
@@ -466,7 +475,7 @@ impl App {
             Removal::Addon(_) => tr!("Uninstall"),
             Removal::Profile | Removal::Everything => tr!("Reset"),
             Removal::StaticOrder => tr!("Turn on"),
-            Removal::InstallGame(_) => tr!("Install"),
+            Removal::InstallGame => tr!("Install"),
             Removal::InitialRepo => tr!("Download"),
             Removal::DeviceWrite(DeviceWrite::LaunchConfig) => tr!("Write"),
             Removal::DeviceWrite(DeviceWrite::SaveCatalog) => tr!("Create"),
@@ -757,11 +766,10 @@ impl App {
                         }
                     }
                     Removal::InitialRepo => self.answer_offer(yes),
-                    Removal::InstallGame(appid) => {
+                    Removal::InstallGame => {
                         self.mode = Mode::Library;
                         if yes {
-                            let name = self.library_game_name(appid);
-                            self.install_steam_game(&appid.to_string(), &name);
+                            self.install_pending();
                         }
                     }
                     Removal::DeviceWrite(write) => {
@@ -797,7 +805,7 @@ impl App {
                     Removal::Everything => self.settings_at(SettingRow::AppReset),
                     Removal::StaticOrder => self.settings_at(SettingRow::OrderStatic),
                     Removal::InitialRepo => return self.answer_offer(false),
-                    Removal::InstallGame(_) => Mode::Library,
+                    Removal::InstallGame => Mode::Library,
                     Removal::DeviceWrite(write) => self.settings_at(write.row()),
                     Removal::OtherLaunchFiles => self.settings_at(SettingRow::DeviceInsertConfig),
                 }

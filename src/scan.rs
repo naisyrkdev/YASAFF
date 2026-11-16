@@ -303,6 +303,66 @@ fn heroic_titles(config: &Path, file: &str, list_key: &str) -> Vec<(String, Stri
         .collect()
 }
 
+/// An Epic or GOG game in the account Heroic is logged into.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HeroicGame {
+    /// Heroic's runner: `legendary` (Epic) or `gog`.
+    pub runner: &'static str,
+    pub app: String,
+    pub title: String,
+    /// The cover's web address, as Heroic lists it.
+    pub art: Option<String>,
+}
+
+/// How Heroic starts (or, for a game that isn't installed, offers to install) a game.
+pub fn heroic_uri(runner: &str, app: &str) -> String {
+    format!("heroic://launch?appName={app}&runner={runner}")
+}
+
+/// Every Epic and GOG game Heroic lists for its logged-in accounts, installed or not, without DLC.
+pub fn heroic_owned() -> Vec<HeroicGame> {
+    let mut games = Vec::new();
+    let mut seen = HashSet::new();
+    for config in heroic_config_dirs() {
+        for (runner, file, key) in [("legendary", "legendary_library.json", "library"), ("gog", "gog_library.json", "games")] {
+            let Some(json) = read_json(&config.join("store_cache").join(file)) else { continue };
+            for g in json[key].as_array().into_iter().flatten() {
+                let dlc = g["is_dlc"].as_bool() == Some(true) || g["install"]["is_dlc"].as_bool() == Some(true);
+                let (Some(app), Some(title)) = (g["app_name"].as_str(), g["title"].as_str()) else { continue };
+                if dlc || title.trim().is_empty() || !seen.insert((runner, app.to_owned())) {
+                    continue;
+                }
+                let art = ["art_square", "art_cover"].iter().find_map(|k| g[*k].as_str().filter(|u| u.starts_with("http")).map(str::to_owned));
+                games.push(HeroicGame { runner, app: app.to_owned(), title: title.trim().to_owned(), art });
+            }
+        }
+    }
+    games
+}
+
+/// The (runner, app) pairs Heroic has installed; `None` when Heroic has no data on this computer,
+/// so nothing can be said about its games.
+pub fn heroic_installed() -> Option<HashSet<(String, String)>> {
+    let configs = heroic_config_dirs();
+    if configs.is_empty() {
+        return None;
+    }
+    let mut installed = HashSet::new();
+    for config in configs {
+        let legendary = read_json(&config.join("legendaryConfig/legendary/installed.json"));
+        for app in legendary.as_ref().and_then(|j| j.as_object()).into_iter().flat_map(|o| o.keys()) {
+            installed.insert(("legendary".to_owned(), app.clone()));
+        }
+        let gog = read_json(&config.join("gog_store/installed.json"));
+        for game in gog.as_ref().and_then(|j| j["installed"].as_array()).into_iter().flatten() {
+            if let Some(app) = game["appName"].as_str() {
+                installed.insert(("gog".to_owned(), app.to_owned()));
+            }
+        }
+    }
+    Some(installed)
+}
+
 fn heroic_games() -> Vec<Found> {
     let mut found = Vec::new();
     for config in heroic_config_dirs() {
